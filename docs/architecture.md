@@ -17,7 +17,7 @@ panel's own release (`internal/update`) and the optional BBR kernel packages
 ├── release/TAGS                    # the one definition of the build tag set
 ├── install.sh                      # one-click installer (binary or source)
 ├── Makefile                        # build / test / dist entry points (see `make help`)
-├── packaging/deb/                  # .deb lifecycle scripts: postinst / postrm
+├── packaging/                      # package lifecycle scripts: deb/ and rpm/
 ├── go.mod / go.sum                 # module github.com/MinimaxFlora/EasySB, Go 1.27.1
 ├── templates/                      # readable JSONC samples and subscription template
 │   ├── anytls/
@@ -58,15 +58,17 @@ editing.
 
 ## Packaging
 
-The `.deb` and the apt repository are built from the same `dist/` binaries as the
-release, so nothing is compiled twice and no arch list is repeated:
+The `.deb`, the `.rpm`, the pacman package and the apt repository are built from the
+same `dist/` binaries as the release, so nothing is compiled twice and no arch list
+is repeated. All three formats come from one staged tree (`make pkg-stage`), which one
+architecture's job drives end to end with `make packages-asset`:
 
 | Piece | Where it comes from |
 | :--- | :--- |
 | Binary and shortcut | `dist/easysb-linux-<asset>` → `/usr/bin/easysb`, symlinked as `/usr/bin/sb` |
 | `sing-box.service` | `easysb --print-unit node --unit-exec /usr/bin/easysb`, the same `internal/service.UnitBody` the panel writes at runtime |
 | `easysb.service` | `easysb --print-unit sub --unit-exec /usr/bin/easysb`, the same `internal/subd.UnitBody` |
-| Debian architecture | `DEBARCH_<asset>` in the `Makefile` (armv7 → `armhf`, 386 → `i386`) |
+| Package architecture | `DEBARCH_*`, `RPMARCH_*` and `PACMANARCH_*` in the `Makefile` (armv7 → `armhf` / `armv7hl` / `armv7h`; rpm spells 386 `i686`; Arch has no i386 or s390x, so no pacman package is made for them) |
 | apt index | `make apt-index` runs `apt-ftparchive` over `dist/*.deb`, signing when `GPG_KEY_ID` is set |
 
 The package ships the units but does not enable or start them: a fresh host has no
@@ -76,6 +78,10 @@ panel writes its own to `/etc/systemd/system`, the panel's copy wins while it ex
 and the packaged one is the fallback — the two never fight over one path. The apt
 index and the `.deb` files publish to the fixed `debian` release tag, because apt
 needs a stable URI; the binaries keep publishing to `v<VERSION>`.
+
+The `.rpm` and the pacman package have no repository: GitHub Releases cannot serve a
+`repodata/` directory under a stable URL, so they are plain release assets that
+`dnf` / `zypper install <url>` and `pacman -U <url>` consume directly.
 
 ## Packages
 

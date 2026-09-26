@@ -91,7 +91,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [build, packages]
     runs-on: ubuntu-26.04
     steps:
       - name: 检出仓库
@@ -127,15 +127,25 @@ jobs:
             bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
             ```
 
-            Debian / Ubuntu 也可以用 .deb 或 apt 源安装，见 README。
-            Debian and Ubuntu can also install the .deb or add the apt repository; see the README.
-          files: dist/easysb-linux-*
+            Debian / Ubuntu 可以用 .deb 或 apt 源安装；Fedora / RHEL / openSUSE 与 Arch
+            可以下载 .rpm / pacman 包直接安装。写法见 README。
+            Debian / Ubuntu can install the .deb or add the apt repository; Fedora / RHEL /
+            openSUSE and Arch can download the .rpm / pacman package directly. See the README.
+          files: |
+            dist/easysb-linux-*
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
 
-  # .deb 由 fpm 打包，包里的 systemd 单元由二进制自己打印（--print-unit），所以
-  # 安装进系统的单元与面板运行时写下的完全一致，不存在第二处定义。
-  # The .deb is assembled with fpm; the unit files come from the binary itself
-  # (--print-unit), so the packaged unit is the same text the panel writes at runtime.
-  deb:
+  # 每个架构只跑一个作业，三种包（.deb / .rpm / pacman）都从同一棵暂存树出来：
+  # 同一个二进制、同一段由二进制自己打印（--print-unit）的 systemd 单元，所以安装
+  # 进系统的单元与面板运行时写下的完全一致，不存在第二处定义。Arch 没有 i386 与
+  # s390x，pacman-asset 只对 Arch 支持的架构出包。
+  # One job per architecture builds all three formats from one staging tree: one binary
+  # and one systemd unit text printed by the binary itself (--print-unit), so the
+  # packaged unit matches the runtime one. Arch has no i386 or s390x, so the pacman
+  # package is only produced for the architectures Arch ships.
+  packages:
     needs: [prepare, build]
     runs-on: ubuntu-26.04
     strategy:
@@ -158,17 +168,27 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # rpm 目标要 rpmbuild，pacman 目标要 bsdtar（libarchive-tools）。
+      # The rpm target needs rpmbuild; the pacman target needs bsdtar.
+      - name: 安装打包工具
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rpm libarchive-tools
+
       - name: 安装 fpm
         run: sudo gem install --no-document fpm
 
-      - name: 打包 .deb
-        run: make deb-asset ASSET=${{ matrix.asset }} REUSE_DIST=1 COMMIT=${GITHUB_SHA}
+      - name: 打包三种格式
+        run: make packages-asset ASSET=${{ matrix.asset }} REUSE_DIST=1 COMMIT=${GITHUB_SHA}
 
-      - name: 上传 .deb
+      - name: 上传安装包
         uses: actions/upload-artifact@v7
         with:
-          name: easysb-deb-${{ matrix.asset }}
-          path: dist/*.deb
+          name: easysb-packages-${{ matrix.asset }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
           if-no-files-found: error
 
   # apt 源放在固定标签 `debian` 上：URIs 必须稳定，所以索引和 .deb 都发布到该
@@ -177,7 +197,7 @@ jobs:
   # index and the .deb files publish there. The index is rebuilt every run and lists
   # only the version this run produced.
   repo:
-    needs: deb
+    needs: packages
     runs-on: ubuntu-26.04
     steps:
       - name: 检出仓库
@@ -186,7 +206,7 @@ jobs:
       - name: 下载全部 .deb
         uses: actions/download-artifact@v8
         with:
-          pattern: easysb-deb-*
+          pattern: easysb-packages-*
           path: dist
           merge-multiple: true
 

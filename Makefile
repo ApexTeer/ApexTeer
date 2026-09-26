@@ -43,27 +43,48 @@ GOARCH_riscv64 := riscv64
 GOARCH_s390x   := s390x
 GOARM_armv7    := 7
 
-# 打包元数据 / package metadata. The Debian architecture names differ from the Go
-# asset names (armv7 ships as armhf, 386 as i386), so both mappings live next to
-# each other and the release files are never re-typed in the workflow.
+# 打包元数据 / package metadata. The three formats install the same tree to the
+# same paths, so the only per-format facts are the package format itself and that
+# format's architecture names; the three mappings sit together and no name is ever
+# re-typed in the workflow.
 PKG_NAME       ?= easysb
 PKG_MAINTAINER ?= MinimaxFlora <zj18139624826@gmail.com>
+PKG_VENDOR     ?= MinimaxFlora
 PKG_LICENSE    ?= GPL-3.0-or-later
 PKG_URL        ?= https://github.com/MinimaxFlora/EasySB
 PKG_DESC       ?= EasySB: a sing-box panel with the core compiled in
-DEB_EXEC       := /usr/bin/easysb
-DEB_DIR        ?= $(DIST)/deb
+PKG_SUMMARY    ?= A sing-box panel with the core compiled in
+PKG_EXEC       := /usr/bin/easysb
+# 三种格式共用的打包暂存树 / the staging tree every format is built from.
+STAGE_DIR      ?= $(DIST)/stage
 APT_DIR        ?= $(DIST)/apt
 # 签名可选：CI 里存在 GPG_PRIVATE_KEY 密钥时会导入并用它签名 / signing is optional:
 # when CI has imported a GPG key it is passed here, otherwise the index stays unsigned.
 GPG_KEY_ID     ?=
 
+# Debian 架构名 / Debian architecture names: armv7 ships as armhf, 386 as i386.
 DEBARCH_amd64   := amd64
 DEBARCH_arm64   := arm64
 DEBARCH_armv7   := armhf
 DEBARCH_386     := i386
 DEBARCH_riscv64 := riscv64
 DEBARCH_s390x   := s390x
+
+# RPM 架构名 / RPM architecture names, shared by Fedora, RHEL and openSUSE.
+RPMARCH_amd64   := x86_64
+RPMARCH_arm64   := aarch64
+RPMARCH_armv7   := armv7hl
+RPMARCH_386     := i686
+RPMARCH_riscv64 := riscv64
+RPMARCH_s390x   := s390x
+
+# pacman 架构名 / pacman architecture names. Arch ships no i386 and no s390x, so the
+# pacman package is only built for the architectures Arch actually has.
+PACMAN_ARCHES      := amd64 arm64 armv7 riscv64
+PACMANARCH_amd64   := x86_64
+PACMANARCH_arm64   := aarch64
+PACMANARCH_armv7   := armv7h
+PACMANARCH_riscv64 := riscv64
 
 DEB_ARCHS := $(foreach a,$(ARCHES),$(DEBARCH_$(a)))
 
@@ -75,7 +96,8 @@ space := $(empty) $(empty)
 
 .PHONY: build build-plain run test test-plain test-race vet fmt fmt-check \
         lint check render screens dist dist-asset release-matrix install tidy \
-        version deb deb-asset apt-index help clean
+        version pkg-stage deb deb-asset rpm rpm-asset pacman pacman-asset \
+        packages-asset apt-index help clean
 
 # --- 构建 / Build -------------------------------------------------------------
 
@@ -154,28 +176,44 @@ deb: build ## 打包全部发布架构的 .deb 到 dist/
 		$(MAKE) --no-print-directory deb-asset ASSET=$$asset NO_BUILD=1; \
 	done
 
-deb-asset: ## 打包单个架构的 .deb（ASSET=amd64 / arm64 / armv7 / 386 / riscv64 / s390x）
+rpm: build ## 打包全部发布架构的 .rpm 到 dist/
+	@set -e; for asset in $(ARCHES); do \
+		$(MAKE) --no-print-directory rpm-asset ASSET=$$asset NO_BUILD=1; \
+	done
+
+pacman: build ## 打包 Arch 支持的每个架构的 pacman 包到 dist/
+	@set -e; for asset in $(PACMAN_ARCHES); do \
+		$(MAKE) --no-print-directory pacman-asset ASSET=$$asset NO_BUILD=1; \
+	done
+
+# 三种包共用这一棵暂存树：同一个二进制、同一个 sb 快捷指令、同一段由 --print-unit
+# 打印出来的 systemd 单元、同一份许可证。各格式只在暂存之后才分叉，所以单元文本与
+# 安装路径都只有一处定义。
+# The three formats share this staging tree — one binary, one sb shortcut, one systemd
+# unit text printed by --print-unit and one license. They only diverge after staging,
+# so the unit text and the install paths have a single definition.
+pkg-stage: ## 内部：准备打包暂存树（ASSET= 必填；REUSE_DIST=1 复用 dist/；NO_BUILD=1 不重建）
 	@test -n "$(ASSET)" || { echo "ASSET 未设置 / ASSET required, one of: $(ARCHES)"; exit 1; }
-	@test -n "$(DEBARCH_$(ASSET))" || { echo "未知架构 / unknown asset: $(ASSET), one of: $(ARCHES)"; exit 1; }
-	@command -v fpm >/dev/null 2>&1 || { echo "fpm 未安装 / fpm missing: sudo gem install --no-document fpm"; exit 1; }
 	@if [ -z "$(NO_BUILD)" ]; then $(MAKE) --no-print-directory build; fi
 	@if [ -z "$(REUSE_DIST)" ]; then $(MAKE) --no-print-directory dist-asset ASSET=$(ASSET); fi
 	@test -s "$(DIST)/easysb-linux-$(ASSET)" || { echo "$(DIST)/easysb-linux-$(ASSET) 缺失 / missing (or pass REUSE_DIST=1 after a build)"; exit 1; }
-	@set -e; \
-	stage="$(DEB_DIR)/$(ASSET)"; \
+	@set -e; stage="$(STAGE_DIR)/$(ASSET)"; \
 	rm -rf "$$stage"; \
 	mkdir -p "$$stage/usr/bin" \
 	         "$$stage/usr/lib/systemd/system" \
 	         "$$stage/usr/share/doc/$(PKG_NAME)" \
 	         "$$stage/usr/share/licenses/$(PKG_NAME)"; \
-	install -m 0755 "$(DIST)/easysb-linux-$(ASSET)" "$$stage$(DEB_EXEC)"; \
+	install -m 0755 "$(DIST)/easysb-linux-$(ASSET)" "$$stage$(PKG_EXEC)"; \
 	ln -sf $(PKG_NAME) "$$stage/usr/bin/sb"; \
-	./$(BINARY) --print-unit node --unit-exec $(DEB_EXEC) > "$$stage/usr/lib/systemd/system/sing-box.service"; \
-	./$(BINARY) --print-unit sub  --unit-exec $(DEB_EXEC) > "$$stage/usr/lib/systemd/system/easysb.service"; \
+	./$(BINARY) --print-unit node --unit-exec $(PKG_EXEC) > "$$stage/usr/lib/systemd/system/sing-box.service"; \
+	./$(BINARY) --print-unit sub  --unit-exec $(PKG_EXEC) > "$$stage/usr/lib/systemd/system/easysb.service"; \
 	install -m 0644 LICENSE "$$stage/usr/share/licenses/$(PKG_NAME)/LICENSE"; \
-	install -m 0644 LICENSE "$$stage/usr/share/doc/$(PKG_NAME)/copyright"; \
-	fpm -s dir -t deb \
-		--force \
+	install -m 0644 LICENSE "$$stage/usr/share/doc/$(PKG_NAME)/copyright"
+
+deb-asset: pkg-stage ## 打包单个架构的 .deb（ASSET=amd64 / arm64 / armv7 / 386 / riscv64 / s390x）
+	@test -n "$(DEBARCH_$(ASSET))" || { echo "未知架构 / unknown asset: $(ASSET), one of: $(ARCHES)"; exit 1; }
+	@command -v fpm >/dev/null 2>&1 || { echo "fpm 未安装 / fpm missing: sudo gem install --no-document fpm"; exit 1; }
+	@set -e; fpm -s dir -t deb --force \
 		-n $(PKG_NAME) -v $(VERSION) -a $(DEBARCH_$(ASSET)) \
 		--category net --license "$(PKG_LICENSE)" --description "$(PKG_DESC)" \
 		--url "$(PKG_URL)" --maintainer "$(PKG_MAINTAINER)" \
@@ -185,8 +223,47 @@ deb-asset: ## 打包单个架构的 .deb（ASSET=amd64 / arm64 / armv7 / 386 / r
 		--after-install packaging/deb/postinst \
 		--after-remove packaging/deb/postrm \
 		--package "$(DIST)/$(PKG_NAME)_$(VERSION)_$(DEBARCH_$(ASSET)).deb" \
-		-C "$$stage" .; \
+		-C "$(STAGE_DIR)/$(ASSET)" .; \
 	ls -lh "$(DIST)/$(PKG_NAME)_$(VERSION)_$(DEBARCH_$(ASSET)).deb"
+
+rpm-asset: pkg-stage ## 打包单个架构的 .rpm（ASSET=amd64 / arm64 / armv7 / 386 / riscv64 / s390x）
+	@test -n "$(RPMARCH_$(ASSET))" || { echo "未知架构 / unknown asset: $(ASSET), one of: $(ARCHES)"; exit 1; }
+	@command -v fpm >/dev/null 2>&1 || { echo "fpm 未安装 / fpm missing: sudo gem install --no-document fpm"; exit 1; }
+	@set -e; fpm -s dir -t rpm --force \
+		-n $(PKG_NAME) -v $(VERSION) --iteration 1 -a $(RPMARCH_$(ASSET)) \
+		--rpm-summary "$(PKG_SUMMARY)" --license "$(PKG_LICENSE)" \
+		--description "$(PKG_DESC)" --url "$(PKG_URL)" \
+		--vendor "$(PKG_VENDOR)" --maintainer "$(PKG_MAINTAINER)" \
+		--depends ca-certificates \
+		--after-install packaging/rpm/post \
+		--after-remove packaging/rpm/postun \
+		--package "$(DIST)/$(PKG_NAME)-$(VERSION)-1.$(RPMARCH_$(ASSET)).rpm" \
+		-C "$(STAGE_DIR)/$(ASSET)" .; \
+	ls -lh "$(DIST)/$(PKG_NAME)-$(VERSION)-1.$(RPMARCH_$(ASSET)).rpm"
+
+pacman-asset: pkg-stage ## 打包单个架构的 pacman 包（ASSET=amd64 / arm64 / armv7 / riscv64）
+	@test -n "$(PACMANARCH_$(ASSET))" || { echo "未知架构 / unknown asset: $(ASSET), one of: $(PACMAN_ARCHES)"; exit 1; }
+	@command -v fpm >/dev/null 2>&1 || { echo "fpm 未安装 / fpm missing: sudo gem install --no-document fpm"; exit 1; }
+	@set -e; fpm -s dir -t pacman --force \
+		-n $(PKG_NAME) -v $(VERSION) -a $(PACMANARCH_$(ASSET)) \
+		--description "$(PKG_DESC)" --url "$(PKG_URL)" \
+		--maintainer "$(PKG_MAINTAINER)" --license "$(PKG_LICENSE)" \
+		--depends ca-certificates --pacman-compression zstd \
+		--package "$(DIST)/$(PKG_NAME)-$(VERSION)-1-$(PACMANARCH_$(ASSET)).pkg.tar.zst" \
+		-C "$(STAGE_DIR)/$(ASSET)" .; \
+	ls -lh "$(DIST)/$(PKG_NAME)-$(VERSION)-1-$(PACMANARCH_$(ASSET)).pkg.tar.zst"
+
+# 一个架构一次，三种格式都出。发布工作流每个矩阵作业调一次它，避免为同一架构重复
+# 构建三遍。
+# One call per architecture builds all three formats, so the release workflow does not
+# build the same architecture three times.
+packages-asset: ## 打包单个架构的全部格式到 dist/（ASSET=…）
+	@test -n "$(ASSET)" || { echo "ASSET 未设置 / ASSET required, one of: $(ARCHES)"; exit 1; }
+	@if [ -z "$(NO_BUILD)" ]; then $(MAKE) --no-print-directory build; fi
+	@if [ -z "$(REUSE_DIST)" ]; then $(MAKE) --no-print-directory dist-asset ASSET=$(ASSET); fi
+	@$(MAKE) --no-print-directory deb-asset ASSET=$(ASSET) NO_BUILD=1 REUSE_DIST=1
+	@$(MAKE) --no-print-directory rpm-asset ASSET=$(ASSET) NO_BUILD=1 REUSE_DIST=1
+	@case " $(PACMAN_ARCHES) " in *" $(ASSET) "*) $(MAKE) --no-print-directory pacman-asset ASSET=$(ASSET) NO_BUILD=1 REUSE_DIST=1 ;; esac
 
 apt-index: ## 生成 apt 源索引到 dist/apt（设置 GPG_KEY_ID 时签名）
 	@command -v apt-ftparchive >/dev/null 2>&1 || { echo "apt-ftparchive 未安装 / missing: apt-get install -y apt-utils"; exit 1; }
@@ -231,4 +308,4 @@ clean: ## 删除构建产物（二进制与 dist/）
 help: ## 显示本帮助
 	@echo "EasySB make 目标 / targets:"
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
