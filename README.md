@@ -24,6 +24,7 @@
 - [Supported Protocols](#supported-protocols)
 - [Quick Start](#quick-start)
 - [Debian / Ubuntu Packages](#debian--ubuntu-packages)
+- [RPM and pacman Packages](#rpm-and-pacman-packages)
 - [Capabilities](#capabilities)
 - [Interactive Menu](#interactive-menu)
 - [Command Line](#command-line)
@@ -61,7 +62,7 @@ EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol de
 .
 ├── main.go                       # Go entrypoint (TUI)
 ├── install.sh                    # One-click installer (deps / binary)
-├── packaging/deb/                # .deb lifecycle scripts (postinst / postrm)
+├── packaging/                    # Package lifecycle scripts (deb/ and rpm/)
 ├── VERSION                       # Single source of truth for the release tag
 ├── AGENTS.md                     # Guide for AI agents and contributors
 ├── go.mod                        # Go module definition
@@ -188,6 +189,38 @@ sudo apt-get install easysb
 ```
 
 To publish a signed index, add an armored, passphrase-free private key as the repository secret `GPG_PRIVATE_KEY`. The release workflow then signs `Release` and publishes `InRelease` plus the public key as `easysb.gpg` on the `debian` tag. Without the secret the index is published unsigned, and the `Trusted: yes` form is the one to use.
+
+---
+
+## RPM and pacman Packages
+
+The same release also carries an `.rpm` for Fedora, RHEL and openSUSE, and a pacman package for Arch. Both wrap the identical binary, the identical units and the same staged tree as the `.deb`, so all three formats agree with each other and with the runtime.
+
+There is no rpm-md repository: GitHub Releases cannot serve `repodata/` under a fixed URL, so the `.rpm` and the pacman package are single files you download and install directly. Upgrade by installing the newer file the same way.
+
+```bash
+# Fedora / RHEL (dnf installs the dependencies too)
+sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1.x86_64.rpm
+
+# openSUSE
+sudo zypper install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1.x86_64.rpm
+
+# Arch
+sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1-x86_64.pkg.tar.zst
+```
+
+The architecture names follow each ecosystem's own spelling, not the Go ones:
+
+| Go `GOARCH` | `.deb` (`DEBARCH_*`) | `.rpm` (`RPMARCH_*`) | pacman (`PACMANARCH_*`) |
+| :--- | :--- | :--- | :--- |
+| `amd64` | `amd64` | `x86_64` | `x86_64` |
+| `arm64` | `arm64` | `aarch64` | `aarch64` |
+| `armv7` | `armhf` | `armv7hl` | `armv7h` |
+| `386` | `i386` | `i686` | — (Arch has no i386) |
+| `riscv64` | `riscv64` | `riscv64` | `riscv64` |
+| `s390x` | `s390x` | `s390x` | — (Arch has no s390x) |
+
+Like the `.deb`, these packages install the files and refresh the systemd unit cache, and leave enabling and starting to the panel once a node is configured.
 
 ---
 
@@ -384,7 +417,7 @@ numbers come from — including why there is no geekbench or fio — is in
 | Validation | `easysb core check -c <config>` builds the configuration with the same engine that would serve it, which is what the deploy path runs before restarting |
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
 | Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make dist-asset`, which read `release/TAGS`) and publishes the binaries under the `v<VERSION>` tag |
-| Packages | `make deb` wraps the same `dist/` binaries with fpm, reading the arch names and unit text from one place (`DEBARCH_*` and `sb --print-unit`); `make apt-index` turns those `.deb` files into the `debian` apt repository |
+| Packages | `make deb`, `make rpm` and `make pacman` wrap the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` and `sb --print-unit`); `make apt-index` turns those `.deb` files into the `debian` apt repository |
 
 ---
 
@@ -399,8 +432,10 @@ make
 make check
 make dist
 
-# Package the .deb files, then build the apt index the repository publishes
+# Package the .deb / .rpm / pacman files, then build the apt index the repository publishes
 make deb
+make rpm
+make pacman
 make apt-index
 
 # Render the dashboard once without interaction (preview / screenshot / debug)

@@ -12,6 +12,9 @@
 - **发布工作流改为走 Makefile**：架构清单、构建标签、链接参数不再在工作流里另写一份——`make release-matrix` 输出架构矩阵 JSON 供动态矩阵使用，`make dist-asset` 按单一映射（armv7 = `GOARCH=arm` + `GOARM=7`）逐架构交叉编译，`make test` 跑带标签测试。测试从「每个架构各跑一遍」收敛为 `prepare` 作业里跑一次，构建矩阵随后基于同一份清单展开。
 - **`.deb` 安装包**：`make deb` 用 fpm 把 `dist/` 里的二进制打成 `easysb_<版本>_<架构>.deb`，可直接 `dpkg -i`；包内含 `/usr/bin/easysb`（内核已编入）、快捷指令 `/usr/bin/sb`、`sing-box.service`、`easysb.service` 与许可证。单元文本由二进制自己打印（`sb --print-unit node|sub`），与面板运行时写下的是同一段代码，包内不再存第二份。Debian 架构名在 Makefile 里集中定义（armv7 → `armhf`、386 → `i386`）。安装时不自动 enable / start：新机器还没有节点配置，由面板在配置完成后启用。
 - **apt 软件源**：`make apt-index` 用 `apt-ftparchive` 把同一批 `.deb` 生成 `Packages` / `Release`，发布工作流将它们发布到固定标签 `debian`。未配置 `GPG_PRIVATE_KEY` 时索引保持未签名（源中写 `Trusted: yes`），配置后自动签名并一并发布公钥 `easysb.gpg`，源中可写 `Signed-By`。
+- **`.rpm` 安装包**：`make rpm` 用 fpm 把同一棵暂存树打成 `easysb-<版本>-1.<架构>.rpm`，供 Fedora / RHEL / openSUSE 使用（`dnf install <url>` / `zypper install <url>`）。rpm 架构名集中在 `RPMARCH_*`（armv7 → `armv7hl`、386 → `i686`），生命周期脚本在 `packaging/rpm/`。`.rpm` 不建源：GitHub Release 无法在固定 URL 下提供 `repodata/`，因此只作为 Release 资产提供。
+- **pacman 安装包**：`make pacman` 用 fpm 打 `easysb-<版本>-1-<架构>.pkg.tar.zst`，供 Arch 使用（`pacman -U <url>`）。架构名集中在 `PACMANARCH_*`（armv7 → `armv7h`），Arch 没有 i386 / s390x，这两个架构不出包。同样只作为 Release 资产提供。
+- **三种格式同源**：`.deb` / `.rpm` / pacman 都由 `make pkg-stage` 生成同一棵暂存树，再按架构由 `make packages-asset` 一次产出三包；二进制、systemd 单元与安装路径只有一处定义，三个包内容一致。发布工作流的打包作业因此按架构产出全部格式，Release 资产同时带上三种安装包。
 
 ### 修复
 

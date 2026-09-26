@@ -24,6 +24,7 @@
 - [支持的协议](#支持的协议)
 - [快速开始](#快速开始)
 - [Debian / Ubuntu 软件包](#debian--ubuntu-软件包)
+- [RPM 与 pacman 软件包](#rpm-与-pacman-软件包)
 - [EasySB 能力](#easysb-能力)
 - [交互菜单](#交互菜单)
 - [命令参数](#命令参数)
@@ -61,7 +62,7 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 .
 ├── main.go                       # Go 入口（TUI 主程序）
 ├── install.sh                    # 一键安装脚本（依赖 / 二进制）
-├── packaging/deb/                # .deb 生命周期脚本（postinst / postrm）
+├── packaging/                    # 软件包生命周期脚本（deb/ 与 rpm/）
 ├── VERSION                       # 发布 tag 的唯一来源
 ├── AGENTS.md                     # 面向 AI Agent 与协作者的说明
 ├── go.mod                        # Go module 定义
@@ -190,6 +191,38 @@ sudo apt-get install easysb
 ```
 
 要发布已签名的索引，把一份不带口令的 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY` 即可；发布工作流随后会签名 `Release`，并在 `debian` 标签上发布 `InRelease` 与公钥 `easysb.gpg`。没有该 secret 时索引保持未签名，使用上面的 `Trusted: yes` 写法。
+
+---
+
+## RPM 与 pacman 软件包
+
+同一个 release 还提供供 Fedora / RHEL / openSUSE 使用的 `.rpm`，以及供 Arch 使用的 pacman 包。两者与 `.deb` 打成的是同一个二进制、同一段单元文本、同一棵暂存树，所以三种格式彼此一致，也与运行时一致。
+
+这里不建 rpm-md 源：GitHub Release 无法在固定 URL 下提供 `repodata/` 目录，因此 `.rpm` 与 pacman 包都是单文件下载、直接安装。升级时用同样的方式安装新版本文件即可。
+
+```bash
+# Fedora / RHEL（dnf 会一并装好依赖）
+sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1.x86_64.rpm
+
+# openSUSE
+sudo zypper install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1.x86_64.rpm
+
+# Arch
+sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1-x86_64.pkg.tar.zst
+```
+
+架构名按各发行版生态自己的写法，而不是 Go 的写法：
+
+| Go `GOARCH` | `.deb`（`DEBARCH_*`） | `.rpm`（`RPMARCH_*`） | pacman（`PACMANARCH_*`） |
+| :--- | :--- | :--- | :--- |
+| `amd64` | `amd64` | `x86_64` | `x86_64` |
+| `arm64` | `arm64` | `aarch64` | `aarch64` |
+| `armv7` | `armhf` | `armv7hl` | `armv7h` |
+| `386` | `i386` | `i686` | —（Arch 没有 i386） |
+| `riscv64` | `riscv64` | `riscv64` | `riscv64` |
+| `s390x` | `s390x` | `s390x` | —（Arch 没有 s390x） |
+
+与 `.deb` 一样，这两个包只负责安装文件并刷新 systemd 单元缓存，启用与启动留给面板，等节点配置完成后再由面板执行。
 
 ---
 
@@ -370,7 +403,7 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 校验 | `easysb core check -c <配置>` 用将来真正服务节点的同一套引擎构建配置，部署路径重启服务前跑的就是它 |
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
 | 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make dist-asset`，二者读的都是 `release/TAGS`），以 tag `v<VERSION>` 发布各架构二进制 |
-| 软件包 | `make deb` 用 fpm 把同一批 `dist/` 二进制打成 `.deb`，架构名与单元文本都只有一处来源（`DEBARCH_*` 与 `sb --print-unit`）；`make apt-index` 再把这些 `.deb` 变成 `debian` 标签上的 apt 源 |
+| 软件包 | `make deb`、`make rpm`、`make pacman` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成三种包，架构名与单元文本都只有一处来源（`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` 与 `sb --print-unit`）；`make apt-index` 再把这些 `.deb` 变成 `debian` 标签上的 apt 源 |
 
 ---
 
@@ -384,8 +417,10 @@ make
 make check
 make dist
 
-# 打 .deb，并生成仓库发布的 apt 索引
+# 打 .deb / .rpm / pacman 包，并生成仓库发布的 apt 索引
 make deb
+make rpm
+make pacman
 make apt-index
 
 # 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）

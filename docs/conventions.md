@@ -62,10 +62,13 @@
 - `.github/workflows/easysb-go-release.yml` cross-compiles `linux/{amd64,arm64,armv7,386,riscv64,s390x}`,
   runs on push to `master` for changes under the watched paths, and publishes
   all assets to the `v<VERSION>` release.
-- The same binaries are wrapped into `.deb` files by `make deb` (fpm) and into the
-  apt index by `make apt-index` (`apt-ftparchive`). The Debian arch names live in
-  the Makefile's `DEBARCH_*`, and the packaged units come from
-  `easysb --print-unit`; do not hand-write a unit under `packaging/`.
+- The same binaries are wrapped into `.deb` (`make deb`), `.rpm` (`make rpm`) and
+  pacman (`make pacman`) packages by fpm, all from one staged tree, and into the apt
+  index by `make apt-index` (`apt-ftparchive`). The per-ecosystem arch names live in
+  the Makefile's `DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*`, and the packaged units
+  come from `easysb --print-unit`; do not hand-write a unit under `packaging/`.
+  Only the `.deb` has a repository (the `debian` tag); the `.rpm` and the pacman
+  package are plain release assets.
 - After a force push, trigger the workflow with a normal push; force pushes do
   not reliably raise a `push` event for Actions.
 
