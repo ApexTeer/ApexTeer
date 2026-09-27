@@ -457,16 +457,26 @@ func (a *App) columnSpan(i int) (start, height int) {
 	return half, a.itemCount() - half
 }
 
-// menuColumns reports how many columns the current menu is drawn in. Only the main
-// menu uses two, and only while its card is wide enough for them.
+// menuColumns reports how many columns the page the operator stands in is drawn in. It has to
+// agree with the renderer, because the arrows move the cursor through whichever layout is on
+// screen: the main menu is two columns once its card is wide enough, and a page inside a
+// section is two columns only when its entries no longer fit one per line and entryRows falls
+// back to the panel's columns. Reading one column while the page drew two is what made right
+// run the highlighted entry and left leave the page on those menus.
 func (a *App) menuColumns() int {
-	if a.sectionID() != "" || len(a.current().nodes) == 0 {
+	if len(a.current().nodes) == 0 {
 		return 1
 	}
 	if (ui.InnerWidth(a.style(), a.frameWidth())-1)/2 < 16 {
 		return 1
 	}
-	return 2
+	if a.sectionID() == "" {
+		return 2
+	}
+	if a.itemCount() > boxRows(a.bodyLayout().menu) {
+		return 2
+	}
+	return 1
 }
 
 // itemCount is the number of selectable rows: menu nodes plus the trailing
@@ -720,7 +730,10 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			a.scrollBy(1)
 		case "pgup":
 			a.scrollBy(-a.screenRows())
-		case "pgdown", " ", "right":
+		// Paging is PageDown or the space bar. Right stays out of it: the arrows move a
+		// cursor, and this screen has none, so a key that runs or pages on one page must
+		// not do a third thing on another.
+		case "pgdown", " ":
 			a.scrollBy(a.screenRows())
 		case "home":
 			a.scroll = 0
@@ -730,16 +743,28 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// The system screen owns a few keys of its own and lets the rest fall through
-	// to the global shortcuts below.
+	if a.toast != "" {
+		a.toast = ""
+	}
+
+	// The system screen owns a few keys of its own and lets the panel-wide shortcuts
+	// (language and refresh) fall through. It has no cursor of its own to move, so no
+	// other key may touch the menu behind it: Enter and the arrows used to reach the
+	// dashboard's cursor, so pressing right on the system screen silently opened a
+	// menu the operator could not see, and Esc then closed the screen onto it.
 	if a.system != nil {
 		if cmd, handled := a.system.handleKey(msg, a); handled {
 			return a, cmd
 		}
-	}
-
-	if a.toast != "" {
-		a.toast = ""
+		switch key {
+		case "l":
+			a.lang = a.lang.Toggle()
+			a.quote = a.lang.Hitokoto()
+			a.remember()
+		case "r":
+			return a, collectStatus(a.scriptVersion)
+		}
+		return a, nil
 	}
 
 	switch key {
@@ -764,18 +789,16 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			a.index = n - 1
 		}
 	case "left":
-		// On the two-column main menu the arrows move between columns; below
-		// that width, and in every submenu, left is the way back.
+		// The arrows only ever move the cursor. On a page drawn in two columns left and
+		// right step between them; on a one-column page there is no column to step to and
+		// the key does nothing. No cursor key opens an entry or leaves a page: Enter enters
+		// and confirms, Esc goes back, and nothing else does either.
 		if a.menuColumns() > 1 {
 			a.moveColumn(-1)
-		} else if len(a.stack) > 1 {
-			a.pop()
 		}
 	case "right":
 		if a.menuColumns() > 1 {
 			a.moveColumn(1)
-		} else {
-			return a, a.enter()
 		}
 	case "enter":
 		return a, a.enter()

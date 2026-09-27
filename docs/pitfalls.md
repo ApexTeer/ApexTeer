@@ -108,6 +108,14 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   key an operator reaches for to leave a trap; and a report that closed on Enter made Enter
   mean "back" on exactly one page. The quit keys are read before any screen sees them
   (`App.handleKey`), and no screen closes on Enter.
+- **The arrow keys move the cursor, and the keys agree with the drawing.** A page inside a
+  section falls back to the panel's two columns once its entries outgrow one per line
+  (`entryRows`), but `menuColumns` still reported one, so `right` ran the highlighted entry —
+  on the service page, a right press started or restarted the service — and `left` went back a
+  level. The key handler has to ask the question the renderer already answered:
+  `menuColumns` now reads `itemCount() > boxRows(layout.menu)` for a section page. No cursor
+  key opens an entry or leaves a page; the destination screens (the system screen) make that
+  explicit by owning every arrow key so none of them reaches the menu behind them.
 
 ## Subscription service
 

@@ -118,6 +118,18 @@ func TestSystemScreenLeavesGlobalKeysAlone(t *testing.T) {
 	if len(a.stack) != 1 {
 		t.Fatal("l changed the menu stack")
 	}
+	// The screen has no cursor to move, so the cursor keys and Enter belong to it, not to
+	// the dashboard behind it. Right used to reach the global handler, which ran the
+	// highlighted root entry: the menu changed under the screen and Esc then closed onto it.
+	for _, key := range []rune{tea.KeyUp, tea.KeyDown, tea.KeyLeft, tea.KeyRight, tea.KeyEnter} {
+		send(a, press(key))
+		if len(a.stack) != 1 {
+			t.Fatalf("key %d changed the menu stack while the system screen was open", key)
+		}
+		if a.system == nil {
+			t.Fatalf("key %d closed the system screen", key)
+		}
+	}
 }
 
 // TestSystemScreenSurvivesTinyTerminals checks the body stays drawable when there
