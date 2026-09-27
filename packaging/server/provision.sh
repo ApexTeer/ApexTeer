@@ -40,7 +40,9 @@ VSFTPD_CONF=/etc/vsftpd.conf
 # The home page is rendered by this Caddy browse template, which draws the directory
 # listing and the install notes together. The release uploads it to dist/repo/.easysb/;
 # provisioning only drops a placeholder when it is missing, so a fresh box never 500s.
-BROWSE_TEMPLATE="${WEBROOT}/.easysb/browse.html"
+BROWSE_DIR="${WEBROOT}/.easysb"
+BROWSE_DIR_NAME="${BROWSE_DIR##*/}"
+BROWSE_TEMPLATE="${BROWSE_DIR}/browse.html"
 
 log()  { printf '\033[36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[32m  ok %s\033[0m\n' "$*"; }
@@ -86,12 +88,16 @@ ${SITE_DOMAIN} {
 
 	# 发布状态文件等点号开头的文件不对外，只留给上传客户端。
 	# Dotfiles such as the deploy state file stay private to the upload client.
-	# 站点模板就在 .easysb/ 里，同一条规则顺带把它挡住。
-	# The site template sits in .easysb/, which the same rule keeps out of sight.
+	# 站点模板就在 ${BROWSE_DIR_NAME}/ 里，同一条规则顺带把它挡住。
+	# The site template sits in ${BROWSE_DIR_NAME}/, which the same rule keeps out of sight.
 	@hidden path /.*
 	respond @hidden 404
 
 	file_server {
+		# 挡是挡住了，列表里仍然会把它列成一个点不开的条目，所以再从列表里摘掉。
+		# Being unreachable is not enough: it would still show up as an entry that goes
+		# nowhere, so it is taken out of the listing as well.
+		hide ${BROWSE_DIR_NAME}
 		browse ${BROWSE_TEMPLATE}
 	}
 }
@@ -313,14 +319,21 @@ verify() {
     echo "  listeners:"
     ss -lntp 2>/dev/null | awk 'NR==1 || /:(21|80|443)[[:space:]]/ {printf "    %s\n", $0}'
   fi
-  printf '  caddy local http: %s\n' \
-    "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${SITE_DOMAIN}" http://127.0.0.1/ || echo n/a)"
-  # 首页由 .easysb/browse.html 渲染，缺文件时 Caddy 直接 500；发布前这里会是占位符，
-  # 所以 「no」 只说明真正的模板还没上传，不说明站点坏了。
-  # The home page comes from .easysb/browse.html and a missing file makes Caddy 500. Before
-  # the first release this says "no" simply because the real template is not uploaded yet.
+  # 走 HTTPS 而不是 http://127.0.0.1/：caddy 会把明文请求 308 到 https，跟过去核实才有
+  # 意义。--resolve 让它连本机，不必依赖公网 DNS 与回环路由；-k 是因为证书由 caddy 现签。
+  # The checks speak HTTPS rather than http://127.0.0.1/, because caddy 308s plaintext
+  # requests to it. --resolve keeps the request on this box and -k covers the certificate
+  # caddy issues on the spot.
+  local -a caddycurl=(curl -sk --resolve "${SITE_DOMAIN}:443:127.0.0.1" "https://${SITE_DOMAIN}/")
+  printf '  caddy local https: %s\n' \
+    "$("${caddycurl[@]}" -o /dev/null -w '%{http_code}' || echo n/a)"
+  # 首页由模板渲染，模板缺失时 Caddy 直接 500。发布前渲染的是占位符，所以「no」要么是
+  # 还没发布，要么是模板没被上传，两种情况都不代表站点坏了。
+  # The home page comes from the template and a missing file makes Caddy 500. Before the
+  # first release the placeholder is what gets rendered, so "no" means either nothing has
+  # been published yet or the template never arrived; neither means the site is broken.
   printf '  首页含安装说明 / home page carries the notes: %s\n' \
-    "$(curl -s -H "Host: ${SITE_DOMAIN}" http://127.0.0.1/ | grep -qF 'Install EasySB' && echo yes || echo 'no (placeholder)')"
+    "$("${caddycurl[@]}" | grep -qF 'Install EasySB' && echo yes || echo no)"
   # 用发布工作流那套凭据在本机真登一次：能列出目录说明口令与 PAM 都没问题，剩下就只是
   # provider 侧防火墙；被拒则把 PAM 与 shell 名单一并打出来。
   # Log in locally with the release workflow's own credentials: a listing means the
