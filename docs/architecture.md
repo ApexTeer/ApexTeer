@@ -15,9 +15,9 @@ panel's own release (`internal/update`) and the optional BBR kernel packages
 ├── main.go                         # entry point, flags, version resolution, `core run`, `--tool`
 ├── VERSION                         # program version, single source of truth
 ├── release/TAGS                    # the one definition of the build tag set
-├── install.sh                      # one-click installer (binary or source)
+├── install.sh                      # installer: one-click, package source, or a local package
 ├── Makefile                        # build / test / dist entry points (see `make help`)
-├── packaging/                      # package lifecycle scripts: deb/ and rpm/
+├── packaging/                      # package lifecycle scripts (deb/, rpm/) and server/
 ├── go.mod / go.sum                 # module github.com/MinimaxFlora/EasySB, Go 1.27.1
 ├── templates/                      # readable JSONC samples and subscription template
 │   ├── anytls/
@@ -58,30 +58,39 @@ editing.
 
 ## Packaging
 
-The `.deb`, the `.rpm`, the pacman package and the apt repository are built from the
-same `dist/` binaries as the release, so nothing is compiled twice and no arch list
-is repeated. All three formats come from one staged tree (`make pkg-stage`), which one
-architecture's job drives end to end with `make packages-asset`:
+One release carries everything, tagged and named `v<VERSION>`: a release tarball per
+architecture and the three package formats. The `.deb`, the `.rpm`, the pacman package
+and the package sources are built from the same `dist/` binaries as the release, so
+nothing is compiled twice and no arch list is repeated. All three formats come from one
+staged tree (`make pkg-stage`), which one architecture's job drives end to end with
+`make packages-asset`:
 
 | Piece | Where it comes from |
 | :--- | :--- |
 | Binary and shortcut | `dist/easysb-linux-<asset>` → `/usr/bin/easysb`, symlinked as `/usr/bin/sb` |
+| Release tarball | `make tarball-asset` wraps that binary as `dist/easysb-<version>-linux-<asset>.tar.gz`, with the member `easysb` at the root, which is what `install.sh` and `internal/update` unpack |
 | `sing-box.service` | `easysb --print-unit node --unit-exec /usr/bin/easysb`, the same `internal/service.UnitBody` the panel writes at runtime |
 | `easysb.service` | `easysb --print-unit sub --unit-exec /usr/bin/easysb`, the same `internal/subd.UnitBody` |
 | Package architecture | `DEBARCH_*`, `RPMARCH_*` and `PACMANARCH_*` in the `Makefile` (armv7 → `armhf` / `armv7hl` / `armv7h`; rpm spells 386 `i686`; Arch has no i386 or s390x, so no pacman package is made for them) |
-| apt index | `make apt-index` runs `apt-ftparchive` over `dist/*.deb`, signing when `GPG_KEY_ID` is set |
+| Source trees | `make repo` lays the same files out as four sources: `make apt-index` runs `apt-ftparchive` over `dist/*.deb` and signs when `GPG_KEY_ID` is set, `make rpm-index` runs `createrepo_c` per rpm architecture, `make pacman-index` runs `repo-add` per pacman architecture, and `bin/` takes the tarballs |
+
+`dist/easysb-linux-<asset>` is only an intermediate: `pkg-stage` copies it into the
+staged tree and `tarball-asset` wraps it, and neither the release nor the sources ever
+publish it on its own.
 
 The package ships the units but does not enable or start them: a fresh host has no
 node configuration, so the panel enables and starts the service once the user has
 configured it. Because the packaged unit lives in `/usr/lib/systemd/system` and the
 panel writes its own to `/etc/systemd/system`, the panel's copy wins while it exists
-and the packaged one is the fallback — the two never fight over one path. The apt
-index and the `.deb` files publish to the fixed `debian` release tag, because apt
-needs a stable URI; the binaries keep publishing to `v<VERSION>`.
+and the packaged one is the fallback — the two never fight over one path.
 
-The `.rpm` and the pacman package have no repository: GitHub Releases cannot serve a
-`repodata/` directory under a stable URL, so they are plain release assets that
-`dnf` / `zypper install <url>` and `pacman -U <url>` consume directly.
+The fixed URLs apt, rpm and pacman need live on the release server
+(`sb.kejizero.xyz`), not on a second release tag: the release workflow syncs
+`dist/repo` there with FTP-Deploy-Action, so `install.sh --method repo` can write a
+source entry that never changes. The server itself is prepared once by
+`packaging/server/provision.sh` (caddy for HTTPS, vsftpd for the upload account,
+`packaging/server/index.html` for the landing page), driven by the "Provision the
+release server" workflow.
 
 ## Packages
 

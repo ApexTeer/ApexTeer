@@ -22,6 +22,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/toolbox"
 	"github.com/MinimaxFlora/EasySB/internal/toolbox/tools"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
+	"github.com/MinimaxFlora/EasySB/internal/update"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
@@ -310,7 +311,7 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 		for _, line := range previewTaskLog() {
 			p.appendLog(line)
 		}
-		p.setDownload(previewDownload())
+		p.setDownload(previewDownload(a.scriptVersion))
 		p.resize(a.width, a.height, a.bodyLayout().span())
 		a.task = p
 	case "toolbox-report":
@@ -336,9 +337,15 @@ func previewTaskLog() []string {
 	}
 }
 
-// previewDownload is the sample download reading of a rendered task screen.
-func previewDownload() (string, int64, int64) {
-	return "easysb-linux-amd64", 12 << 20, 29 << 20
+// previewDownload is the sample download reading of a rendered task screen. The name
+// comes from the same helper the updater downloads with, so the sample cannot drift
+// from the published asset shape.
+func previewDownload(version string) (string, int64, int64) {
+	name, ok := update.AssetFileName(version, "amd64")
+	if !ok {
+		name = "easysb-linux-amd64.tar.gz"
+	}
+	return name, 12 << 20, 29 << 20
 }
 
 // previewToolOutcome is the sample a rendered report screen shows. A report exists only

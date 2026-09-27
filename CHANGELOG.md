@@ -10,11 +10,15 @@
 
 - **Makefile**：常用命令从零散的 `go build` / `go test` / `gofmt` 收进一套目标——`make` 构建（读 `release/TAGS`、盖上提交短哈希）、`make check` 是提交前关卡（`gofmt -l` + `go vet` + 带标签测试）、`make dist` 交叉编译全部发布架构、`make render` / `make screens` 渲染并校验版式，另有 `run` / `test-plain` / `test-race` / `fmt` / `lint` / `install` / `tidy` / `version` / `clean`。`make help` 列出全部目标。标签与版本仍各读 `release/TAGS` / `VERSION`，Makefile 不另抄一份。
 - **发布工作流改为走 Makefile**：架构清单、构建标签、链接参数不再在工作流里另写一份——`make release-matrix` 输出架构矩阵 JSON 供动态矩阵使用，`make dist-asset` 按单一映射（armv7 = `GOARCH=arm` + `GOARM=7`）逐架构交叉编译，`make test` 跑带标签测试。测试从「每个架构各跑一遍」收敛为 `prepare` 作业里跑一次，构建矩阵随后基于同一份清单展开。
-- **`.deb` 安装包**：`make deb` 用 fpm 把 `dist/` 里的二进制打成 `easysb_<版本>_<架构>.deb`，可直接 `dpkg -i`；包内含 `/usr/bin/easysb`（内核已编入）、快捷指令 `/usr/bin/sb`、`sing-box.service`、`easysb.service` 与许可证。单元文本由二进制自己打印（`sb --print-unit node|sub`），与面板运行时写下的是同一段代码，包内不再存第二份。Debian 架构名在 Makefile 里集中定义（armv7 → `armhf`、386 → `i386`）。安装时不自动 enable / start：新机器还没有节点配置，由面板在配置完成后启用。
-- **apt 软件源**：`make apt-index` 用 `apt-ftparchive` 把同一批 `.deb` 生成 `Packages` / `Release`，发布工作流将它们发布到固定标签 `debian`。未配置 `GPG_PRIVATE_KEY` 时索引保持未签名（源中写 `Trusted: yes`），配置后自动签名并一并发布公钥 `easysb.gpg`，源中可写 `Signed-By`。
-- **`.rpm` 安装包**：`make rpm` 用 fpm 把同一棵暂存树打成 `easysb-<版本>-1.<架构>.rpm`，供 Fedora / RHEL / openSUSE 使用（`dnf install <url>` / `zypper install <url>`）。rpm 架构名集中在 `RPMARCH_*`（armv7 → `armv7hl`、386 → `i686`），生命周期脚本在 `packaging/rpm/`。`.rpm` 不建源：GitHub Release 无法在固定 URL 下提供 `repodata/`，因此只作为 Release 资产提供。
-- **pacman 安装包**：`make pacman` 用 fpm 打 `easysb-<版本>-1-<架构>.pkg.tar.zst`，供 Arch 使用（`pacman -U <url>`）。架构名集中在 `PACMANARCH_*`（armv7 → `armv7h`），Arch 没有 i386 / s390x，这两个架构不出包。同样只作为 Release 资产提供。
+- **发布压缩包**：`make tarball-asset` 把每个架构的二进制压成 `easysb-<版本>-linux-<架构>.tar.gz`（成员为 `easysb`、`LICENSE`、`README.md`）。发布与自更新都只发压缩包，`dist/easysb-linux-<架构>` 退回打包中间产物，不再作为资产单独出现。
+- **资产命名统一为 sing-box 风格**：压缩包是 `easysb-<版本>-linux-<Go 架构>.tar.gz`，三种安装包是 `easysb_<版本>_linux_<架构>.<扩展名>`，`<架构>` 用各生态自己的拼写。release 的 tag 与名字统一成 `v<版本>`，取消原先承载 apt 源的 `debian` 标签。
+- **`.deb` 安装包**：`make deb` 用 fpm 把 `dist/` 里的二进制打成 `easysb_<版本>_linux_<架构>.deb`，可直接 `dpkg -i`；包内含 `/usr/bin/easysb`（内核已编入）、快捷指令 `/usr/bin/sb`、`sing-box.service`、`easysb.service` 与许可证。单元文本由二进制自己打印（`sb --print-unit node|sub`），与面板运行时写下的是同一段代码，包内不再存第二份。Debian 架构名在 Makefile 里集中定义（armv7 → `armhf`、386 → `i386`）。安装时不自动 enable / start：新机器还没有节点配置，由面板在配置完成后启用。
+- **`.rpm` 安装包**：`make rpm` 用 fpm 把同一棵暂存树打成 `easysb_<版本>_linux_<架构>.rpm`，供 Fedora / RHEL / openSUSE 使用。rpm 架构名集中在 `RPMARCH_*`（armv7 → `armv7hl`、386 → `i686`），生命周期脚本在 `packaging/rpm/`。
+- **pacman 安装包**：`make pacman` 用 fpm 打 `easysb_<版本>_linux_<架构>.pkg.tar.zst`，供 Arch 使用。架构名集中在 `PACMANARCH_*`（armv7 → `armv7h`），Arch 没有 i386 / s390x，这两个架构不出包。
 - **三种格式同源**：`.deb` / `.rpm` / pacman 都由 `make pkg-stage` 生成同一棵暂存树，再按架构由 `make packages-asset` 一次产出三包；二进制、systemd 单元与安装路径只有一处定义，三个包内容一致。发布工作流的打包作业因此按架构产出全部格式，Release 资产同时带上三种安装包。
+- **四份软件源与发布服务器**：`make repo` 把同一批文件摊成四种客户端要的形态——apt 是扁平的 deb 源（`make apt-index` 跑 `apt-ftparchive` 并签名）、rpm 按架构成 rpm-md 目录（`createrepo_c`）、pacman 按架构成数据库（`repo-add`）、`bin/` 放发布压缩包。发布工作流用 FTP-Deploy-Action 以 FTPS 把这些同步到 `sb.kejizero.xyz`，安装脚本里写的就是这个固定地址。`packaging/server/` 放站点首页与一次性置备脚本：装 caddy、写站点配置、建站点目录、装 vsftpd 并建一个只能写站点根的账号，由 “Provision the release server” 工作流驱动。
+- **`install.sh` 三种方式分开**：一键 / 软件源 / 手动安装包各有各的路径。源安装的 apt 写法用 `/etc/apt/keyrings` 加 `.sources`（`Signed-By`），rpm 区分 dnf5 的 `config-manager addrepo --from-repofile` 与 dnf4 直接读仓库文件，pacman 写 `pacman.conf` 段落；手动安装认得 `.deb` / `.rpm` / `.pkg.tar.zst` / `.tar.gz`。
+- **签名密钥带口令**：发布用 `GPG_PRIVATE_KEY` 与 `GPG_PASSPHRASE` 两个 secret，签名时口令从 0600 临时文件读入，不进进程列表；公钥以 `easysb.gpg` 与索引同目录提供。
 
 ### 修复
 

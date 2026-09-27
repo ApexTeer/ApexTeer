@@ -28,12 +28,18 @@
   `go:embed`, and `install.sh` reads it in a checkout or detects the latest
   release otherwise. Do not add a `main.version` default or a script constant.
 - The program version is independent of the sing-box core version.
-- Release tags are `v<VERSION>`. The workflow, `install.sh`, and
-  `internal/update` all derive the tag from the version; do not create a second
-  naming scheme.
-- The apt repository is the one exception: it publishes to the fixed tag
-  `debian`, because apt needs a URI that never changes, and it carries only the
-  generated index and the `.deb` files. Binaries stay on `v<VERSION>`.
+- Release tags are `v<VERSION>`, and the release name is that same string. The
+  workflow, `install.sh` and `internal/update` all derive the tag from the
+  version; do not create a second naming scheme.
+- Release assets are named after the version and the architecture, in the shape
+  sing-box uses: `easysb-<version>-linux-<goarch>.tar.gz` for the tarball, and
+  `easysb_<version>_linux_<arch>.<ext>` for the `.deb` / `.rpm` / pacman package,
+  where `<arch>` is that ecosystem's own spelling. `dist/easysb-linux-<asset>` is
+  an intermediate and is never published by itself.
+- The package sources live on the release server, not on a second release tag, so
+  `install.sh --method repo` has one fixed address (`https://sb.kejizero.xyz`)
+  to point at. Its four subtrees are `apt/`, `rpm/<arch>/`, `pacman/<arch>/` and
+  `bin/`; `make repo` builds them and the workflow syncs them there.
 
 ## Commits
 
@@ -60,15 +66,21 @@
 ## Release
 
 - `.github/workflows/easysb-go-release.yml` cross-compiles `linux/{amd64,arm64,armv7,386,riscv64,s390x}`,
-  runs on push to `master` for changes under the watched paths, and publishes
-  all assets to the `v<VERSION>` release.
+  runs on push to `master` for changes under the watched paths, and publishes one
+  release, tagged and named `v<VERSION>`, carrying a tarball per architecture and the
+  three package formats.
 - The same binaries are wrapped into `.deb` (`make deb`), `.rpm` (`make rpm`) and
-  pacman (`make pacman`) packages by fpm, all from one staged tree, and into the apt
-  index by `make apt-index` (`apt-ftparchive`). The per-ecosystem arch names live in
-  the Makefile's `DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*`, and the packaged units
-  come from `easysb --print-unit`; do not hand-write a unit under `packaging/`.
-  Only the `.deb` has a repository (the `debian` tag); the `.rpm` and the pacman
-  package are plain release assets.
+  pacman (`make pacman`) packages by fpm, all from one staged tree, and laid out as
+  apt / rpm / pacman / bin sources by `make repo` (`apt-ftparchive`, `createrepo_c`,
+  `repo-add`). The per-ecosystem arch names live in the Makefile's `DEBARCH_*` /
+  `RPMARCH_*` / `PACMANARCH_*`, and the packaged units come from `easysb --print-unit`;
+  do not hand-write a unit under `packaging/`. The release workflow syncs `dist/repo`
+  to the release server with FTP-Deploy-Action; `packaging/server/` holds the landing
+  page and the one-shot provisioning script.
+- The apt index is signed with a passphrase-protected key: the secrets are
+  `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, and signing reads the passphrase from a
+  0600 file so it never reaches a process list. Run the "Provision the release
+  server" workflow once; `FTP_PASSWORD` and `SERVER_SSH_PASSWORD` are what it needs.
 - After a force push, trigger the workflow with a normal push; force pushes do
   not reliably raise a `push` event for Actions.
 
