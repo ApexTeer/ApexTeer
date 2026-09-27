@@ -94,7 +94,8 @@ server" workflow. The landing page is not a static file: `packaging/server/brows
 is the template Caddy renders over the directory listing, so the home page shows the
 four source directories and the install commands together. It travels to the server
 inside `dist/repo/.easysb/`, where the Caddyfile's dotfile rule keeps it from being
-served or listed; `packaging/server/favicon.svg` sits next to it as `/favicon.svg`.
+served or listed; `packaging/server/favicon.svg` travels with it, and an exact-path
+route serves it as `/favicon.svg`, so the root listing stays the four sources alone.
 
 ## Packages
 
