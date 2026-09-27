@@ -195,6 +195,27 @@ start_vsftpd() {
   ok "vsftpd 运行中 / vsftpd is running"
 }
 
+# 自检 / self-check. Provisioning is only useful if the ports the release workflow and
+# the package managers dial are actually listening, so print what is bound and let the
+# local caddy answer once. If port 21 is missing here, the unit failed to keep the
+# listener up; if it is present here but refused from outside, a provider firewall is
+# in the way.
+verify() {
+  log "自检 / verifying"
+  local unit
+  for unit in caddy vsftpd; do
+    printf '  %-7s %s\n' "$unit" "$(systemctl is-active "$unit" 2>&1) / $(systemctl is-enabled "$unit" 2>&1)"
+  done
+  if command -v ss >/dev/null 2>&1; then
+    echo "  listeners:"
+    ss -lntp 2>/dev/null | awk 'NR==1 || /:(21|80|443)[[:space:]]/ {printf "    %s\n", $0}'
+  fi
+  printf '  caddy local http: %s\n' \
+    "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${SITE_DOMAIN}" http://127.0.0.1/ || echo n/a)"
+  printf '  站点根目录属主 / webroot owner: %s\n' "$(stat -c '%U:%G %a' "$WEBROOT")"
+  printf '  vsftpd 用户列表 / vsftpd userlist: %s\n' "$(cat /etc/vsftpd.userlist 2>/dev/null | tr '\n' ' ')"
+}
+
 summary() {
   cat <<EOF
 
@@ -216,4 +237,5 @@ make_webroot
 install_vsftpd
 start_caddy
 start_vsftpd
+verify
 summary
