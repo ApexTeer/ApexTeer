@@ -41,7 +41,6 @@ VSFTPD_CONF=/etc/vsftpd.conf
 # listing and the install notes together. The release uploads it to dist/repo/.easysb/;
 # provisioning only drops a placeholder when it is missing, so a fresh box never 500s.
 BROWSE_DIR="${WEBROOT}/.easysb"
-BROWSE_DIR_NAME="${BROWSE_DIR##*/}"
 BROWSE_TEMPLATE="${BROWSE_DIR}/browse.html"
 
 log()  { printf '\033[36m==> %s\033[0m\n' "$*"; }
@@ -86,18 +85,18 @@ ${SITE_DOMAIN} {
 	encode zstd gzip
 	root * ${WEBROOT}
 
-	# 发布状态文件等点号开头的文件不对外，只留给上传客户端。
-	# Dotfiles such as the deploy state file stay private to the upload client.
-	# 站点模板就在 ${BROWSE_DIR_NAME}/ 里，同一条规则顺带把它挡住。
-	# The site template sits in ${BROWSE_DIR_NAME}/, which the same rule keeps out of sight.
+	# 点号开头的文件（FTP 的同步状态文件、站点模板）不对外，只留给上传客户端与 Caddy。
+	# Dotfiles - the FTP sync state file, the site template - stay away from readers.
 	@hidden path /.*
 	respond @hidden 404
 
 	file_server {
-		# 挡是挡住了，列表里仍然会把它列成一个点不开的条目，所以再从列表里摘掉。
-		# Being unreachable is not enough: it would still show up as an entry that goes
-		# nowhere, so it is taken out of the listing as well.
-		hide ${BROWSE_DIR_NAME}
+		# 路径挡住了，列表里仍然会把它们列成点不开的条目，所以再从列表里摘掉。hide 不带
+		# 分隔符时按路径分量做 filepath.Match，`.*` 于是匹配任意一层里的点开头的名字。
+		# Out of reach is not enough: they would still be listed as entries that go nowhere.
+		# A hide pattern without a separator is matched against each path component with
+		# filepath.Match, so `.*` catches a dot-name at any depth.
+		hide .*
 		browse ${BROWSE_TEMPLATE}
 	}
 }
