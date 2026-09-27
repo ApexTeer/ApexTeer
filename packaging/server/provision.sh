@@ -232,16 +232,15 @@ verify() {
       -p Type,ExecMainStatus,ExecMainCode,User,Group,ProtectSystem,ProtectHome,PrivateTmp,RestrictAddressFamilies \
       2>&1 | sed 's/^/    /'
     echo "  --- vsftpd 直接运行 / direct run ---"
-    local out err rc conf
-    # 把我们的配置与发行版自带的那份各跑一次：两份都失败说明问题不在配置内容，
-    # 只有我们那份失败则说明是某一行。stdout 与 stderr 落盘再读，避免丢消息。
-    # Run ours and the distribution's own copy: if both fail the config content is not
-    # the cause; if only ours fails, a line of ours is. Output goes to files first so
-    # nothing is lost.
+    local out err rc conf snippet
+    # 退出码 124 表示被 timeout 收回，也就是它正常服务着；其余都是启动即退出。
+    # Exit 124 means timeout reclaimed it, i.e. it was serving; anything else exited at
+    # startup.
+    # 把我们的配置与发行版自带的那份各跑一次，确认问题出在配置内容上。
+    # Run ours and the distribution's own copy to confirm the content is at fault.
     for conf in "$VSFTPD_CONF" "${VSFTPD_CONF}.orig"; do
       [ -r "$conf" ] || continue
-      out="$(mktemp)"
-      err="$(mktemp)"
+      out="$(mktemp)"; err="$(mktemp)"
       set +e
       timeout 2 "$(command -v vsftpd)" "$conf" >"$out" 2>"$err"
       rc=$?
@@ -251,6 +250,23 @@ verify() {
       sed 's/^/      err: /' "$err"
       rm -f "$out" "$err"
     done
+    # 逐行删除定位：删掉某一行后能正常服务，那一行就是致命的。
+    # Leave-one-out: if dropping a line lets it serve, that line is the fatal one.
+    snippet="$(mktemp)"
+    grep -vE '^[[:space:]]*(#|$)' "$VSFTPD_CONF" > "$snippet"
+    local n=0 i
+    while IFS= read -r line; do
+      n=$((n + 1))
+      out="$(mktemp)"
+      awk -v skip="$n" 'NR != skip' "$snippet" > "$out"
+      set +e
+      timeout 2 "$(command -v vsftpd)" "$out" >/dev/null 2>&1
+      rc=$?
+      set -e
+      [ "$rc" = 124 ] && printf '    删除后可运行 / survives without: %s\n' "$line"
+      rm -f "$out"
+    done < "$snippet"
+    rm -f "$snippet"
     echo "  --- 近期 journal / recent journal ---"
     journalctl --since '-3 min' --no-pager 2>/dev/null | grep -i vsftpd | tail -15 | sed 's/^/    /'
     dmesg 2>/dev/null | tail -3 | sed 's/^/    dmesg: /'
