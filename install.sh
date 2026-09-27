@@ -156,10 +156,16 @@ OS_ID=''
 detect_system() {
   local id_like=''
   if [ -r /etc/os-release ]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    OS_ID="${ID:-linux}"
-    id_like="${ID_LIKE:-}"
+    # 在子 shell 里取这两个字段，不要 source 进本 shell：os-release 自带一个 VERSION
+    # 字段（Debian 13 上是 "13 (trixie)"、12 上是 "12 (bookworm)"），source 会把脚本
+    # 自己的 VERSION 覆盖成这个系统版本串，resolve_version 随后把它当成用户指定的版本号，
+    # 拼出一个不存在的下载地址，只剩一句 404。
+    # Read these two fields in a subshell instead of sourcing: os-release has a VERSION
+    # field of its own ("13 (trixie)" on Debian 13, "12 (bookworm)" on 12), and sourcing it
+    # overwrites the script's VERSION, which resolve_version then takes for a version the
+    # user pinned and turns into a dead download URL whose only symptom is a bare 404.
+    OS_ID="$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-linux}")"
+    id_like="$(. /etc/os-release 2>/dev/null; printf '%s' "${ID_LIKE:-}")"
   else
     OS_ID='linux'
   fi
@@ -206,6 +212,17 @@ latest_version() {
 # VERSION 的唯一来源；RELEASE_TAG 永远由它派生，脚本里不再出现第二个版本号。
 # The single source of VERSION; RELEASE_TAG is always derived from it, so the script
 # carries no second copy of the number.
+# 版本号应该是 v?数字(.数字)*。检查一道，是为了让被污染的值在拼地址之前就报出来，
+# 而不是去下载一个不存在的压缩包、只得到一句 404。
+# A version is v?digits(.digits)*. The check exists so a polluted value is reported before
+# it becomes a URL, rather than surfacing as a download of something that is not there.
+valid_version() {
+  case "$1" in
+    ''|*[!0-9.]*) return 1 ;;
+  esac
+  return 0
+}
+
 resolve_version() {
   local dir v
 
@@ -214,6 +231,7 @@ resolve_version() {
   if [ -n "$VERSION" ]; then
     VERSION="$(printf '%s' "$VERSION" | tr -d '[:space:]')"
     VERSION="${VERSION#v}"
+    valid_version "$VERSION" || die "$(say "版本号不合法: $VERSION" "not a version number: $VERSION")"
     RELEASE_TAG="v${VERSION}"
     return 0
   fi
