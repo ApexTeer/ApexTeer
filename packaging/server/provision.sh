@@ -232,33 +232,28 @@ verify() {
       -p Type,ExecMainStatus,ExecMainCode,User,Group,ProtectSystem,ProtectHome,PrivateTmp,RestrictAddressFamilies \
       2>&1 | sed 's/^/    /'
     echo "  --- vsftpd 直接运行 / direct run ---"
-    set +e
-    out="$(timeout 2 "$(command -v vsftpd)" "$VSFTPD_CONF" 2>&1)"
-    rc=$?
-    set -e
-    printf '    rc=%s\n' "$rc"
-    printf '%s\n' "$out" | sed 's/^/    /'
-    echo "  --- 配置项是否被识别 / recognised options ---"
-    local strfile key
-    # binutils 的 strings 不一定在场，用 tr 把不可打印字节换成换行即可得到同一批字符串。
-    # binutils' strings is not guaranteed to be installed; tr turns non-printable bytes
-    # into newlines and yields the same set.
-    strfile="$(mktemp)"
-    tr -c '[:print:]' '\n' < /usr/sbin/vsftpd | sort -u > "$strfile"
-    while IFS= read -r line; do
-      line="${line%%#*}"
-      case "$line" in *=*) ;; *) continue ;; esac
-      key="${line%%=*}"
-      key="$(printf '%s' "$key" | tr -d '[:space:]')"
-      [ -n "$key" ] || continue
-      if grep -qx -- "$key" "$strfile"; then
-        printf '    known     %s\n' "$key"
-      else
-        printf '    UNKNOWN   %s\n' "$key"
-      fi
-    done < "$VSFTPD_CONF"
-    rm -f "$strfile"
-    dmesg 2>/dev/null | tail -5 | sed 's/^/    dmesg: /'
+    local out err rc conf
+    # 把我们的配置与发行版自带的那份各跑一次：两份都失败说明问题不在配置内容，
+    # 只有我们那份失败则说明是某一行。stdout 与 stderr 落盘再读，避免丢消息。
+    # Run ours and the distribution's own copy: if both fail the config content is not
+    # the cause; if only ours fails, a line of ours is. Output goes to files first so
+    # nothing is lost.
+    for conf in "$VSFTPD_CONF" "${VSFTPD_CONF}.orig"; do
+      [ -r "$conf" ] || continue
+      out="$(mktemp)"
+      err="$(mktemp)"
+      set +e
+      timeout 2 "$(command -v vsftpd)" "$conf" >"$out" 2>"$err"
+      rc=$?
+      set -e
+      printf '    %s rc=%s\n' "$conf" "$rc"
+      sed 's/^/      out: /' "$out"
+      sed 's/^/      err: /' "$err"
+      rm -f "$out" "$err"
+    done
+    echo "  --- 近期 journal / recent journal ---"
+    journalctl --since '-3 min' --no-pager 2>/dev/null | grep -i vsftpd | tail -15 | sed 's/^/    /'
+    dmesg 2>/dev/null | tail -3 | sed 's/^/    dmesg: /'
   fi
   if command -v ss >/dev/null 2>&1; then
     echo "  listeners:"
