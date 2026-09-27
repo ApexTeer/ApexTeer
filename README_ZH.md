@@ -263,7 +263,7 @@ sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/e
 
 apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero.xyz`。在 Actions 页跑一次 **Provision the release server** 工作流即可备好：装 caddy 提供 HTTPS、建立站点目录、装 vsftpd 并只开一个被限制在该目录里的账号。之后每次发布都会用 FTP-Deploy-Action 经 FTPS 把 `dist/repo` 同步上去，源始终是新的。
 
-置备与发布共用到四个仓库 secret：
+置备与发布共用到六个仓库 secret：
 
 | Secret | 用于 | 说明 |
 | :--- | :--- | :--- |
@@ -271,17 +271,12 @@ apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero
 | `GPG_PASSPHRASE` | 发布 | 该私钥的口令，仅在带口令时需要 |
 | `FTP_PASSWORD` | 发布 | 服务器上传账号的口令 |
 | `SERVER_SSH_PASSWORD` | 置备 | 服务器 root 口令，只在一次性置备时用到 |
+| `SERVER_HOST` | 发布 + 置备 | 发布服务器地址，两个工作流共用 |
+| `SERVER_USER` | 置备 | 置备时登录的账号 |
 
 服务器只需准备一次，因此 `SERVER_SSH_PASSWORD` 只有置备那次需要；日常发布只用 `FTP_PASSWORD`。
 
-这台服务器的地址与置备时登录的账号放在仓库变量里，所以换一台机器是改设置，不是发一次提交：
-
-| 变量 | 说明 |
-| :--- | :--- |
-| `SERVER_HOST` | 发布服务器地址，两个工作流共用 |
-| `SERVER_USER` | 置备时登录的账号 |
-
-两个都必填：取值缺失时任务直接失败，不会退回某台默认主机。
+`SERVER_HOST` 与 `SERVER_USER` 把地址和登录名留在仓库之外，所以换一台机器是改设置，不是发一次提交。两个都必填：取值缺失时任务直接失败，不会退回某台默认主机。
 
 ---
 

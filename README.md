@@ -261,7 +261,7 @@ Like the `.deb`, these packages install the files and refresh the systemd unit c
 
 The fixed URLs apt, rpm and pacman need are served by one host, `sb.kejizero.xyz`. Prepare it once from the Actions tab: run the **Provision the release server** workflow, which installs caddy for HTTPS, creates the site tree, and installs vsftpd with one account confined to that tree. After that, every release run syncs `dist/repo` there with FTP-Deploy-Action, over FTPS, and the sources stay current.
 
-The setup and the release runs need four repository secrets:
+The setup and the release runs need six repository secrets:
 
 | Secret | Used by | What it is |
 | :--- | :--- | :--- |
@@ -269,17 +269,14 @@ The setup and the release runs need four repository secrets:
 | `GPG_PASSPHRASE` | release | that key's passphrase, only when it has one |
 | `FTP_PASSWORD` | release | the password of the server's upload account |
 | `SERVER_SSH_PASSWORD` | provision | the server's root password, only for the one-time setup |
+| `SERVER_HOST` | release + provision | the release server's address, shared by both workflows |
+| `SERVER_USER` | provision | the account the provisioning run logs in as |
 
 The server is prepared once, so `SERVER_SSH_PASSWORD` is only needed for the provisioning run; the release runs use `FTP_PASSWORD` alone.
 
-The address of that server and the login the provisioning run uses are repository variables, so moving to another host is a settings change rather than a commit:
-
-| Variable | What it is |
-| :--- | :--- |
-| `SERVER_HOST` | the release server's address, shared by both workflows |
-| `SERVER_USER` | the account the provisioning run logs in as |
-
-Both are required: a missing value fails the run instead of falling back to a default host.
+`SERVER_HOST` and `SERVER_USER` keep that address and login out of the repository, so moving
+to another host is a settings change rather than a commit. Both are required: a missing value
+fails the run instead of falling back to a default host.
 
 ---
 
