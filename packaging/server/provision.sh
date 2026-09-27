@@ -238,6 +238,23 @@ verify() {
     set -e
     printf '    rc=%s\n' "$rc"
     printf '%s\n' "$out" | sed 's/^/    /'
+    echo "  --- 配置项是否被识别 / recognised options ---"
+    local strfile key
+    strfile="$(mktemp)"
+    strings /usr/sbin/vsftpd | sort -u > "$strfile"
+    while IFS= read -r line; do
+      line="${line%%#*}"
+      case "$line" in *=*) ;; *) continue ;; esac
+      key="${line%%=*}"
+      key="$(printf '%s' "$key" | tr -d '[:space:]')"
+      [ -n "$key" ] || continue
+      if grep -qx -- "$key" "$strfile"; then
+        printf '    known     %s\n' "$key"
+      else
+        printf '    UNKNOWN   %s\n' "$key"
+      fi
+    done < "$VSFTPD_CONF"
+    rm -f "$strfile"
     dmesg 2>/dev/null | tail -5 | sed 's/^/    dmesg: /'
   fi
   if command -v ss >/dev/null 2>&1; then
