@@ -75,8 +75,10 @@
   `repo-add`). The per-ecosystem arch names live in the Makefile's `DEBARCH_*` /
   `RPMARCH_*` / `PACMANARCH_*`, and the packaged units come from `easysb --print-unit`;
   do not hand-write a unit under `packaging/`. The release workflow syncs `dist/repo`
-  to the release server with FTP-Deploy-Action; `packaging/server/` holds the landing
-  page and the one-shot provisioning script.
+  to the release server with FTP-Deploy-Action; `packaging/server/` holds the one-shot
+  provisioning script, the Caddy browse template the landing page is rendered from, and
+  the favicon. The template travels as `dist/repo/.easysb/browse.html`, so `make repo`
+  is the only place that decides where it lands.
 - The apt index is signed with a passphrase-protected key: the secrets are
   `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, and signing reads the passphrase from a
   0600 file so it never reaches a process list. Run the "Provision the release

@@ -35,6 +35,12 @@ TLS_CERT=/etc/ssl/certs/easysb-ftp.crt
 TLS_KEY=/etc/ssl/private/easysb-ftp.key
 CADDYFILE=/etc/caddy/Caddyfile
 VSFTPD_CONF=/etc/vsftpd.conf
+# 站点首页由这份 Caddy browse 模板渲染：它同时画出目录列表和安装说明。模板随发布上传
+# 到 dist/repo/.easysb/，置备只在它缺失时放一份占位符，免得刚置备好的站点直接 500。
+# The home page is rendered by this Caddy browse template, which draws the directory
+# listing and the install notes together. The release uploads it to dist/repo/.easysb/;
+# provisioning only drops a placeholder when it is missing, so a fresh box never 500s.
+BROWSE_TEMPLATE="${WEBROOT}/.easysb/browse.html"
 
 log()  { printf '\033[36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[32m  ok %s\033[0m\n' "$*"; }
@@ -80,10 +86,14 @@ ${SITE_DOMAIN} {
 
 	# 发布状态文件等点号开头的文件不对外，只留给上传客户端。
 	# Dotfiles such as the deploy state file stay private to the upload client.
+	# 站点模板就在 .easysb/ 里，同一条规则顺带把它挡住。
+	# The site template sits in .easysb/, which the same rule keeps out of sight.
 	@hidden path /.*
 	respond @hidden 404
 
-	file_server browse
+	file_server {
+		browse ${BROWSE_TEMPLATE}
+	}
 }
 EOF
   caddy fmt --overwrite "$CADDYFILE" >/dev/null
@@ -105,8 +115,52 @@ start_caddy() {
 
 make_webroot() {
   log "建立站点根目录 / creating $WEBROOT"
-  mkdir -p "$WEBROOT"/{apt,rpm,pacman,bin}
-  ok "$WEBROOT/{apt,rpm,pacman,bin}"
+  mkdir -p "$WEBROOT"/{apt,rpm,pacman,bin} "$(dirname "$BROWSE_TEMPLATE")"
+  ok "$WEBROOT/{apt,rpm,pacman,bin,.easysb}"
+
+  # 站点首页曾经是这份静态文件。file_server 只要见到 index.html 就直接发它，放着不管
+  # 的话模板永远轮不到渲染；而 FTP 同步只增不改，也不会替我们收走它，所以在这里删掉。
+  # The home page used to be this static file. file_server serves index.html whenever it
+  # exists, which would shadow the template forever, and the FTP sync only adds files, so
+  # it is removed here.
+  if [ -e "$WEBROOT/index.html" ]; then
+    rm -f "$WEBROOT/index.html"
+    warn "删除已被模板取代的首页 / removed the index.html the template replaced"
+  fi
+}
+
+# 模板缺失时补一份最简的目录列表，让站点先能打开。发布工作流把真正的模板上传到这里
+# （dist/repo/.easysb/browse.html），所以这份占位符只在「刚置备、还没发布过」期间存在。
+# A minimal listing so the site opens before anything has been uploaded. The release
+# workflow puts the real template here (dist/repo/.easysb/browse.html), so this
+# placeholder only exists between provisioning and the first release.
+write_browse_template() {
+  if [ -s "$BROWSE_TEMPLATE" ]; then
+    ok "站点模板已就位 / site template in place"
+    return 0
+  fi
+  log "写站点模板占位符 / writing a placeholder site template"
+  cat > "$BROWSE_TEMPLATE" <<'EOF'
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>{{html .Name}} - EasySB repository</title>
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	</head>
+	<body>
+		<h1>{{html .Name}}</h1>
+		<p>EasySB package sources: /apt, /rpm, /pacman, /bin</p>
+		<ul>
+			{{- range .Items}}
+			<li><a href="{{html .URL}}">{{html .Name}}</a></li>
+			{{- end}}
+		</ul>
+	</body>
+</html>
+EOF
+  ok "$BROWSE_TEMPLATE"
 }
 
 # --- vsftpd -------------------------------------------------------------------
@@ -261,6 +315,12 @@ verify() {
   fi
   printf '  caddy local http: %s\n' \
     "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${SITE_DOMAIN}" http://127.0.0.1/ || echo n/a)"
+  # 首页由 .easysb/browse.html 渲染，缺文件时 Caddy 直接 500；发布前这里会是占位符，
+  # 所以 「no」 只说明真正的模板还没上传，不说明站点坏了。
+  # The home page comes from .easysb/browse.html and a missing file makes Caddy 500. Before
+  # the first release this says "no" simply because the real template is not uploaded yet.
+  printf '  首页含安装说明 / home page carries the notes: %s\n' \
+    "$(curl -s -H "Host: ${SITE_DOMAIN}" http://127.0.0.1/ | grep -qF 'Install EasySB' && echo yes || echo 'no (placeholder)')"
   # 用发布工作流那套凭据在本机真登一次：能列出目录说明口令与 PAM 都没问题，剩下就只是
   # provider 侧防火墙；被拒则把 PAM 与 shell 名单一并打出来。
   # Log in locally with the release workflow's own credentials: a listing means the
@@ -303,8 +363,9 @@ EOF
 }
 
 install_caddy
-write_caddyfile
 make_webroot
+write_browse_template
+write_caddyfile
 install_vsftpd
 start_caddy
 start_vsftpd

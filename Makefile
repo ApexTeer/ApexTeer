@@ -360,10 +360,18 @@ pacman-index: ## 生成 pacman 源到 dist/repo/pacman/<架构>（需要 repo-ad
 		done; \
 	done
 
+# 站点页面不走静态 index.html：置备脚本让 Caddy 用 dist/repo 里这份模板渲染目录列表，
+# 所以站点首页既是文件列表，又带着安装说明。模板放在 .easysb/ 这个点目录里，Caddyfile
+# 的点号文件规则（@hidden path /.*）正好把它挡在外面，读者只能看到列表本身。
+# The site page is not a static index.html: provisioning points Caddy at this template, so
+# the home page is the directory listing plus the install notes. The template lives in the
+# dot-directory .easysb/, which the Caddyfile's @hidden path /.* rule keeps out of reach.
 repo: apt-index rpm-index pacman-index ## 组装完整软件源到 dist/repo（apt / rpm / pacman / bin）
 	@set -e; bin="$(REPO_DIR)/bin"; rm -rf "$$bin"; mkdir -p "$$bin"; \
 	cp -f $(wildcard $(DIST)/$(PKG_NAME)-*-linux-*.tar.gz) "$$bin/"; \
-	cp -f packaging/server/index.html "$(REPO_DIR)/index.html"; \
+	mkdir -p "$(REPO_DIR)/.easysb"; \
+	cp -f packaging/server/browse.html "$(REPO_DIR)/.easysb/browse.html"; \
+	cp -f packaging/server/favicon.svg "$(REPO_DIR)/favicon.svg"; \
 	echo "源目录树 / repository tree:"; \
 	find "$(REPO_DIR)" -type f | sort | sed 's|^|  |'
 

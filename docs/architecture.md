@@ -89,8 +89,12 @@ The fixed URLs apt, rpm and pacman need live on the release server
 `dist/repo` there with FTP-Deploy-Action, so `install.sh --method repo` can write a
 source entry that never changes. The server itself is prepared once by
 `packaging/server/provision.sh` (caddy for HTTPS, vsftpd for the upload account,
-`packaging/server/index.html` for the landing page), driven by the "Provision the
-release server" workflow.
+a Caddy browse template for the landing page), driven by the "Provision the release
+server" workflow. The landing page is not a static file: `packaging/server/browse.html`
+is the template Caddy renders over the directory listing, so the home page shows the
+four source directories and the install commands together. It travels to the server
+inside `dist/repo/.easysb/`, where the Caddyfile's dotfile rule keeps it from being
+served or listed; `packaging/server/favicon.svg` sits next to it as `/favicon.svg`.
 
 ## Packages
 

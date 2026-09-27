@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- EasySB 站点图标：蓝色圆角方块上的三条书目线，正合这个页面的用途——一份目录。 -->
+<!-- Site icon: three listing lines on a rounded blue tile, which is what this page shows. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="EasySB">
+	<rect width="32" height="32" rx="7" fill="#006ed3"/>
+	<g fill="#fff">
+		<rect x="7" y="9.4" width="18" height="3.4" rx="1.7"/>
+		<rect x="7" y="14.3" width="12.5" height="3.4" rx="1.7"/>
+		<rect x="7" y="19.2" width="15.5" height="3.4" rx="1.7"/>
+	</g>
+</svg>
