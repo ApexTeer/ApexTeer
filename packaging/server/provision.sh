@@ -219,13 +219,26 @@ verify() {
       journalctl -u "$unit" -n 25 --no-pager 2>&1 | sed 's/^/    /'
     fi
   done
-  # vsftpd 的配置错误只写到它自己的 stderr，systemd 单元日志里看不到，所以直接跑一次
-  # 把它的原话取回来；配置有效时它会正常起服务，由 timeout 收回。
-  # vsftpd writes configuration errors to its own stderr, which the unit log does not
-  # show, so run it once directly and keep its own words.
+  # vsftpd 的失败信息不出现在单元日志里，所以单元没起来时把单元定义、systemd 记录
+  # 的退出码和它自己那一次前台运行一并打出来。前台运行由 timeout 收回；退出码 124
+  # 说明它其实是被收回的正常服务。
+  # A failed vsftpd leaves no message in the unit log, so when it is down the unit, the
+  # exit status systemd recorded and one foreground run are printed. The run is reclaimed
+  # by timeout; exit code 124 means it was serving normally.
   if ! systemctl is-active --quiet vsftpd; then
+    echo "  --- vsftpd 单元 / unit ---"
+    systemctl cat vsftpd 2>&1 | sed 's/^/    /'
+    systemctl show vsftpd \
+      -p Type,ExecMainStatus,ExecMainCode,User,Group,ProtectSystem,ProtectHome,PrivateTmp,RestrictAddressFamilies \
+      2>&1 | sed 's/^/    /'
     echo "  --- vsftpd 直接运行 / direct run ---"
-    timeout 2 "$(command -v vsftpd)" "$VSFTPD_CONF" 2>&1 | sed 's/^/    /' || true
+    set +e
+    out="$(timeout 2 "$(command -v vsftpd)" "$VSFTPD_CONF" 2>&1)"
+    rc=$?
+    set -e
+    printf '    rc=%s\n' "$rc"
+    printf '%s\n' "$out" | sed 's/^/    /'
+    dmesg 2>/dev/null | tail -5 | sed 's/^/    dmesg: /'
   fi
   if command -v ss >/dev/null 2>&1; then
     echo "  listeners:"
