@@ -216,6 +216,29 @@ jobs:
             dist/*.rpm
             dist/*.pkg.tar.zst
 
+      # action-gh-release 只覆盖同名文件，改过命名之后旧资产会一直躺在 release 里。
+      # 放在上传之后清理，上传万一失败时上一轮的资产还在。清完资产集合就等于刚构建的
+      # 那一套。
+      # action-gh-release only overwrites same-named files, so old assets linger after a
+      # rename. Pruning after the upload keeps the previous assets in place if the upload
+      # fails; once it is done the release equals what was just built.
+      - name: 清理旧资产
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="v${{ needs.prepare.outputs.version }}"
+          keep="$(cd dist && ls -1 *.tar.gz *.deb *.rpm *.pkg.tar.zst 2>/dev/null | sort)"
+          printf '本轮资产 / current assets:\n%s\n' "$keep"
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            if printf '%s\n' "$keep" | grep -qxF "$name"; then
+              continue
+            fi
+            echo "删除 / pruning: $name"
+            gh release delete-asset "$version" "$name" --yes
+          done < <(gh release view "$version" --json assets --jq '.assets[].name')
+
   # 把同一套包组装成四份软件源并同步到发布服务器：apt 是扁平的 deb 源，rpm 与 pacman
   # 按架构分目录，bin 放发布压缩包。GitHub Release 只能当静态下载，服务的固定地址来自
   # 这台服务器，install.sh 里写的就是它。
