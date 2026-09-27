@@ -27,6 +27,7 @@ SITE_DOMAIN="${SITE_DOMAIN:-sb.kejizero.xyz}"
 WEBROOT="${WEBROOT:-/var/www/${SITE_DOMAIN}}"
 FTP_USER="${FTP_USER:-easysb}"
 FTP_PASSWORD="${FTP_PASSWORD:-}"
+FTP_SHELL="${FTP_SHELL:-/usr/sbin/nologin}"
 FTP_PASV_MIN="${FTP_PASV_MIN:-40000}"
 FTP_PASV_MAX="${FTP_PASV_MAX:-40100}"
 
@@ -146,11 +147,14 @@ userlist_file=/etc/vsftpd.userlist
 
 # 登录必须走 TLS（显式 FTPS），数据通道保持兼容。
 # Login must use TLS (explicit FTPS); the data channel stays compatible.
+# 不锁定 TLS 版本：Ubuntu 24.04 的 vsftpd 3.0.3 没有 ssl_tlsv1_2 这个选项，写了会以
+# «bad config» 直接退出 2，而且不留任何日志。不写则自动协商可用的最高版本。
+# No TLS version is pinned: vsftpd 3.0.3 on Ubuntu 24.04 has no ssl_tlsv1_2 option and
+# exits 2 on it without logging anything. Left out, the best version is negotiated.
 ssl_enable=YES
 force_local_logins_ssl=YES
 force_local_data_ssl=NO
 require_ssl_reuse=NO
-ssl_tlsv1_2=YES
 rsa_cert_file=${TLS_CERT}
 rsa_private_key_file=${TLS_KEY}
 
@@ -173,15 +177,23 @@ EOF
 
   log "建立 FTP 账号 / creating the FTP account"
   if id "$FTP_USER" >/dev/null 2>&1; then
-    usermod -d "$WEBROOT" -s /usr/sbin/nologin "$FTP_USER"
+    usermod -d "$WEBROOT" -s "$FTP_SHELL" "$FTP_USER"
   else
     # -U 保证有一个同名组，下面按「用户:」改属主时不依赖 login.defs 的默认值。
     # -U guarantees a same-name group, so the chown below does not depend on
     # login.defs defaults.
-    useradd -U -d "$WEBROOT" -s /usr/sbin/nologin -M "$FTP_USER"
+    useradd -U -d "$WEBROOT" -s "$FTP_SHELL" -M "$FTP_USER"
   fi
   printf '%s:%s\n' "$FTP_USER" "$FTP_PASSWORD" | chpasswd
   ok "$FTP_USER -> $WEBROOT"
+
+  # vsftpd 判 shell 那一关我们关掉了（check_shell=NO），但 Debian / Ubuntu 的
+  # /etc/pam.d/vsftpd 还挂了一道 pam_shells，它要求账号的 shell 出现在 /etc/shells
+  # 里，否则登录一律 530。nologin 通常不在那份名单里，补进去。
+  # vsftpd's own shell check is off (check_shell=NO), but Debian / Ubuntu also wire
+  # pam_shells into /etc/pam.d/vsftpd, which rejects any account whose shell is not listed
+  # in /etc/shells with a 530. nologin is usually absent from that list, so add it.
+  grep -qxF "$FTP_SHELL" /etc/shells 2>/dev/null || printf '%s\n' "$FTP_SHELL" >> /etc/shells
 
   log "调整站点根目录属主 / fixing ownership of $WEBROOT"
   chown -R "$FTP_USER": "$WEBROOT"
@@ -191,8 +203,88 @@ EOF
 
 start_vsftpd() {
   systemctl enable vsftpd >/dev/null 2>&1 || true
-  systemctl restart vsftpd
-  ok "vsftpd 运行中 / vsftpd is running"
+  # restart 成功只说明进程起过，服务仍可能立刻退出，所以要回查一次状态。
+  # A successful restart only means the process started; it can exit right after, so
+  # the state is read back instead of assumed.
+  if systemctl restart vsftpd && systemctl is-active --quiet vsftpd; then
+    ok "vsftpd 运行中 / vsftpd is running"
+  else
+    warn "vsftpd 未能保持运行 / vsftpd did not stay up (see the self-check below)"
+  fi
+}
+
+# 自检 / self-check. Provisioning is only useful if the ports the release workflow and
+# the package managers dial are actually listening, so print what is bound and let the
+# local caddy answer once. If port 21 is missing here, the unit failed to keep the
+# listener up; if it is present here but refused from outside, a provider firewall is
+# in the way.
+verify() {
+  log "自检 / verifying"
+  local unit
+  for unit in caddy vsftpd; do
+    printf '  %-7s %s\n' "$unit" "$(systemctl is-active "$unit" 2>&1) / $(systemctl is-enabled "$unit" 2>&1)"
+  done
+  # A unit that reported success on restart can still fail right after, so show why.
+  for unit in caddy vsftpd; do
+    if ! systemctl is-active --quiet "$unit"; then
+      echo "  --- journalctl -u $unit ---"
+      journalctl -u "$unit" -n 25 --no-pager 2>&1 | sed 's/^/    /'
+    fi
+  done
+  # 配置项写错时 vsftpd 既不写 journal 也不写 stderr，只留一个退出码。所以单元没起来
+  # 时，把 systemd 记录的退出码和一次前台运行的结果打出来：退出码 124 表示前台运行
+  # 被 timeout 收回，也就是它本身能正常服务，问题在别处（多为端口被占或 provider
+  # 防火墙）；退出码 2 表示配置里有它不认识的选项。
+  # A bad option makes vsftpd exit without writing to the journal or stderr, leaving only
+  # an exit code. So when the unit is down, the recorded exit status and one foreground
+  # run are printed: 124 means timeout reclaimed a healthy server (look at the port or a
+  # provider firewall instead), 2 means an unknown option in the config.
+  if ! systemctl is-active --quiet vsftpd; then
+    printf '  vsftpd 版本 / version: %s\n' "$("$(command -v vsftpd)" -v 2>&1 | head -1)"
+    systemctl show vsftpd -p ExecMainStatus,ExecMainCode 2>&1 | sed 's/^/    /'
+    local out rc conf
+    for conf in "$VSFTPD_CONF" "${VSFTPD_CONF}.orig"; do
+      [ -r "$conf" ] || continue
+      out="$(mktemp)"
+      set +e
+      timeout 2 "$(command -v vsftpd)" "$conf" >"$out" 2>&1
+      rc=$?
+      set -e
+      printf '    %s rc=%s\n' "$conf" "$rc"
+      sed 's/^/      /' "$out"
+      rm -f "$out"
+    done
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    echo "  listeners:"
+    ss -lntp 2>/dev/null | awk 'NR==1 || /:(21|80|443)[[:space:]]/ {printf "    %s\n", $0}'
+  fi
+  printf '  caddy local http: %s\n' \
+    "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${SITE_DOMAIN}" http://127.0.0.1/ || echo n/a)"
+  # 用发布工作流那套凭据在本机真登一次：能列出目录说明口令与 PAM 都没问题，剩下就只是
+  # provider 侧防火墙；被拒则把 PAM 与 shell 名单一并打出来。
+  # Log in locally with the release workflow's own credentials: a listing means the
+  # password and PAM are fine and only a provider firewall can still be at fault; a
+  # rejection prints the PAM stack and the shells list.
+  printf '  FTP 本机登录 / local FTP login: '
+  # --ftp-ssl-control 只给控制通道加密，正好对应配置里的 force_local_data_ssl=NO，
+  # 这样失败一定出在登录本身，不会混进数据通道的问题。
+  # --ftp-ssl-control encrypts the control channel only, matching force_local_data_ssl=NO,
+  # so a failure points at the login itself rather than the data channel.
+  if curl -sS -k --ftp-ssl-control --user "$FTP_USER:$FTP_PASSWORD" \
+       "ftp://127.0.0.1/" >/dev/null 2>&1; then
+    echo "ok"
+  else
+    echo "FAILED"
+    printf '    /etc/vsftpd.userlist: %s\n' "$(tr '\n' ' ' < /etc/vsftpd.userlist 2>/dev/null)"
+    printf '    %s 的 shell: %s\n' "$FTP_USER" "$(getent passwd "$FTP_USER" | cut -d: -f7)"
+    echo "    /etc/shells: $(tr '\n' ' ' < /etc/shells)"
+    echo "    --- /etc/pam.d/vsftpd ---"
+    sed 's/^/      /' /etc/pam.d/vsftpd 2>&1
+    journalctl --since '-2 min' --no-pager 2>/dev/null | grep -i vsftpd | tail -10 | sed 's/^/      /'
+  fi
+  printf '  站点根目录属主 / webroot owner: %s\n' "$(stat -c '%U:%G %a' "$WEBROOT")"
+  printf '  vsftpd 用户列表 / vsftpd userlist: %s\n' "$(cat /etc/vsftpd.userlist 2>/dev/null | tr '\n' ' ')"
 }
 
 summary() {
@@ -216,4 +308,5 @@ make_webroot
 install_vsftpd
 start_caddy
 start_vsftpd
+verify
 summary

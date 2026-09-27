@@ -241,13 +241,17 @@ jobs:
           merge-multiple: true
 
       # apt-ftparchive 来自 apt-utils，createrepo_c 来自 createrepo-c，pacman 的
-      # repo-add 由 pacman-package-manager 提供。
+      # repo-add 由 pacman-package-manager 提供。repo-add 靠 bsdtar（libarchive-tools）
+      # 解包，配方是 zstd 压缩，两个都必须装上，否则它会判定「不是包」而失败。
       # apt-ftparchive ships in apt-utils, createrepo_c in createrepo-c, and pacman's
-      # repo-add in pacman-package-manager.
+      # repo-add in pacman-package-manager. repo-add unpacks through bsdtar
+      # (libarchive-tools) and the packages are zstd compressed, so both are required;
+      # without them repo-add calls every package "not a package file" and fails.
       - name: 安装索引工具
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq apt-utils createrepo-c pacman-package-manager
+          sudo apt-get install -y -qq apt-utils createrepo-c pacman-package-manager \
+            libarchive-tools zstd
 
       # 私钥可以带口令：导入不需要口令，签名时从 GPG_PASSPHRASE_FILE 读，口令不进 argv。
       # The private key may be passphrase protected: importing needs no passphrase, and
