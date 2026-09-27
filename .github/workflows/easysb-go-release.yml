@@ -305,7 +305,9 @@ jobs:
       - name: 同步到发布服务器
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
         with:
-          server: 154.201.92.132
+          # 地址同样来自仓库变量，与置备工作流共用一个值。
+          # The address comes from the same repository variable the provisioning workflow uses.
+          server: ${{ vars.SERVER_HOST }}
           username: easysb
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftps

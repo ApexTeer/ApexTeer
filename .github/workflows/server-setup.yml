@@ -26,10 +26,15 @@ on:
 permissions:
   contents: read
 
+# 地址与登录名来自仓库变量，不写进仓库，所以换一台服务器只是改设置，不用发一次提交。
+# 两个变量都必填：缺了不会退回某个默认机器，而是直接失败，免得把源传到别人的主机上。
+# The address and the login name come from repository variables rather than the repository,
+# so moving to another host is a settings change instead of a commit. Both are required:
+# a missing variable fails the run rather than quietly falling back to some other machine.
 env:
   TZ: Asia/Shanghai
-  SERVER_HOST: 154.201.92.132
-  SERVER_USER: root
+  SERVER_HOST: ${{ vars.SERVER_HOST }}
+  SERVER_USER: ${{ vars.SERVER_USER }}
 
 jobs:
   provision:
