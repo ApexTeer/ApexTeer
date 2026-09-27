@@ -77,8 +77,9 @@
   do not hand-write a unit under `packaging/`. The release workflow syncs `dist/repo`
   to the release server with FTP-Deploy-Action; `packaging/server/` holds the one-shot
   provisioning script, the Caddy browse template the landing page is rendered from, and
-  the favicon. The template travels as `dist/repo/.easysb/browse.html`, so `make repo`
-  is the only place that decides where it lands.
+  the favicon. The template and the favicon travel as `dist/repo/.easysb/browse.html`
+  and `dist/repo/.easysb/favicon.svg`, so `make repo` is the only place that decides
+  where they land.
 - The apt index is signed with a passphrase-protected key: the secrets are
   `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, and signing reads the passphrase from a
   0600 file so it never reaches a process list. Run the "Provision the release

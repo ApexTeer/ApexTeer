@@ -90,12 +90,23 @@ ${SITE_DOMAIN} {
 	@hidden path /.*
 	respond @hidden 404
 
+	# 站点图标也住在被挡住的那个点目录里，只有根目录要显它，于是单开一条精确路径的路由。
+	# Caddy 按路径的具体程度排序，精确路径排在 '@hidden path /.*' 通配之前，图标照发，
+	# 列表里也不会平白多出一行。
+	# The icon lives in the hidden dot-directory too. It gets an exact-path route of its own;
+	# Caddy sorts an exact path ahead of the '@hidden path /.*' wildcard, so the icon is
+	# served while the listing gains no extra entry.
+	handle /favicon.svg {
+		root * ${BROWSE_DIR}
+		file_server
+	}
+
 	file_server {
 		# 路径挡住了，列表里仍然会把它们列成点不开的条目，所以再从列表里摘掉。hide 不带
-		# 分隔符时按路径分量做 filepath.Match，`.*` 于是匹配任意一层里的点开头的名字。
+		# 分隔符时按路径分量做 filepath.Match，'.*' 于是匹配任意一层里的点开头的名字。
 		# Out of reach is not enough: they would still be listed as entries that go nowhere.
 		# A hide pattern without a separator is matched against each path component with
-		# filepath.Match, so `.*` catches a dot-name at any depth.
+		# filepath.Match, so '.*' catches a dot-name at any depth.
 		hide .*
 		browse ${BROWSE_TEMPLATE}
 	}
@@ -131,6 +142,16 @@ make_webroot() {
   if [ -e "$WEBROOT/index.html" ]; then
     rm -f "$WEBROOT/index.html"
     warn "删除已被模板取代的首页 / removed the index.html the template replaced"
+  fi
+
+  # 图标以前直接放在站点根，会作为一行列在首页里。现在它随模板一起住进 .easysb/，根上那份
+  # 旧文件得在这里收走；FTP 同步只增不改，不会替我们删。
+  # The icon used to sit at the site root, where it showed up as a row on the home page. It
+  # now lives in .easysb/ next to the template, so the stale copy at the root goes away here;
+  # the FTP sync only adds files and would never remove it.
+  if [ -e "$WEBROOT/favicon.svg" ]; then
+    rm -f "$WEBROOT/favicon.svg"
+    warn "删除站点根上多余的图标 / removed the stray icon at the site root"
   fi
 }
 
