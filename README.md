@@ -272,6 +272,15 @@ The setup and the release runs need four repository secrets:
 
 The server is prepared once, so `SERVER_SSH_PASSWORD` is only needed for the provisioning run; the release runs use `FTP_PASSWORD` alone.
 
+The address of that server and the login the provisioning run uses are repository variables, so moving to another host is a settings change rather than a commit:
+
+| Variable | What it is |
+| :--- | :--- |
+| `SERVER_HOST` | the release server's address, shared by both workflows |
+| `SERVER_USER` | the account the provisioning run logs in as |
+
+Both are required: a missing value fails the run instead of falling back to a default host.
+
 ---
 
 ## Capabilities
