@@ -240,8 +240,11 @@ verify() {
     printf '%s\n' "$out" | sed 's/^/    /'
     echo "  --- 配置项是否被识别 / recognised options ---"
     local strfile key
+    # binutils 的 strings 不一定在场，用 tr 把不可打印字节换成换行即可得到同一批字符串。
+    # binutils' strings is not guaranteed to be installed; tr turns non-printable bytes
+    # into newlines and yields the same set.
     strfile="$(mktemp)"
-    strings /usr/sbin/vsftpd | sort -u > "$strfile"
+    tr -c '[:print:]' '\n' < /usr/sbin/vsftpd | sort -u > "$strfile"
     while IFS= read -r line; do
       line="${line%%#*}"
       case "$line" in *=*) ;; *) continue ;; esac
