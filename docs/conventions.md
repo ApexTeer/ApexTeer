@@ -84,11 +84,9 @@
   `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, and signing reads the passphrase from a
   0600 file so it never reaches a process list. Run the "Provision the release
   server" workflow once; `FTP_PASSWORD` and `SERVER_SSH_PASSWORD` are what it needs.
-  The server's address and the account the provisioning run logs in as are repository
-  variables (`SERVER_HOST`, `SERVER_USER`), not secrets: they identify a machine rather
-  than grant access, and a secret masks every occurrence of its own value, which would
-  turn each `/root/` in the logs into `***`. Being variables, they also change without
-  a commit.
+  The server's address and the account the provisioning run logs in as are secrets as
+  well (`SERVER_HOST`, `SERVER_USER`), so neither is written into the repository and
+  moving to another host is a settings change, not a commit.
 - After a force push, trigger the workflow with a normal push; force pushes do
   not reliably raise a `push` event for Actions.
 
