@@ -146,11 +146,14 @@ userlist_file=/etc/vsftpd.userlist
 
 # 登录必须走 TLS（显式 FTPS），数据通道保持兼容。
 # Login must use TLS (explicit FTPS); the data channel stays compatible.
+# 不锁定 TLS 版本：Ubuntu 24.04 的 vsftpd 3.0.3 没有 ssl_tlsv1_2 这个选项，写了会以
+# «bad config» 直接退出 2，而且不留任何日志。不写则自动协商可用的最高版本。
+# No TLS version is pinned: vsftpd 3.0.3 on Ubuntu 24.04 has no ssl_tlsv1_2 option and
+# exits 2 on it without logging anything. Left out, the best version is negotiated.
 ssl_enable=YES
 force_local_logins_ssl=YES
 force_local_data_ssl=NO
 require_ssl_reuse=NO
-ssl_tlsv1_2=YES
 rsa_cert_file=${TLS_CERT}
 rsa_private_key_file=${TLS_KEY}
 
@@ -219,57 +222,29 @@ verify() {
       journalctl -u "$unit" -n 25 --no-pager 2>&1 | sed 's/^/    /'
     fi
   done
-  # vsftpd 的失败信息不出现在单元日志里，所以单元没起来时把单元定义、systemd 记录
-  # 的退出码和它自己那一次前台运行一并打出来。前台运行由 timeout 收回；退出码 124
-  # 说明它其实是被收回的正常服务。
-  # A failed vsftpd leaves no message in the unit log, so when it is down the unit, the
-  # exit status systemd recorded and one foreground run are printed. The run is reclaimed
-  # by timeout; exit code 124 means it was serving normally.
+  # 配置项写错时 vsftpd 既不写 journal 也不写 stderr，只留一个退出码。所以单元没起来
+  # 时，把 systemd 记录的退出码和一次前台运行的结果打出来：退出码 124 表示前台运行
+  # 被 timeout 收回，也就是它本身能正常服务，问题在别处（多为端口被占或 provider
+  # 防火墙）；退出码 2 表示配置里有它不认识的选项。
+  # A bad option makes vsftpd exit without writing to the journal or stderr, leaving only
+  # an exit code. So when the unit is down, the recorded exit status and one foreground
+  # run are printed: 124 means timeout reclaimed a healthy server (look at the port or a
+  # provider firewall instead), 2 means an unknown option in the config.
   if ! systemctl is-active --quiet vsftpd; then
-    echo "  --- vsftpd 单元 / unit ---"
-    systemctl cat vsftpd 2>&1 | sed 's/^/    /'
-    systemctl show vsftpd \
-      -p Type,ExecMainStatus,ExecMainCode,User,Group,ProtectSystem,ProtectHome,PrivateTmp,RestrictAddressFamilies \
-      2>&1 | sed 's/^/    /'
-    echo "  --- vsftpd 直接运行 / direct run ---"
-    local out err rc conf snippet
-    # 退出码 124 表示被 timeout 收回，也就是它正常服务着；其余都是启动即退出。
-    # Exit 124 means timeout reclaimed it, i.e. it was serving; anything else exited at
-    # startup.
-    # 把我们的配置与发行版自带的那份各跑一次，确认问题出在配置内容上。
-    # Run ours and the distribution's own copy to confirm the content is at fault.
+    printf '  vsftpd 版本 / version: %s\n' "$("$(command -v vsftpd)" -v 2>&1 | head -1)"
+    systemctl show vsftpd -p ExecMainStatus,ExecMainCode 2>&1 | sed 's/^/    /'
+    local out rc conf
     for conf in "$VSFTPD_CONF" "${VSFTPD_CONF}.orig"; do
       [ -r "$conf" ] || continue
-      out="$(mktemp)"; err="$(mktemp)"
+      out="$(mktemp)"
       set +e
-      timeout 2 "$(command -v vsftpd)" "$conf" >"$out" 2>"$err"
+      timeout 2 "$(command -v vsftpd)" "$conf" >"$out" 2>&1
       rc=$?
       set -e
       printf '    %s rc=%s\n' "$conf" "$rc"
-      sed 's/^/      out: /' "$out"
-      sed 's/^/      err: /' "$err"
-      rm -f "$out" "$err"
-    done
-    # 逐行删除定位：删掉某一行后能正常服务，那一行就是致命的。
-    # Leave-one-out: if dropping a line lets it serve, that line is the fatal one.
-    snippet="$(mktemp)"
-    grep -vE '^[[:space:]]*(#|$)' "$VSFTPD_CONF" > "$snippet"
-    local n=0 i
-    while IFS= read -r line; do
-      n=$((n + 1))
-      out="$(mktemp)"
-      awk -v skip="$n" 'NR != skip' "$snippet" > "$out"
-      set +e
-      timeout 2 "$(command -v vsftpd)" "$out" >/dev/null 2>&1
-      rc=$?
-      set -e
-      [ "$rc" = 124 ] && printf '    删除后可运行 / survives without: %s\n' "$line"
+      sed 's/^/      /' "$out"
       rm -f "$out"
-    done < "$snippet"
-    rm -f "$snippet"
-    echo "  --- 近期 journal / recent journal ---"
-    journalctl --since '-3 min' --no-pager 2>/dev/null | grep -i vsftpd | tail -15 | sed 's/^/    /'
-    dmesg 2>/dev/null | tail -3 | sed 's/^/    dmesg: /'
+    done
   fi
   if command -v ss >/dev/null 2>&1; then
     echo "  listeners:"
