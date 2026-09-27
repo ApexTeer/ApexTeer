@@ -57,10 +57,16 @@ PKG_SUMMARY    ?= A sing-box panel with the core compiled in
 PKG_EXEC       := /usr/bin/easysb
 # 三种格式共用的打包暂存树 / the staging tree every format is built from.
 STAGE_DIR      ?= $(DIST)/stage
-APT_DIR        ?= $(DIST)/apt
 # 签名可选：CI 里存在 GPG_PRIVATE_KEY 密钥时会导入并用它签名 / signing is optional:
 # when CI has imported a GPG key it is passed here, otherwise the index stays unsigned.
 GPG_KEY_ID     ?=
+# 口令保护的密钥：口令从 0600 文件读入，不进进程列表 / a passphrase-protected key is
+# unlocked from a 0600 file, so the passphrase never shows up in a process list.
+GPG_PASSPHRASE_FILE ?=
+
+# 软件源目录树 / the repository tree: apt is flat, rpm and pacman are per architecture
+# and bin holds the release tarballs.
+REPO_DIR       ?= $(DIST)/repo
 
 # Debian 架构名 / Debian architecture names: armv7 ships as armhf, 386 as i386.
 DEBARCH_amd64   := amd64
@@ -87,6 +93,9 @@ PACMANARCH_armv7   := armv7h
 PACMANARCH_riscv64 := riscv64
 
 DEB_ARCHS := $(foreach a,$(ARCHES),$(DEBARCH_$(a)))
+# 源里按架构分目录时用的名字，与包名用的是同一份映射。
+RPM_ARCH_DIRS    := $(foreach a,$(ARCHES),$(RPMARCH_$(a)))
+PACMAN_ARCH_DIRS := $(foreach a,$(PACMAN_ARCHES),$(PACMANARCH_$(a)))
 
 comma := ,
 empty :=
@@ -95,9 +104,10 @@ space := $(empty) $(empty)
 .DEFAULT_GOAL := build
 
 .PHONY: build build-plain run test test-plain test-race vet fmt fmt-check \
-        lint check render screens dist dist-asset release-matrix install tidy \
+        lint check render screens dist dist-asset tarballs tarball-asset \
+        release-matrix install tidy \
         version pkg-stage deb deb-asset rpm rpm-asset pacman pacman-asset \
-        packages-asset apt-index help clean
+        packages-asset apt-index rpm-index pacman-index repo help clean
 
 # --- 构建 / Build -------------------------------------------------------------
 
@@ -150,9 +160,9 @@ check: lint test ## 提交前的完整关卡 / the pre-commit gate
 
 # --- 发布 / Release -----------------------------------------------------------
 
-dist: ## 交叉编译全部发布架构到 dist/
+dist: ## 交叉编译全部发布架构到 dist/（二进制 + 发布压缩包）
 	@set -e; for asset in $(ARCHES); do \
-		$(MAKE) --no-print-directory dist-asset ASSET=$$asset; \
+		$(MAKE) --no-print-directory tarball-asset ASSET=$$asset; \
 	done
 	@ls -lh $(DIST)
 
@@ -166,6 +176,27 @@ dist-asset: ## 交叉编译单个发布架构（ASSET=amd64 / arm64 / armv7 / 38
 			-o "$(DIST)/easysb-linux-$(ASSET)" .
 	@ls -lh "$(DIST)/easysb-linux-$(ASSET)"
 
+# 发布压缩包：里面的可执行文件就叫 easysb，解包后可直接 install。dist/easysb-linux-<架构>
+# 只是中间产物，任何一种方式都不会把它单独发出去。
+# The release tarball carries an executable named `easysb` so it can be unpacked straight
+# into place. dist/easysb-linux-<arch> is only an intermediate and is never published alone.
+tarballs: ## 打包全部发布架构的 .tar.gz 到 dist/
+	@set -e; for asset in $(ARCHES); do \
+		$(MAKE) --no-print-directory tarball-asset ASSET=$$asset; \
+	done
+
+tarball-asset: ## 打包单个架构的发布压缩包（ASSET=…）
+	@test -n "$(ASSET)" || { echo "ASSET 未设置 / ASSET required, one of: $(ARCHES)"; exit 1; }
+	@test -n "$(GOARCH_$(ASSET))" || { echo "未知架构 / unknown asset: $(ASSET), one of: $(ARCHES)"; exit 1; }
+	@test -s "$(DIST)/easysb-linux-$(ASSET)" || $(MAKE) --no-print-directory dist-asset ASSET=$(ASSET)
+	@set -e; tmp="$$(mktemp -d)"; \
+	install -m 0755 "$(DIST)/easysb-linux-$(ASSET)" "$$tmp/easysb"; \
+	install -m 0644 LICENSE "$$tmp/LICENSE"; \
+	install -m 0644 README.md "$$tmp/README.md"; \
+	tar -C "$$tmp" -czf "$(DIST)/$(PKG_NAME)-$(VERSION)-linux-$(ASSET).tar.gz" \
+		easysb LICENSE README.md; \
+	rm -rf "$$tmp"; \
+	ls -lh "$(DIST)/$(PKG_NAME)-$(VERSION)-linux-$(ASSET).tar.gz"
 release-matrix: ## 打印发布架构矩阵 JSON（发布工作流用来生成动态矩阵）
 	@printf '%s\n' '$(ARCHES)' | sed 's/ /","/g; s/^/["/; s/$$/"]/'
 
@@ -222,9 +253,9 @@ deb-asset: pkg-stage ## 打包单个架构的 .deb（ASSET=amd64 / arm64 / armv7
 		--no-deb-generate-changes \
 		--after-install packaging/deb/postinst \
 		--after-remove packaging/deb/postrm \
-		--package "$(DIST)/$(PKG_NAME)_$(VERSION)_$(DEBARCH_$(ASSET)).deb" \
+		--package "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$(DEBARCH_$(ASSET)).deb" \
 		-C "$(STAGE_DIR)/$(ASSET)" .; \
-	ls -lh "$(DIST)/$(PKG_NAME)_$(VERSION)_$(DEBARCH_$(ASSET)).deb"
+	ls -lh "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$(DEBARCH_$(ASSET)).deb"
 
 rpm-asset: pkg-stage ## 打包单个架构的 .rpm（ASSET=amd64 / arm64 / armv7 / 386 / riscv64 / s390x）
 	@test -n "$(RPMARCH_$(ASSET))" || { echo "未知架构 / unknown asset: $(ASSET), one of: $(ARCHES)"; exit 1; }
@@ -237,9 +268,9 @@ rpm-asset: pkg-stage ## 打包单个架构的 .rpm（ASSET=amd64 / arm64 / armv7
 		--depends ca-certificates \
 		--after-install packaging/rpm/post \
 		--after-remove packaging/rpm/postun \
-		--package "$(DIST)/$(PKG_NAME)-$(VERSION)-1.$(RPMARCH_$(ASSET)).rpm" \
+		--package "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$(RPMARCH_$(ASSET)).rpm" \
 		-C "$(STAGE_DIR)/$(ASSET)" .; \
-	ls -lh "$(DIST)/$(PKG_NAME)-$(VERSION)-1.$(RPMARCH_$(ASSET)).rpm"
+	ls -lh "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$(RPMARCH_$(ASSET)).rpm"
 
 pacman-asset: pkg-stage ## 打包单个架构的 pacman 包（ASSET=amd64 / arm64 / armv7 / riscv64）
 	@test -n "$(PACMANARCH_$(ASSET))" || { echo "未知架构 / unknown asset: $(ASSET), one of: $(PACMAN_ARCHES)"; exit 1; }
@@ -249,9 +280,9 @@ pacman-asset: pkg-stage ## 打包单个架构的 pacman 包（ASSET=amd64 / arm6
 		--description "$(PKG_DESC)" --url "$(PKG_URL)" \
 		--maintainer "$(PKG_MAINTAINER)" --license "$(PKG_LICENSE)" \
 		--depends ca-certificates --pacman-compression zstd \
-		--package "$(DIST)/$(PKG_NAME)-$(VERSION)-1-$(PACMANARCH_$(ASSET)).pkg.tar.zst" \
+		--package "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$(PACMANARCH_$(ASSET)).pkg.tar.zst" \
 		-C "$(STAGE_DIR)/$(ASSET)" .; \
-	ls -lh "$(DIST)/$(PKG_NAME)-$(VERSION)-1-$(PACMANARCH_$(ASSET)).pkg.tar.zst"
+	ls -lh "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$(PACMANARCH_$(ASSET)).pkg.tar.zst"
 
 # 一个架构一次，三种格式都出。发布工作流每个矩阵作业调一次它，避免为同一架构重复
 # 构建三遍。
@@ -265,11 +296,23 @@ packages-asset: ## 打包单个架构的全部格式到 dist/（ASSET=…）
 	@$(MAKE) --no-print-directory rpm-asset ASSET=$(ASSET) NO_BUILD=1 REUSE_DIST=1
 	@case " $(PACMAN_ARCHES) " in *" $(ASSET) "*) $(MAKE) --no-print-directory pacman-asset ASSET=$(ASSET) NO_BUILD=1 REUSE_DIST=1 ;; esac
 
-apt-index: ## 生成 apt 源索引到 dist/apt（设置 GPG_KEY_ID 时签名）
+# --- 软件源 / Repository ------------------------------------------------------
+
+# 源根目录 dist/repo 的四个子目录各是一种客户端要的东西：apt 是扁平的 deb 源，
+# rpm 与 pacman 按架构分目录，bin 放发布压缩包。安装脚本 install.sh 只认这四个路径。
+# The repository root dist/repo has four subtrees, one per client: a flat apt archive,
+# per-architecture rpm and pacman trees, and bin for the release tarballs. install.sh
+# knows only these four paths.
+#
+# 公钥必须是非 armored 的二进制 keyring：apt 的 Signed-By 走 apt-key/gpgv，armored 文件
+# 会被拒（读不出里面的 key）。Release.gpg 与 InRelease 两个签名才是 armored。
+# The public key must be a non-armored binary keyring: apt verifies Signed-By through
+# apt-key/gpgv, which rejects an armored file. The two signatures stay armored.
+apt-index: ## 生成 apt 扁平源到 dist/repo/apt（设置 GPG_KEY_ID 时签名）
 	@command -v apt-ftparchive >/dev/null 2>&1 || { echo "apt-ftparchive 未安装 / missing: apt-get install -y apt-utils"; exit 1; }
-	@set -e; rm -rf "$(APT_DIR)"; mkdir -p "$(APT_DIR)"; \
-	cp -f $(DIST)/*.deb "$(APT_DIR)/"; \
-	cd "$(APT_DIR)"; \
+	@set -e; apt="$(REPO_DIR)/apt"; rm -rf "$$apt"; mkdir -p "$$apt"; \
+	cp -f $(DIST)/*.deb "$$apt/"; \
+	cd "$$apt"; \
 	apt-ftparchive packages . | sed 's|^Filename: \./|Filename: |' > Packages; \
 	gzip -9 -c Packages > Packages.gz; \
 	apt-ftparchive \
@@ -281,11 +324,48 @@ apt-index: ## 生成 apt 源索引到 dist/apt（设置 GPG_KEY_ID 时签名）
 		-o APT::FTPArchive::Release::Description="$(PKG_DESC)" \
 		release . > Release; \
 	if [ -n "$(GPG_KEY_ID)" ]; then \
-		gpg --batch --yes --armor --detach-sign -u "$(GPG_KEY_ID)" -o Release.gpg Release; \
-		gpg --batch --yes --clearsign -u "$(GPG_KEY_ID)" -o InRelease Release; \
-		gpg --batch --yes --armor --export "$(GPG_KEY_ID)" > $(PKG_NAME).gpg; \
+		sign="--batch --yes --pinentry-mode loopback"; \
+		if [ -n "$(GPG_PASSPHRASE_FILE)" ]; then sign="$$sign --passphrase-file $(GPG_PASSPHRASE_FILE)"; fi; \
+		gpg $$sign --armor --detach-sign -u "$(GPG_KEY_ID)" -o Release.gpg Release; \
+		gpg $$sign --clearsign -u "$(GPG_KEY_ID)" -o InRelease Release; \
+		gpg --batch --yes --export "$(GPG_KEY_ID)" > $(PKG_NAME).gpg; \
 	fi; \
 	ls -lh .
+
+rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（需要 createrepo_c）
+	@command -v createrepo_c >/dev/null 2>&1 || { echo "createrepo_c 未安装 / missing: apt-get install -y createrepo-c"; exit 1; }
+	@set -e; for arch in $(RPM_ARCH_DIRS); do \
+		dir="$(REPO_DIR)/rpm/$$arch"; \
+		rm -rf "$$dir"; mkdir -p "$$dir"; \
+		cp -f "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$$arch.rpm" "$$dir/"; \
+		createrepo_c --quiet "$$dir"; \
+	done
+
+# repo-add 把 `easysb.db` 留成指向 `.db.tar.gz` 的符号链接。上传走的是普通 FTP，
+# 会跳过符号链接，所以这里换成真实文件：先写到 .new，再用 mv 顶掉那个链接，
+# `.tar.gz` 本身仍然保留。
+# repo-add leaves `easysb.db` as a symlink to `easysb.db.tar.gz`, and the FTP upload
+# skips symlinks, so each is replaced with a real file: written as .new, then mv over
+# the link. The `.tar.gz` itself is kept as well.
+pacman-index: ## 生成 pacman 源到 dist/repo/pacman/<架构>（需要 repo-add）
+	@command -v repo-add >/dev/null 2>&1 || { echo "repo-add 未安装 / missing: pacman/libarchive 提供的 repo-add"; exit 1; }
+	@set -e; for arch in $(PACMAN_ARCH_DIRS); do \
+		dir="$(REPO_DIR)/pacman/$$arch"; \
+		rm -rf "$$dir"; mkdir -p "$$dir"; \
+		cp -f "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$$arch.pkg.tar.zst" "$$dir/"; \
+		( cd "$$dir" && repo-add --quiet "$(PKG_NAME).db.tar.gz" *.pkg.tar.zst ); \
+		for part in db files; do \
+			cp -f "$$dir/$(PKG_NAME).$$part.tar.gz" "$$dir/$(PKG_NAME).$$part.new"; \
+			mv -f "$$dir/$(PKG_NAME).$$part.new" "$$dir/$(PKG_NAME).$$part"; \
+		done; \
+	done
+
+repo: apt-index rpm-index pacman-index ## 组装完整软件源到 dist/repo（apt / rpm / pacman / bin）
+	@set -e; bin="$(REPO_DIR)/bin"; rm -rf "$$bin"; mkdir -p "$$bin"; \
+	cp -f $(wildcard $(DIST)/$(PKG_NAME)-*-linux-*.tar.gz) "$$bin/"; \
+	cp -f packaging/server/index.html "$(REPO_DIR)/index.html"; \
+	echo "源目录树 / repository tree:"; \
+	find "$(REPO_DIR)" -type f | sort | sed 's|^|  |'
 
 install: build ## 用刚构建的二进制执行安装（需要 root）
 	./install.sh --binary ./$(BINARY)

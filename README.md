@@ -61,8 +61,8 @@ EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol de
 ```text
 .
 ├── main.go                       # Go entrypoint (TUI)
-├── install.sh                    # One-click installer (deps / binary)
-├── packaging/                    # Package lifecycle scripts (deb/ and rpm/)
+├── install.sh                    # Installer (one-click / package source / manual package)
+├── packaging/                    # Package lifecycle scripts (deb/, rpm/) and server/
 ├── VERSION                       # Single source of truth for the release tag
 ├── AGENTS.md                     # Guide for AI agents and contributors
 ├── go.mod                        # Go module definition
@@ -101,13 +101,27 @@ Ports are prompted one by one: Enter takes the default, `r` picks a random port,
 
 ## Quick Start
 
-One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback):
+Three ways in, all from the same `install.sh`.
+
+One-click: detects the system and architecture, fills in the runtime dependencies and prefers the release tarball, falling back to a source build.
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
 ```
 
-After installation, the shortcut opens the dark dashboard:
+From the package source: adds the apt / rpm / pacman entry for this system and installs through the OS package manager.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh) --method repo
+```
+
+From a package file you downloaded yourself:
+
+```bash
+bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
+```
+
+The shortcut then opens the dark dashboard:
 
 ```bash
 sb
@@ -129,7 +143,7 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 
 ## Debian / Ubuntu Packages
 
-Debian and Ubuntu get two ways in from the same release: a `.deb` for `dpkg -i`, and an apt repository for `apt install` and `apt upgrade`.
+Debian and Ubuntu get an apt repository for `apt install` and `apt upgrade`, and a `.deb` for `dpkg -i`.
 
 The package carries the panel and the core together — the core is compiled into the binary — so installing it is the whole installation:
 
@@ -149,46 +163,35 @@ Download the `.deb` for this host's architecture and install it:
 
 ```bash
 # architectures: amd64, arm64, armhf, i386, riscv64, s390x
-sudo dpkg -i easysb_5.0.0_amd64.deb
+sudo dpkg -i easysb_5.0.0_linux_amd64.deb
+
+# or let the installer fetch and install the same file
+bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
 ```
 
 ### apt repository
 
-The apt index and the `.deb` files live on the release tag `debian`, so one sources entry covers every later version. Pick the form that matches how the index was published.
-
-Unsigned (the default until a signing key is configured):
+The apt index and the `.deb` files are served from `https://sb.kejizero.xyz/apt`, a fixed address, so one sources entry covers every later version. The index is signed, and the public key is served next to it as `easysb.gpg`:
 
 ```bash
+# Trust the key the repository is signed with
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://sb.kejizero.xyz/apt/easysb.gpg | sudo tee /etc/apt/keyrings/easysb.gpg >/dev/null
+
 sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
 Types: deb
-URIs: https://github.com/MinimaxFlora/EasySB/releases/download/debian
+URIs: https://sb.kejizero.xyz/apt
 Suites: ./
-Trusted: yes
+Signed-By: /etc/apt/keyrings/easysb.gpg
 EOF
 
 sudo apt-get update
 sudo apt-get install easysb
 ```
 
-Signed, once the repository has a `GPG_PRIVATE_KEY` secret (see below):
+`install.sh --method repo` writes exactly those two files for you and runs the install. If the index is ever published unsigned, the entry to use is `Trusted: yes` in place of `Signed-By:`.
 
-```bash
-sudo mkdir -p /etc/apt/keyrings
-sudo curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/debian/easysb.gpg -o /etc/apt/keyrings/easysb.asc
-sudo chmod a+r /etc/apt/keyrings/easysb.asc
-
-sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://github.com/MinimaxFlora/EasySB/releases/download/debian
-Suites: ./
-Signed-By: /etc/apt/keyrings/easysb.asc
-EOF
-
-sudo apt-get update
-sudo apt-get install easysb
-```
-
-To publish a signed index, add an armored, passphrase-free private key as the repository secret `GPG_PRIVATE_KEY`. The release workflow then signs `Release` and publishes `InRelease` plus the public key as `easysb.gpg` on the `debian` tag. Without the secret the index is published unsigned, and the `Trusted: yes` form is the one to use.
+To publish a signed index, add an armored private key as the repository secret `GPG_PRIVATE_KEY` and its passphrase as `GPG_PASSPHRASE`. The release workflow imports the key, signs `Release` with it and publishes `InRelease`, `Release.gpg` and the public key as `easysb.gpg`. The passphrase is read from a file, so it never reaches a process list. Without the secret the index is published unsigned, and the `Trusted: yes` form is the one to use.
 
 ---
 
@@ -196,18 +199,50 @@ To publish a signed index, add an armored, passphrase-free private key as the re
 
 The same release also carries an `.rpm` for Fedora, RHEL and openSUSE, and a pacman package for Arch. Both wrap the identical binary, the identical units and the same staged tree as the `.deb`, so all three formats agree with each other and with the runtime.
 
-There is no rpm-md repository: GitHub Releases cannot serve `repodata/` under a fixed URL, so the `.rpm` and the pacman package are single files you download and install directly. Upgrade by installing the newer file the same way.
+Both also come from the release server as real repositories, an rpm-md tree and a pacman database, so `install.sh --method repo` adds the source for this system and installs through it:
+
+```bash
+# Fedora / RHEL / openSUSE
+sudo tee /etc/yum.repos.d/easysb.repo >/dev/null <<'EOF'
+[easysb]
+name=EasySB
+baseurl=https://sb.kejizero.xyz/rpm/$basearch
+enabled=1
+type=rpm-md
+EOF
+sudo dnf install easysb
+
+# Arch
+sudo tee -a /etc/pacman.conf >/dev/null <<'EOF'
+
+[easysb]
+SigLevel = Optional TrustAll
+Server = https://sb.kejizero.xyz/pacman/$arch
+EOF
+sudo pacman -Sy && sudo pacman -S easysb
+```
+
+Single files are still on the release page if you prefer to install by hand:
 
 ```bash
 # Fedora / RHEL (dnf installs the dependencies too)
-sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1.x86_64.rpm
+sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
 
 # openSUSE
-sudo zypper install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1.x86_64.rpm
+sudo zypper install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
 
 # Arch
-sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1-x86_64.pkg.tar.zst
+sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.pkg.tar.zst
 ```
+
+Every asset carries the release version and its architecture, in the shape sing-box uses:
+
+| Format | Asset (amd64) |
+| :--- | :--- |
+| Release tarball | `easysb-5.0.0-linux-amd64.tar.gz` |
+| Debian | `easysb_5.0.0_linux_amd64.deb` |
+| RPM | `easysb_5.0.0_linux_x86_64.rpm` |
+| pacman | `easysb_5.0.0_linux_x86_64.pkg.tar.zst` |
 
 The architecture names follow each ecosystem's own spelling, not the Go ones:
 
@@ -221,6 +256,21 @@ The architecture names follow each ecosystem's own spelling, not the Go ones:
 | `s390x` | `s390x` | `s390x` | — (Arch has no s390x) |
 
 Like the `.deb`, these packages install the files and refresh the systemd unit cache, and leave enabling and starting to the panel once a node is configured.
+
+### Release server
+
+The fixed URLs apt, rpm and pacman need are served by one host, `sb.kejizero.xyz`. Prepare it once from the Actions tab: run the **Provision the release server** workflow, which installs caddy for HTTPS, creates the site tree, and installs vsftpd with one account confined to that tree. After that, every release run syncs `dist/repo` there with FTP-Deploy-Action, over FTPS, and the sources stay current.
+
+The setup and the release runs need four repository secrets:
+
+| Secret | Used by | What it is |
+| :--- | :--- | :--- |
+| `GPG_PRIVATE_KEY` | release | the armored signing key, optional |
+| `GPG_PASSPHRASE` | release | that key's passphrase, only when it has one |
+| `FTP_PASSWORD` | release | the password of the server's upload account |
+| `SERVER_SSH_PASSWORD` | provision | the server's root password, only for the one-time setup |
+
+The server is prepared once, so `SERVER_SSH_PASSWORD` is only needed for the provisioning run; the release runs use `FTP_PASSWORD` alone.
 
 ---
 
@@ -416,8 +466,9 @@ numbers come from — including why there is no geekbench or fio — is in
 | Node | `ExecStart=<panel> core run -c /etc/sing-box/config.json`, where `<panel>` is `/usr/local/bin/easysb` from `install.sh` or `/usr/bin/easysb` from the `.deb`; `/etc/sing-box/sing-box` no longer exists |
 | Validation | `easysb core check -c <config>` builds the configuration with the same engine that would serve it, which is what the deploy path runs before restarting |
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
-| Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make dist-asset`, which read `release/TAGS`) and publishes the binaries under the `v<VERSION>` tag |
-| Packages | `make deb`, `make rpm` and `make pacman` wrap the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` and `sb --print-unit`); `make apt-index` turns those `.deb` files into the `debian` apt repository |
+| Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make tarball-asset`, which read `release/TAGS`) and publishes one release, tagged and named `v<VERSION>` |
+| Packages | `make deb`, `make rpm` and `make pacman` wrap the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` and `sb --print-unit`) |
+| Sources | `make repo` lays the same files out as apt / rpm / pacman / bin trees and the release workflow syncs them to the release server with FTP-Deploy-Action; `packaging/server/` holds the site page and the one-shot provisioning script |
 
 ---
 
@@ -432,11 +483,12 @@ make
 make check
 make dist
 
-# Package the .deb / .rpm / pacman files, then build the apt index the repository publishes
+# Package the .deb / .rpm / pacman files, then lay out the apt / rpm / pacman / bin
+# sources the release server serves
 make deb
 make rpm
 make pacman
-make apt-index
+make repo
 
 # Render the dashboard once without interaction (preview / screenshot / debug)
 make render

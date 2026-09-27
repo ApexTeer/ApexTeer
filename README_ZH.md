@@ -61,8 +61,8 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 ```text
 .
 ├── main.go                       # Go 入口（TUI 主程序）
-├── install.sh                    # 一键安装脚本（依赖 / 二进制）
-├── packaging/                    # 软件包生命周期脚本（deb/ 与 rpm/）
+├── install.sh                    # 安装脚本（一键 / 软件源 / 手动安装包）
+├── packaging/                    # 软件包生命周期脚本（deb/、rpm/）与服务器置备（server/）
 ├── VERSION                       # 发布 tag 的唯一来源
 ├── AGENTS.md                     # 面向 AI Agent 与协作者的说明
 ├── go.mod                        # Go module 定义
@@ -101,10 +101,24 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 
 ## 快速开始
 
-Go 版（当前主实现）一键安装：脚本会检测系统与架构，补全运行依赖，优先下载预编译二进制（回退源码构建）：
+三种方式都出自同一个 `install.sh`。
+
+一键安装：检测系统与架构，补全运行依赖，优先下载发布压缩包（回退源码构建）：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
+```
+
+软件源安装：为本系统添加 apt / rpm / pacman 源，交给系统包管理器安装：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh) --method repo
+```
+
+手动安装：安装一个自己下载好的安装包文件：
+
+```bash
+bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
 ```
 
 安装完成后以快捷指令 `sb` 启动深色仪表盘。
@@ -131,7 +145,7 @@ sb --language E
 
 ## Debian / Ubuntu 软件包
 
-Debian 与 Ubuntu 有两种安装方式，产物来自同一个 release：`dpkg -i` 直接装 `.deb`，或添加 apt 软件源后用 `apt install` / `apt upgrade`。
+Debian 与 Ubuntu 可以添加 apt 软件源后用 `apt install` / `apt upgrade`，也可以直接 `dpkg -i` 装 `.deb`。
 
 包内同时带上面板和内核（内核已编译进二进制），装完即装好：
 
@@ -151,46 +165,35 @@ Debian 与 Ubuntu 有两种安装方式，产物来自同一个 release：`dpkg 
 
 ```bash
 # 架构：amd64、arm64、armhf、i386、riscv64、s390x
-sudo dpkg -i easysb_5.0.0_amd64.deb
+sudo dpkg -i easysb_5.0.0_linux_amd64.deb
+
+# 也可以让安装脚本取回并安装同一个文件
+bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
 ```
 
 ### apt 软件源
 
-apt 索引与 `.deb` 都放在固定标签 `debian` 上，所以一条软件源配置能一直用下去。按下述与实际发布状态相符的一种写法添加。
-
-未签名（在配置签名密钥之前，默认是这种）：
+apt 索引与 `.deb` 由 `https://sb.kejizero.xyz/apt` 提供，地址固定，所以一条软件源配置能一直用下去。索引带签名，公钥就在同一目录下，文件名 `easysb.gpg`：
 
 ```bash
+# 信任仓库的签名密钥
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://sb.kejizero.xyz/apt/easysb.gpg | sudo tee /etc/apt/keyrings/easysb.gpg >/dev/null
+
 sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
 Types: deb
-URIs: https://github.com/MinimaxFlora/EasySB/releases/download/debian
+URIs: https://sb.kejizero.xyz/apt
 Suites: ./
-Trusted: yes
+Signed-By: /etc/apt/keyrings/easysb.gpg
 EOF
 
 sudo apt-get update
 sudo apt-get install easysb
 ```
 
-已签名（仓库配置了 `GPG_PRIVATE_KEY` 密钥之后）：
+`install.sh --method repo` 写的就是上面这两个文件，并接着执行安装。若索引某次以未签名方式发布，改用 `Trusted: yes` 代替 `Signed-By:` 一行即可。
 
-```bash
-sudo mkdir -p /etc/apt/keyrings
-sudo curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/debian/easysb.gpg -o /etc/apt/keyrings/easysb.asc
-sudo chmod a+r /etc/apt/keyrings/easysb.asc
-
-sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://github.com/MinimaxFlora/EasySB/releases/download/debian
-Suites: ./
-Signed-By: /etc/apt/keyrings/easysb.asc
-EOF
-
-sudo apt-get update
-sudo apt-get install easysb
-```
-
-要发布已签名的索引，把一份不带口令的 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY` 即可；发布工作流随后会签名 `Release`，并在 `debian` 标签上发布 `InRelease` 与公钥 `easysb.gpg`。没有该 secret 时索引保持未签名，使用上面的 `Trusted: yes` 写法。
+要发布已签名的索引，把一份 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY`，口令配置成 `GPG_PASSPHRASE`。发布工作流会导入密钥、用它签名 `Release`，并发布 `InRelease`、`Release.gpg` 与公钥 `easysb.gpg`。口令是通过文件读入的，不会出现在进程列表里。没有该 secret 时索引保持未签名，使用 `Trusted: yes` 写法。
 
 ---
 
@@ -198,18 +201,50 @@ sudo apt-get install easysb
 
 同一个 release 还提供供 Fedora / RHEL / openSUSE 使用的 `.rpm`，以及供 Arch 使用的 pacman 包。两者与 `.deb` 打成的是同一个二进制、同一段单元文本、同一棵暂存树，所以三种格式彼此一致，也与运行时一致。
 
-这里不建 rpm-md 源：GitHub Release 无法在固定 URL 下提供 `repodata/` 目录，因此 `.rpm` 与 pacman 包都是单文件下载、直接安装。升级时用同样的方式安装新版本文件即可。
+两种包在发布服务器上也都是真正的软件源：rpm-md 目录与 pacman 数据库，所以 `install.sh --method repo` 会为本系统添加源并直接从源安装：
+
+```bash
+# Fedora / RHEL / openSUSE
+sudo tee /etc/yum.repos.d/easysb.repo >/dev/null <<'EOF'
+[easysb]
+name=EasySB
+baseurl=https://sb.kejizero.xyz/rpm/$basearch
+enabled=1
+type=rpm-md
+EOF
+sudo dnf install easysb
+
+# Arch
+sudo tee -a /etc/pacman.conf >/dev/null <<'EOF'
+
+[easysb]
+SigLevel = Optional TrustAll
+Server = https://sb.kejizero.xyz/pacman/$arch
+EOF
+sudo pacman -Sy && sudo pacman -S easysb
+```
+
+也可以继续用 release 页上的单文件方式安装：
 
 ```bash
 # Fedora / RHEL（dnf 会一并装好依赖）
-sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1.x86_64.rpm
+sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
 
 # openSUSE
-sudo zypper install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1.x86_64.rpm
+sudo zypper install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
 
 # Arch
-sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb-5.0.0-1-x86_64.pkg.tar.zst
+sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.pkg.tar.zst
 ```
+
+每个资产都带版本号与架构，命名与 sing-box 一致：
+
+| 格式 | 资产名（以 amd64 为例） |
+| :--- | :--- |
+| 发布压缩包 | `easysb-5.0.0-linux-amd64.tar.gz` |
+| Debian | `easysb_5.0.0_linux_amd64.deb` |
+| RPM | `easysb_5.0.0_linux_x86_64.rpm` |
+| pacman | `easysb_5.0.0_linux_x86_64.pkg.tar.zst` |
 
 架构名按各发行版生态自己的写法，而不是 Go 的写法：
 
@@ -223,6 +258,21 @@ sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/e
 | `s390x` | `s390x` | `s390x` | —（Arch 没有 s390x） |
 
 与 `.deb` 一样，这两个包只负责安装文件并刷新 systemd 单元缓存，启用与启动留给面板，等节点配置完成后再由面板执行。
+
+### 发布服务器
+
+apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero.xyz`。在 Actions 页跑一次 **Provision the release server** 工作流即可备好：装 caddy 提供 HTTPS、建立站点目录、装 vsftpd 并只开一个被限制在该目录里的账号。之后每次发布都会用 FTP-Deploy-Action 经 FTPS 把 `dist/repo` 同步上去，源始终是新的。
+
+置备与发布共用到四个仓库 secret：
+
+| Secret | 用于 | 说明 |
+| :--- | :--- | :--- |
+| `GPG_PRIVATE_KEY` | 发布 | armored 签名私钥，可选 |
+| `GPG_PASSPHRASE` | 发布 | 该私钥的口令，仅在带口令时需要 |
+| `FTP_PASSWORD` | 发布 | 服务器上传账号的口令 |
+| `SERVER_SSH_PASSWORD` | 置备 | 服务器 root 口令，只在一次性置备时用到 |
+
+服务器只需准备一次，因此 `SERVER_SSH_PASSWORD` 只有置备那次需要；日常发布只用 `FTP_PASSWORD`。
 
 ---
 
@@ -402,8 +452,9 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 节点 | `ExecStart=<面板> core run -c /etc/sing-box/config.json`，`<面板>` 在 `install.sh` 安装下是 `/usr/local/bin/easysb`，在 `.deb` 安装下是 `/usr/bin/easysb`；`/etc/sing-box/sing-box` 不再存在 |
 | 校验 | `easysb core check -c <配置>` 用将来真正服务节点的同一套引擎构建配置，部署路径重启服务前跑的就是它 |
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
-| 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make dist-asset`，二者读的都是 `release/TAGS`），以 tag `v<VERSION>` 发布各架构二进制 |
-| 软件包 | `make deb`、`make rpm`、`make pacman` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成三种包，架构名与单元文本都只有一处来源（`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` 与 `sb --print-unit`）；`make apt-index` 再把这些 `.deb` 变成 `debian` 标签上的 apt 源 |
+| 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make tarball-asset`，二者读的都是 `release/TAGS`），tag 与 release 名都是 `v<VERSION>`，一个 release 装下全部资产 |
+| 软件包 | `make deb`、`make rpm`、`make pacman` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成三种包，架构名与单元文本都只有一处来源（`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` 与 `sb --print-unit`） |
+| 软件源 | `make repo` 把同一批文件摊成 apt / rpm / pacman / bin 四份源，发布工作流用 FTP-Deploy-Action 同步到发布服务器；`packaging/server/` 放站点首页与一次性置备脚本 |
 
 ---
 
@@ -417,11 +468,11 @@ make
 make check
 make dist
 
-# 打 .deb / .rpm / pacman 包，并生成仓库发布的 apt 索引
+# 打 .deb / .rpm / pacman 包，并摊成发布服务器要的 apt / rpm / pacman / bin 四份源
 make deb
 make rpm
 make pacman
-make apt-index
+make repo
 
 # 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
 make render

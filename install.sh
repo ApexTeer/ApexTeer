@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  EasySB Go 版一键安装脚本 / one-click installer for the Go build
+#  EasySB 安装脚本 / EasySB installer
 #  项目地址 Homepage : https://github.com/MinimaxFlora/EasySB
 # ==============================================================================
-#  做两件事 / does two things:
-#    1. 检测并安装运行与构建依赖（curl / openssl / jq / qrencode / tar / Go）
-#    2. 安装 EasySB 二进制到 /usr/local/bin，并创建 sb 快捷指令
+#  三种安装方式，各走各的路 / three ways in, each kept apart:
+#
+#    --method auto     一键：下载发布压缩包装到本机（默认）
+#                      one-click: fetch the release tarball and install it locally
+#    --method repo     源安装：添加软件源，用系统包管理器安装
+#                      repository: add the package source and install through the OS
+#    --method package  手动安装：安装一个已经下载好的安装包文件
+#                      manual: install a package file you already downloaded
 #
 #  内核已编译进面板：sing-box 是面板自己的依赖，装完就有，不需要再下载内核。
-#  The core is compiled into the panel — sing-box is a dependency of the binary
-#  itself, so a finished install already carries it and nothing downloads a core.
+#  The core is compiled into the panel: sing-box is a dependency of the binary itself,
+#  so a finished install already carries it and nothing downloads a core.
 #
 #  用法 / Usage:
-#    bash install.sh                # 安装或升级
-#    bash install.sh --from-source  # 强制从源码构建
-#    bash install.sh --binary PATH  # 使用本地已编译好的二进制
-#    bash install.sh --lang E       # 英文输出
+#    bash install.sh                          # 一键安装或升级
+#    bash install.sh --method repo            # 从软件源安装
+#    bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
+#    bash install.sh --from-source            # 强制从源码构建
+#    bash install.sh --binary ./easysb        # 使用本地已编译好的二进制
+#    bash install.sh --lang E                 # 英文输出
 #
 #  版本号没有常量：源码树内取根目录 VERSION，独立运行时从默认分支读取同一个文件。
 #  The version is not a constant: the in-tree VERSION inside a checkout, otherwise the
@@ -25,6 +32,8 @@
 set -euo pipefail
 
 REPO='MinimaxFlora/EasySB'
+# 软件源根地址 / package source root. install.sh、发布工作流与服务器置备脚本用的是同一处。
+REPO_URL="${EASYSB_REPO_URL:-https://sb.kejizero.xyz}"
 # VERSION / RELEASE_TAG 由 resolve_version 填充（见下），这里不写死任何版本号。
 # VERSION / RELEASE_TAG are filled in by resolve_version; no version is hardcoded.
 VERSION=''
@@ -43,8 +52,10 @@ BIN_NAME='easysb'
 DEFAULT_TAGS='with_quic,with_utls,with_v2ray_api'
 
 LANG_MODE='C'
+METHOD='auto'
 FROM_SOURCE=0
 LOCAL_BINARY=''
+LOCAL_PACKAGE=''
 SUDO=''
 
 # ------------------------------------------------------------------------------
@@ -83,9 +94,17 @@ usage() {
   cat <<'EOF'
 EasySB install.sh
 
+  --method auto|repo|package
+                    安装方式 / how to install
+                      auto    下载发布压缩包装到本机（默认）
+                      repo    添加软件源，用系统包管理器安装
+                      package 安装 --package 指定的安装包文件
+  --package PATH    配合 --method package：.deb / .rpm / .pkg.tar.zst / .tar.gz
+  --repo-url URL    软件源根地址 / package source root
   --lang C|E        输出语言 / output language
   --from-source     强制从源码构建 / force build from source
   --binary PATH     使用指定二进制 / use a local binary
+  --version V       指定版本（默认取当前发布版本）/ pin a version
   -h, --help        显示帮助 / show this help
 
 面板只用终端自带字形，不再安装 Nerd Font；为兼容旧脚本，--no-font 与
@@ -98,12 +117,20 @@ EOF
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --method) METHOD="${2:-}"; shift 2 ;;
+    --method=*) METHOD="${1#*=}"; shift ;;
+    --package) LOCAL_PACKAGE="${2:-}"; shift 2 ;;
+    --package=*) LOCAL_PACKAGE="${1#*=}"; shift ;;
+    --repo-url) REPO_URL="${2:-}"; shift 2 ;;
+    --repo-url=*) REPO_URL="${1#*=}"; shift ;;
+    --version) VERSION="${2:-}"; shift 2 ;;
+    --version=*) VERSION="${1#*=}"; shift ;;
     --lang) LANG_MODE="${2:-C}"; shift 2 ;;
     --lang=*) LANG_MODE="${1#*=}"; shift ;;
     --no-font|--font-only) shift ;;
-    --from-source) FROM_SOURCE=1; shift ;;
-    --binary) LOCAL_BINARY="${2:-}"; shift 2 ;;
-    --binary=*) LOCAL_BINARY="${1#*=}"; shift ;;
+    --from-source) METHOD='auto'; FROM_SOURCE=1; shift ;;
+    --binary) METHOD='auto'; LOCAL_BINARY="${2:-}"; shift 2 ;;
+    --binary=*) METHOD='auto'; LOCAL_BINARY="${1#*=}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -113,6 +140,11 @@ case "$LANG_MODE" in
   E|e|EN|en|en_US) LANG_MODE='E' ;;
   *) LANG_MODE='C' ;;
 esac
+case "$METHOD" in
+  auto|repo|package) ;;
+  *) die "$(say "未知安装方式: $METHOD（auto / repo / package）" "unknown method: $METHOD (auto / repo / package)")" ;;
+esac
+REPO_URL="${REPO_URL%/}"
 
 # ------------------------------------------------------------------------------
 # 系统探测 / System detection
@@ -122,10 +154,12 @@ ARCH=''
 OS_ID=''
 
 detect_system() {
+  local id_like=''
   if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
     OS_ID="${ID:-linux}"
+    id_like="${ID_LIKE:-}"
   else
     OS_ID='linux'
   fi
@@ -148,6 +182,11 @@ detect_system() {
     s390x) ARCH='s390x' ;;
     *) die "unsupported architecture: $(uname -m)" ;;
   esac
+
+  # OS_ID 与 ID_LIKE 只进日志那一行，选包管理器看的是哪个命令真的在 PATH 里。
+  # OS_ID and ID_LIKE only feed the log line; the package manager is whichever command
+  # is actually on PATH.
+  : "$id_like"
 }
 
 # 独立运行时从默认分支读取 VERSION 文件（与 internal/update 是同一个地址），而不是
@@ -170,8 +209,14 @@ latest_version() {
 resolve_version() {
   local dir v
 
-  # 本地二进制自带版本号，无需 release tag。
-  # A local binary carries its own version, so no release tag is involved.
+  # 命令行指定的版本优先，其次本地二进制自带版本号。
+  # An explicit --version wins; next a local binary carries its own version.
+  if [ -n "$VERSION" ]; then
+    VERSION="$(printf '%s' "$VERSION" | tr -d '[:space:]')"
+    VERSION="${VERSION#v}"
+    RELEASE_TAG="v${VERSION}"
+    return 0
+  fi
   if [ -n "$LOCAL_BINARY" ]; then
     VERSION="$( { "$LOCAL_BINARY" --version 2>/dev/null || true; } | sed -n 's/^EasySB[[:space:]]*\([^[:space:]]*\).*/\1/p' | head -1)" || VERSION=''
     RELEASE_TAG=''
@@ -198,7 +243,15 @@ resolve_version() {
   RELEASE_TAG="v${VERSION}"
 }
 
-# 提权执行 / Run as root
+# 发布压缩包名，与 Makefile 和 internal/update 的拼法一致。
+# The release archive name, spelled the same as the Makefile and internal/update.
+tarball_name() {
+  printf 'easysb-%s-linux-%s.tar.gz' "$VERSION" "$ARCH"
+}
+
+# ------------------------------------------------------------------------------
+# 提权 / Privileges
+# ------------------------------------------------------------------------------
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -234,7 +287,7 @@ pkg_install() {
   esac
 }
 
-# 运行时依赖 / Runtime dependencies
+# 一键方式需要的运行期命令 / the runtime commands the one-click path needs
 ensure_runtime_deps() {
   log "$(say '检查运行时依赖' 'Checking runtime dependencies')"
   # 证书用面板内置的 lego 申请，验证在面板自己的进程里完成，所以不再需要 socat 这类
@@ -310,12 +363,12 @@ _install_go_tarball() {
 }
 
 # ------------------------------------------------------------------------------
-# EasySB 二进制安装 / EasySB binary installation
+# 方式一：一键 / Method one: one-click
 # ------------------------------------------------------------------------------
-download_binary() {
-  local url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/easysb-linux-${ARCH}"
+download_tarball() {
+  local url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/$(tarball_name)"
   local out="$1"
-  say "尝试下载预编译二进制" "Trying prebuilt binary"
+  say "尝试下载发布压缩包" "Trying the release tarball"
   dim "$url"
   curl -fsSL -A 'EasySB-installer' --connect-timeout 15 -o "$out" "$url" 2>/dev/null || return 1
   [ -s "$out" ] || return 1
@@ -337,7 +390,31 @@ build_from_source() {
   return 0
 }
 
-install_binary() {
+# 从发布压缩包取出 easysb 可执行文件 / pull the easysb executable out of a tarball
+unpack_binary() {
+  local tgz="$1" out="$2" dir found
+  dir="$(mktemp -d)"
+  if ! tar -xzf "$tgz" -C "$dir" 2>/dev/null; then
+    rm -rf "$dir"; return 1
+  fi
+  found="$(find "$dir" -maxdepth 2 -type f -name easysb -print -quit)"
+  if [ -z "$found" ]; then
+    rm -rf "$dir"; return 1
+  fi
+  cp -f "$found" "$out"
+  rm -rf "$dir"
+}
+
+install_binary_file() {
+  local bin="$1"
+  as_root install -m 0755 "$bin" "$PREFIX/bin/$BIN_NAME"
+  as_root ln -sf "$PREFIX/bin/$BIN_NAME" "$PREFIX/bin/sb"
+  ok "$(say '已安装' 'installed'): $PREFIX/bin/$BIN_NAME"
+  ok "$(say '快捷指令' 'shortcut'): sb"
+}
+
+install_auto() {
+  ensure_runtime_deps
   local tmp bin
   tmp="$(mktemp -d)"
   bin="$tmp/easysb"
@@ -345,8 +422,8 @@ install_binary() {
   if [ -n "$LOCAL_BINARY" ]; then
     [ -s "$LOCAL_BINARY" ] || die "$(say '指定的二进制不存在' 'given binary not found'): $LOCAL_BINARY"
     cp -f "$LOCAL_BINARY" "$bin"
-  elif [ "$FROM_SOURCE" -eq 0 ] && download_binary "$bin"; then
-    ok "$(say '已获取预编译二进制' 'prebuilt binary downloaded')"
+  elif [ "$FROM_SOURCE" -eq 0 ] && download_tarball "$tmp/pkg.tar.gz" && unpack_binary "$tmp/pkg.tar.gz" "$bin"; then
+    ok "$(say '已获取发布压缩包' 'release tarball downloaded')"
   elif [ -x "$(dirname "${BASH_SOURCE[0]}")/easysb" ]; then
     cp -f "$(dirname "${BASH_SOURCE[0]}")/easysb" "$bin"
     ok "$(say '使用仓库内已编译二进制' 'using in-tree binary')"
@@ -355,27 +432,194 @@ install_binary() {
   fi
 
   chmod 0755 "$bin"
-  as_root install -m 0755 "$bin" "$PREFIX/bin/$BIN_NAME"
-  as_root ln -sf "$PREFIX/bin/$BIN_NAME" "$PREFIX/bin/sb"
-  ok "$(say '已安装' 'installed'): $PREFIX/bin/$BIN_NAME"
-  ok "$(say '快捷指令' 'shortcut'): sb"
+  install_binary_file "$bin"
   rm -rf "$tmp"
+}
+
+# ------------------------------------------------------------------------------
+# 方式二：源安装 / Method two: repository
+# ------------------------------------------------------------------------------
+apt_add_repo() {
+  local keyring='/etc/apt/keyrings/easysb.gpg' tmpkey trusted=''
+  tmpkey="$(mktemp)"
+  as_root install -d -m 0755 /etc/apt/keyrings
+  if curl -fsSL --connect-timeout 15 "$REPO_URL/apt/easysb.gpg" -o "$tmpkey" 2>/dev/null && [ -s "$tmpkey" ]; then
+    as_root install -m 0644 "$tmpkey" "$keyring"
+    ok "$(say '已安装签名密钥' 'signing key installed'): $keyring"
+  else
+    # 拿不到公钥时退回信任该源：HTTPS 仍保证传输不被替换，只是不校验索引签名。
+    # Without the public key fall back to trusting the source: HTTPS still protects the
+    # transport, only the index signature goes unchecked.
+    warn "$(say '未取到签名密钥，改用信任该源' 'no signing key, trusting the source instead')"
+    trusted='Trusted: yes'
+  fi
+  rm -f "$tmpkey"
+
+  if [ -n "$trusted" ]; then
+    as_root tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<EOF
+Types: deb
+URIs: ${REPO_URL}/apt
+Suites: ./
+Trusted: yes
+EOF
+  else
+    as_root tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<EOF
+Types: deb
+URIs: ${REPO_URL}/apt
+Suites: ./
+Signed-By: ${keyring}
+EOF
+  fi
+  ok "/etc/apt/sources.list.d/easysb.sources"
+
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y easysb
+}
+
+rpm_add_repo() {
+  as_root mkdir -p /etc/yum.repos.d
+  as_root tee /etc/yum.repos.d/easysb.repo >/dev/null <<EOF
+[easysb]
+name=EasySB
+baseurl=${REPO_URL}/rpm/\$basearch
+enabled=1
+type=rpm-md
+gpgcheck=0
+repo_gpgcheck=0
+EOF
+  ok "/etc/yum.repos.d/easysb.repo"
+
+  case "$PKG_MGR" in
+    dnf)
+      # dnf5 用 config-manager addrepo 把仓库登记进它的配置；dnf4 读的就是这个文件，
+      # 不需要再登记。两者都认 baseurl 里的 $basearch。
+      # dnf5 registers the repository through config-manager addrepo; dnf4 reads the
+      # file as written. Both expand $basearch in the baseurl.
+      if dnf --version 2>/dev/null | head -1 | grep -q 'dnf5'; then
+        as_root dnf config-manager addrepo --from-repofile=/etc/yum.repos.d/easysb.repo
+      else
+        dim "$(say 'dnf4：仓库文件已就位' 'dnf4: the repo file is in place')"
+      fi
+      as_root dnf install -y easysb
+      ;;
+    yum) as_root yum install -y easysb ;;
+    zypper)
+      as_root zypper -n addrepo -f "${REPO_URL}/rpm/\$basearch" easysb >/dev/null 2>&1 || true
+      as_root zypper -n --gpg-auto-import-keys refresh easysb
+      as_root zypper -n install easysb
+      ;;
+    *) die "$(say '这个系统没有可用的 RPM 包管理器' 'no RPM package manager on this system')" ;;
+  esac
+}
+
+pacman_add_repo() {
+  local conf='/etc/pacman.conf'
+  if ! grep -qE '^\[easysb\]' "$conf" 2>/dev/null; then
+    as_root tee -a "$conf" >/dev/null <<EOF
+
+[easysb]
+SigLevel = Optional TrustAll
+Server = ${REPO_URL}/pacman/\$arch
+EOF
+    ok "$(say '已写入' 'written'): $conf"
+  else
+    dim "$(say '源已存在，跳过' 'source already present, skipping')"
+  fi
+  as_root pacman -Sy --noconfirm
+  as_root pacman -S --noconfirm easysb
+}
+
+install_repo() {
+  log "$(say '添加软件源并安装' 'Adding the package source and installing')"
+  dim "repo: $REPO_URL"
+  case "$PKG_MGR" in
+    apt)    apt_add_repo ;;
+    dnf|yum|zypper) rpm_add_repo ;;
+    pacman) pacman_add_repo ;;
+    *) die "$(say "这个系统（$PKG_MGR）没有对应的软件源写法" "no repository recipe for $PKG_MGR")" ;;
+  esac
+  ok "$(say '安装完成' 'installed')"
+}
+
+# ------------------------------------------------------------------------------
+# 方式三：手动安装一个包文件 / Method three: a package file you already have
+# ------------------------------------------------------------------------------
+install_package_file() {
+  local file="$1"
+  [ -s "$file" ] || die "$(say '安装包不存在' 'package not found'): $file"
+  log "$(say "安装本地安装包" 'Installing a local package'): $file"
+
+  case "$file" in
+    *.tar.gz)
+      local tmp bin
+      tmp="$(mktemp -d)"
+      bin="$tmp/easysb"
+      unpack_binary "$file" "$bin" || die "$(say '压缩包里没有 easysb' 'the tarball carries no easysb')"
+      chmod 0755 "$bin"
+      install_binary_file "$bin"
+      rm -rf "$tmp"
+      ;;
+    *.deb)
+      if command -v apt-get >/dev/null 2>&1; then
+        as_root dpkg -i "$file" || as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -f
+      else
+        die "$(say '这个系统没有 dpkg' 'dpkg is not available here')"
+      fi
+      ;;
+    *.rpm)
+      if command -v dnf >/dev/null 2>&1; then
+        as_root dnf install -y "$file"
+      elif command -v zypper >/dev/null 2>&1; then
+        as_root zypper -n --no-gpg-checks install "$file"
+      elif command -v rpm >/dev/null 2>&1; then
+        as_root rpm -Uvh --replacepkgs "$file"
+      else
+        die "$(say '这个系统没有 RPM 包管理器' 'no RPM package manager here')"
+      fi
+      ;;
+    *.pkg.tar.zst|*.pkg.tar.xz)
+      command -v pacman >/dev/null 2>&1 || die "$(say '这个系统没有 pacman' 'pacman is not available here')"
+      as_root pacman -U --noconfirm "$file"
+      ;;
+    *)
+      die "$(say "无法识别的安装包: $file" "unrecognized package: $file")"
+      ;;
+  esac
+  ok "$(say '安装完成' 'installed')"
 }
 
 # ------------------------------------------------------------------------------
 # 主流程 / Main
 # ------------------------------------------------------------------------------
-main() {
-  setup_sudo
-  detect_system
-  ensure_runtime_deps
-  resolve_version
-  log "EasySB installer · ${OS_ID}/${ARCH} · pkg=${PKG_MGR}${VERSION:+ · v${VERSION}}"
-  install_binary
-
+finish_note() {
   printf '\n'
   ok "$(say '安装完成，运行 sb 启动' 'Installation complete, run sb to start')"
   dim "$(say '内核已随面板安装，无需再装 sing-box' 'The sing-box core came with the panel, nothing else to install')"
+}
+
+main() {
+  setup_sudo
+  detect_system
+
+  case "$METHOD" in
+    package)
+      [ -n "$LOCAL_PACKAGE" ] || die "$(say '--method package 需要 --package 指定文件' '--method package needs --package FILE')"
+      resolve_version
+      log "EasySB installer · ${OS_ID}/${ARCH} · method=package${VERSION:+ · v${VERSION}}"
+      install_package_file "$LOCAL_PACKAGE"
+      ;;
+    repo)
+      log "EasySB installer · ${OS_ID}/${ARCH} · method=repo · pkg=${PKG_MGR}"
+      install_repo
+      ;;
+    auto)
+      resolve_version
+      log "EasySB installer · ${OS_ID}/${ARCH} · method=auto${VERSION:+ · v${VERSION}}"
+      install_auto
+      ;;
+  esac
+
+  finish_note
 }
 
 main "$@"
