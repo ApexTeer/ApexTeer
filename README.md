@@ -468,7 +468,7 @@ numbers come from — including why there is no geekbench or fio — is in
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
 | Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make tarball-asset`, which read `release/TAGS`) and publishes one release, tagged and named `v<VERSION>` |
 | Packages | `make deb`, `make rpm` and `make pacman` wrap the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` and `sb --print-unit`) |
-| Sources | `make repo` lays the same files out as apt / rpm / pacman / bin trees and the release workflow syncs them to the release server with FTP-Deploy-Action; `packaging/server/` holds the site page and the one-shot provisioning script |
+| Sources | `make repo` lays the same files out as apt / rpm / pacman / bin trees and the release workflow syncs them to the release server with FTP-Deploy-Action; `packaging/server/` holds the one-shot provisioning script and the Caddy browse template the landing page is rendered from, so the site root is the directory listing plus the install commands |
 
 ---
 

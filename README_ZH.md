@@ -454,7 +454,7 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
 | 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make tarball-asset`，二者读的都是 `release/TAGS`），tag 与 release 名都是 `v<VERSION>`，一个 release 装下全部资产 |
 | 软件包 | `make deb`、`make rpm`、`make pacman` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成三种包，架构名与单元文本都只有一处来源（`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` 与 `sb --print-unit`） |
-| 软件源 | `make repo` 把同一批文件摊成 apt / rpm / pacman / bin 四份源，发布工作流用 FTP-Deploy-Action 同步到发布服务器；`packaging/server/` 放站点首页与一次性置备脚本 |
+| 软件源 | `make repo` 把同一批文件摊成 apt / rpm / pacman / bin 四份源，发布工作流用 FTP-Deploy-Action 同步到发布服务器；`packaging/server/` 放一次性置备脚本与站点首页用的 Caddy browse 模板，所以站点根目录既是文件列表又是安装命令 |
 
 ---
 
