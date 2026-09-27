@@ -6,12 +6,13 @@
      加了三处：
        - 站点根目录的安装说明（直接给出各发行版的命令）
        - 每条命令右上角的复制按钮
-       - 标题与 favicon
-     Caddy 升级后应与上游模板重新对照，免得新字段或新样式落空。
+       - 标题、favicon 与页面四周和卡片下方的留白
+      Caddy 升级后应与上游模板重新对照，免得新字段或新样式落空。
 
      Derived from Caddy v2.11.4's built-in browse template, kept as-is apart from the
-     install instructions on the site root, the copy button on each command block, and
-     the title/favicon. Re-diff against upstream when Caddy is upgraded.
+     install instructions on the site root, the copy button on each command block, the
+     title/favicon, and the page's breathing room. Re-diff against upstream when Caddy
+     is upgraded.
      ============================================================================== */ -}}
 {{ $nonce := uuidv4 -}}
 {{ $nonceAttribute := print "nonce=" (quote $nonce) -}}
@@ -807,11 +808,22 @@ footer {
 	}
 }
 
-/* EasySB 追加：列表下方的安装说明与命令块上的复制按钮。
-   EasySB additions: the install notes under the listing and the copy buttons. */
+/* EasySB 追加：页面四周的留白、列表下方的安装说明与命令块上的复制按钮。
+   卡片顶到窗口边缘、最后一块内容顶到卡片下沿，都读作贴边。.wrapper 加左右内边距把卡片从
+   窗口边收回来；main 加下内边距，末块的外边距就不会从卡片底部漏出去，卡片下沿始终留白。
+   EasySB additions: page gutters, the install notes under the listing, and the copy
+   buttons. A card that runs to the window edge, or a last block that runs to the card's
+   bottom edge, reads as cramped: .wrapper gets side padding to pull the card off the
+   window, and main gets bottom padding so the last block cannot end flush against it. */
+.wrapper {
+	padding-left: 1.5rem;
+	padding-right: 1.5rem;
+}
+main {
+	padding-bottom: 2.5rem;
+}
 .readme {
-	max-width: 72rem;
-	margin: 0 auto 3.5rem;
+	margin: 0;
 	padding: 0 5%;
 }
 .readme h2 {
