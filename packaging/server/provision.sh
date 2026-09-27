@@ -219,6 +219,14 @@ verify() {
       journalctl -u "$unit" -n 25 --no-pager 2>&1 | sed 's/^/    /'
     fi
   done
+  # vsftpd 的配置错误只写到它自己的 stderr，systemd 单元日志里看不到，所以直接跑一次
+  # 把它的原话取回来；配置有效时它会正常起服务，由 timeout 收回。
+  # vsftpd writes configuration errors to its own stderr, which the unit log does not
+  # show, so run it once directly and keep its own words.
+  if ! systemctl is-active --quiet vsftpd; then
+    echo "  --- vsftpd 直接运行 / direct run ---"
+    timeout 2 "$(command -v vsftpd)" "$VSFTPD_CONF" 2>&1 | sed 's/^/    /' || true
+  fi
   if command -v ss >/dev/null 2>&1; then
     echo "  listeners:"
     ss -lntp 2>/dev/null | awk 'NR==1 || /:(21|80|443)[[:space:]]/ {printf "    %s\n", $0}'
