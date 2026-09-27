@@ -191,8 +191,14 @@ EOF
 
 start_vsftpd() {
   systemctl enable vsftpd >/dev/null 2>&1 || true
-  systemctl restart vsftpd
-  ok "vsftpd 运行中 / vsftpd is running"
+  # restart 成功只说明进程起过，服务仍可能立刻退出，所以要回查一次状态。
+  # A successful restart only means the process started; it can exit right after, so
+  # the state is read back instead of assumed.
+  if systemctl restart vsftpd && systemctl is-active --quiet vsftpd; then
+    ok "vsftpd 运行中 / vsftpd is running"
+  else
+    warn "vsftpd 未能保持运行 / vsftpd did not stay up (see the self-check below)"
+  fi
 }
 
 # 自检 / self-check. Provisioning is only useful if the ports the release workflow and
@@ -205,6 +211,13 @@ verify() {
   local unit
   for unit in caddy vsftpd; do
     printf '  %-7s %s\n' "$unit" "$(systemctl is-active "$unit" 2>&1) / $(systemctl is-enabled "$unit" 2>&1)"
+  done
+  # A unit that reported success on restart can still fail right after, so show why.
+  for unit in caddy vsftpd; do
+    if ! systemctl is-active --quiet "$unit"; then
+      echo "  --- journalctl -u $unit ---"
+      journalctl -u "$unit" -n 25 --no-pager 2>&1 | sed 's/^/    /'
+    fi
   done
   if command -v ss >/dev/null 2>&1; then
     echo "  listeners:"
