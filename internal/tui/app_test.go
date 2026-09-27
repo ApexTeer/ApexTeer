@@ -1060,6 +1060,45 @@ func TestQQuitsFromEveryScreen(t *testing.T) {
 	}
 }
 
+// TestFormKeepsThePanelFrame pins the page that used to break the fixed layout. A prompt drew
+// its own full-height panel: no status strip, and one card stretching from the first row of the
+// window to the last, so opening the domain prompt moved the whole frame and the keys box. The
+// form screen was also the one page --render could not draw, so nothing checked it. A prompt now
+// uses the rows a task does: the strip, one card in the space of the page's two boxes, and the
+// keys box in the tail -- the same rows the dashboard uses.
+func TestFormKeepsThePanelFrame(t *testing.T) {
+	for _, size := range [][2]int{{60, 20}, {80, 24}, {100, 33}, {100, 40}, {160, 50}} {
+		w, h := size[0], size[1]
+		a := New("test", i18n.Chinese)
+		a.width, a.height = w, h
+		a.sized = true
+		a.status = sysinfo.Collect("test")
+		a.ready = true
+
+		l := a.bodyLayout()
+		root := strings.Split(stripANSI(a.dashboard()), "\n")
+		a.openForm(a.lang.T("domain_issue"), a.lang.T("domain_prompt"), "example.com", "", nil)
+		lines := strings.Split(stripANSI(a.View().Content), "\n")
+
+		if len(lines) != h {
+			t.Fatalf("%dx%d: the form drew %d lines", w, h, len(lines))
+		}
+		// The status strip and the blank row under it belong to the frame, so they are byte
+		// for byte what the page the prompt was opened from has.
+		if lines[0] != root[0] || lines[1] != root[1] {
+			t.Fatalf("%dx%d: the form does not keep the frame's top:\nform: %q\nroot: %q", w, h, lines[0], root[0])
+		}
+		// The card takes the rows the page's two boxes would, and the keys box closes the page
+		// in the tail, which is the row every other page puts it on.
+		for _, row := range []int{2, 2 + l.span() - 1, 2 + l.span() + l.tail - 1} {
+			form, want := []rune(lines[row]), []rune(root[row])
+			if form[0] != want[0] {
+				t.Fatalf("%dx%d: the form's row %d starts with %q, the page's with %q", w, h, row, form[0], want[0])
+			}
+		}
+	}
+}
+
 func TestEveryScreenUsesOneFixedFrame(t *testing.T) { // The whole point of the layout: the dashboard and every subpage render at
 	// exactly the same size, so moving between them never resizes the panel and
 	// the hint box never moves.

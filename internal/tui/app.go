@@ -252,6 +252,10 @@ func (a *App) Snapshot(width, height int) string {
 	a.sized = true
 	a.status = sysinfo.Collect(a.scriptVersion)
 	a.ready = true
+	if a.form != nil {
+		// A form owns the screen while it is open, exactly as in View.
+		return a.formScreen()
+	}
 	if a.task != nil {
 		// A task owns the screen while it runs, so a rendered frame is the task's.
 		return a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet, a.bodyLayout())
@@ -280,6 +284,11 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 	switch screen {
 	case "system":
 		a.openSystem()
+	case "form":
+		// The form screen is where every prompt lands, and its frame is the one page
+		// that used to be missing from the renderer: a rendered frame shows the domain
+		// prompt, which is the form the operator meets first.
+		a.openForm(a.lang.T("domain_issue"), a.lang.T("domain_prompt"), "example.com", "", nil)
 	case "bbr-qdisc":
 		a.push(buildBBR())
 		a.section = "bbr"
@@ -567,7 +576,7 @@ func subscriptionTitle(lang i18n.Lang, client subscribe.Client) string {
 // openForm shows a single-value text prompt over the dashboard.
 func (a *App) openForm(title, prompt, initial, hint string, submit formSubmit) {
 	f := newForm(title, prompt, initial, hint, submit)
-	f.resize(a.width)
+	f.resize(ui.InnerWidth(a.style(), a.frameWidth()))
 	a.form = f
 }
 
@@ -616,7 +625,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.task.resize(msg.Width, msg.Height, a.bodyLayout().span())
 		}
 		if a.form != nil {
-			a.form.resize(msg.Width)
+			a.form.resize(ui.InnerWidth(a.style(), a.frameWidth()))
 		}
 		return a, nil
 	case statusMsg:
@@ -806,14 +815,20 @@ func (a *App) View() tea.View {
 	return v
 }
 
+// formScreen draws a prompt in the panel's fixed frame: the same status strip, the same
+// box in the rows a page's two boxes would use, and the same keys box underneath. A prompt
+// is therefore the same page as the one it was opened from, and opening one never moves the
+// frame.
 func (a *App) formScreen() string {
 	w, h := a.frameWidth(), a.height
 	if h <= 0 {
 		h = 24
 	}
-	body := strings.Split(a.form.View(w, a.palette, a.lang), "\n")
-	hint := a.lang.T("form_confirm") + "  " + a.lang.T("form_cancel")
-	return framePanel(a.palette, a.lang, w, h, body, a.palette.Dim(hint))
+	l := a.bodyLayout()
+	out := []string{a.statusStrip(w), ""}
+	out = append(out, a.boxAt(a.form.title, a.form.body(a.palette, ui.InnerWidth(a.style(), w)), w, l.span())...)
+	out = append(out, keyTail(a.palette, a.lang, "", a.form.hintLine(a.lang), w, l.tail)...)
+	return ui.Fit(out, w, h)
 }
 
 // frameWidth is the shared panel width: the terminal width capped at 100 so
