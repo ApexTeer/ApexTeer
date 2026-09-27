@@ -27,6 +27,7 @@ SITE_DOMAIN="${SITE_DOMAIN:-sb.kejizero.xyz}"
 WEBROOT="${WEBROOT:-/var/www/${SITE_DOMAIN}}"
 FTP_USER="${FTP_USER:-easysb}"
 FTP_PASSWORD="${FTP_PASSWORD:-}"
+FTP_SHELL="${FTP_SHELL:-/usr/sbin/nologin}"
 FTP_PASV_MIN="${FTP_PASV_MIN:-40000}"
 FTP_PASV_MAX="${FTP_PASV_MAX:-40100}"
 
@@ -176,15 +177,23 @@ EOF
 
   log "建立 FTP 账号 / creating the FTP account"
   if id "$FTP_USER" >/dev/null 2>&1; then
-    usermod -d "$WEBROOT" -s /usr/sbin/nologin "$FTP_USER"
+    usermod -d "$WEBROOT" -s "$FTP_SHELL" "$FTP_USER"
   else
     # -U 保证有一个同名组，下面按「用户:」改属主时不依赖 login.defs 的默认值。
     # -U guarantees a same-name group, so the chown below does not depend on
     # login.defs defaults.
-    useradd -U -d "$WEBROOT" -s /usr/sbin/nologin -M "$FTP_USER"
+    useradd -U -d "$WEBROOT" -s "$FTP_SHELL" -M "$FTP_USER"
   fi
   printf '%s:%s\n' "$FTP_USER" "$FTP_PASSWORD" | chpasswd
   ok "$FTP_USER -> $WEBROOT"
+
+  # vsftpd 判 shell 那一关我们关掉了（check_shell=NO），但 Debian / Ubuntu 的
+  # /etc/pam.d/vsftpd 还挂了一道 pam_shells，它要求账号的 shell 出现在 /etc/shells
+  # 里，否则登录一律 530。nologin 通常不在那份名单里，补进去。
+  # vsftpd's own shell check is off (check_shell=NO), but Debian / Ubuntu also wire
+  # pam_shells into /etc/pam.d/vsftpd, which rejects any account whose shell is not listed
+  # in /etc/shells with a 530. nologin is usually absent from that list, so add it.
+  grep -qxF "$FTP_SHELL" /etc/shells 2>/dev/null || printf '%s\n' "$FTP_SHELL" >> /etc/shells
 
   log "调整站点根目录属主 / fixing ownership of $WEBROOT"
   chown -R "$FTP_USER": "$WEBROOT"
@@ -252,6 +261,28 @@ verify() {
   fi
   printf '  caddy local http: %s\n' \
     "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${SITE_DOMAIN}" http://127.0.0.1/ || echo n/a)"
+  # 用发布工作流那套凭据在本机真登一次：能列出目录说明口令与 PAM 都没问题，剩下就只是
+  # provider 侧防火墙；被拒则把 PAM 与 shell 名单一并打出来。
+  # Log in locally with the release workflow's own credentials: a listing means the
+  # password and PAM are fine and only a provider firewall can still be at fault; a
+  # rejection prints the PAM stack and the shells list.
+  printf '  FTP 本机登录 / local FTP login: '
+  # --ftp-ssl-control 只给控制通道加密，正好对应配置里的 force_local_data_ssl=NO，
+  # 这样失败一定出在登录本身，不会混进数据通道的问题。
+  # --ftp-ssl-control encrypts the control channel only, matching force_local_data_ssl=NO,
+  # so a failure points at the login itself rather than the data channel.
+  if curl -sS -k --ftp-ssl-control --user "$FTP_USER:$FTP_PASSWORD" \
+       "ftp://127.0.0.1/" >/dev/null 2>&1; then
+    echo "ok"
+  else
+    echo "FAILED"
+    printf '    /etc/vsftpd.userlist: %s\n' "$(tr '\n' ' ' < /etc/vsftpd.userlist 2>/dev/null)"
+    printf '    %s 的 shell: %s\n' "$FTP_USER" "$(getent passwd "$FTP_USER" | cut -d: -f7)"
+    echo "    /etc/shells: $(tr '\n' ' ' < /etc/shells)"
+    echo "    --- /etc/pam.d/vsftpd ---"
+    sed 's/^/      /' /etc/pam.d/vsftpd 2>&1
+    journalctl --since '-2 min' --no-pager 2>/dev/null | grep -i vsftpd | tail -10 | sed 's/^/      /'
+  fi
   printf '  站点根目录属主 / webroot owner: %s\n' "$(stat -c '%U:%G %a' "$WEBROOT")"
   printf '  vsftpd 用户列表 / vsftpd userlist: %s\n' "$(cat /etc/vsftpd.userlist 2>/dev/null | tr '\n' ' ')"
 }
