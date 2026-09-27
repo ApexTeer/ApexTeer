@@ -951,11 +951,54 @@ func TestMainMenuNarrowFallsBackToSingleColumn(t *testing.T) {
 	if a.index != 1 {
 		t.Fatalf("down moved to %d, want 1", a.index)
 	}
-	// With one column the arrows keep their old meaning: right opens the entry.
+	// With one column there is no column to step to, so right must not open the entry.
 	m, _ = a.Update(press(tea.KeyRight))
 	a = m.(*App)
-	if a.current().id == "root" {
-		t.Fatal("right should still enter a screen when there is only one column")
+	if a.current().id != "root" {
+		t.Fatal("right must not enter a screen; only Enter does")
+	}
+}
+
+// A page inside a section falls back to the panel's two columns once its entries no longer fit
+// one per line (see entryRows), and then the arrows have to walk those columns the way they do
+// on the main menu. The key handler used to disagree with the renderer here: menuColumns still
+// reported one column, so right ran the highlighted entry — on the service page that is a
+// right press starting, stopping or restarting the service — and left went back a level.
+func TestSectionPageArrowKeysFollowItsColumns(t *testing.T) {
+	a := newTestApp(t)
+	if !a.enterSection("service") {
+		t.Fatal("the service section should be reachable")
+	}
+	// The page has more entries than its box holds, which is what makes it two columns.
+	if total := a.itemCount(); total <= boxRows(a.bodyLayout().menu) {
+		t.Fatalf("the service page has %d entries and no longer falls back to columns", total)
+	}
+	if a.menuColumns() != 2 {
+		t.Fatalf("the service page is drawn in two columns but menuColumns says %d", a.menuColumns())
+	}
+	half := a.colHalf()
+
+	m, _ := a.Update(press(tea.KeyRight))
+	a = m.(*App)
+	if a.current().id != "service" {
+		t.Fatalf("right left the page for %q instead of moving a column", a.current().id)
+	}
+	if a.index != half {
+		t.Fatalf("right landed on %d, want the right column's first row %d", a.index, half)
+	}
+	m, _ = a.Update(press(tea.KeyLeft))
+	a = m.(*App)
+	if a.index != 0 {
+		t.Fatalf("left landed on %d, want the left column's first row 0", a.index)
+	}
+	if a.current().id != "service" {
+		t.Fatalf("left went back to %q instead of moving a column", a.current().id)
+	}
+	// Enter is still what runs the highlighted entry.
+	m, _ = a.Update(press(tea.KeyEnter))
+	a = m.(*App)
+	if a.task == nil {
+		t.Fatal("enter should have started the highlighted action")
 	}
 }
 
