@@ -38,8 +38,13 @@ func TestProgressDoneScrolls(t *testing.T) {
 	if got := p.vp.YOffset(); got >= before {
 		t.Fatalf("up key did not scroll: before=%d after=%d", before, got)
 	}
-	if _, closed := p.handleKey(press(tea.KeyEnter), i18n.Chinese); !closed {
-		t.Fatalf("enter should close a finished task")
+	// Enter enters and confirms; it never goes back. A finished task is left with
+	// Esc, the same as every other page.
+	if _, closed := p.handleKey(press(tea.KeyEnter), i18n.Chinese); closed {
+		t.Fatalf("enter must not close a finished task")
+	}
+	if _, closed := p.handleKey(press(tea.KeyEsc), i18n.Chinese); !closed {
+		t.Fatalf("esc should close a finished task")
 	}
 }
 
