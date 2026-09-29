@@ -17,6 +17,17 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   one.
 - **`make_latest: false`.** The Go release is intentionally not marked latest;
   do not flip this without deciding how it interacts with core releases.
+- **Publish the sources with rsync, and never wrap rsync in `sshpass`.** The tree
+  is 755 MB across 400-odd files. FTP-Deploy-Action waits a round trip per write
+  (~25 KB/s here), and pushing one tar with `scp` sustains only 350-850 KB/s and
+  was dropped by the peer after 36 minutes. `rsync -az --delete --delay-updates`
+  over one SSH connection moved the same tree in about 6.5 minutes and only sends
+  changes on later runs. The catch: `sshpass` does not leave `SSHPASS` intact for
+  its child (1.09 masks it, newer versions unset it), so `sshpass -e rsync ...`
+  leaves the `sshpass` that rsync starts through `RSYNC_RSH` with no password -
+  the run dies immediately with `sshpass: -e option given but "SSHPASS"
+  environment variable is not set` and `connection unexpectedly closed (0 bytes
+  received so far)`. Run `rsync` directly and let `RSYNC_RSH` own the password.
 
 ## Version and identity
 
