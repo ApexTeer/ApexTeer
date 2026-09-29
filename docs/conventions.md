@@ -92,7 +92,7 @@
   `PACMANARCH_*`, always keyed on an asset name so one table serves packaging, layout
   and indexing; the packaged units come from `easysb --print-unit`; do not hand-write
   a unit under `packaging/`. The release workflow ships `dist/repo`
-  to the release server over one SSH connection; `packaging/server/` holds the one-shot
+  to the release server with an incremental rsync over one SSH connection; `packaging/server/` holds the one-shot
   provisioning script, the Caddy browse template the landing page is rendered from, and
   the favicon. The template and the favicon travel as `dist/repo/.easysb/browse.html`
   and `dist/repo/.easysb/favicon.svg`, so `make repo` is the only place that decides
