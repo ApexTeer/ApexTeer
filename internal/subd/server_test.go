@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -451,5 +452,61 @@ func TestRunServesAndStops(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not stop after the context was cancelled")
+	}
+}
+
+// TestRunAnnouncesTheVersion holds Options.Version to its own documentation: the service
+// is the only long-running mode of this binary, and its journal line is what says which
+// build is answering subscriptions on a host nobody opens a panel on.
+func TestRunAnnouncesTheVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "users.json")
+	if _, err := user.Load(path); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	probe, err := freePort()
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	cfg := nodeConfig()
+	cfg.SubServePort = probe
+
+	var mu sync.Mutex
+	var lines []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- Options{
+			Version:      "9.9.9",
+			AccountsPath: path,
+			Node:         func() state.Config { return cfg },
+			Log: func(line string) {
+				mu.Lock()
+				defer mu.Unlock()
+				lines = append(lines, line)
+			},
+			Ready: ready,
+		}.Run(ctx)
+	}()
+
+	<-ready
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not stop after the context was cancelled")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if joined := strings.Join(lines, "\n"); !strings.Contains(joined, "9.9.9") {
+		t.Fatalf("the startup line does not name the build: %q", joined)
+	}
+}
+
+func TestVersionFallsBackWhenUnset(t *testing.T) {
+	if got := (Options{}).version(); got == "" {
+		t.Fatal("an unset version leaves the log line trailing off")
 	}
 }
