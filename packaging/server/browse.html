@@ -1249,8 +1249,9 @@ main {
 					<code>/rpm/$basearch</code> an rpm-md repository, <code>/pacman/$arch</code> a pacman
 					database, and <code>/bin</code> the release tarballs. All three sources are signed with
 					one key, served inside each tree as <code>apt/easysb.gpg</code>,
-					<code>rpm/RPM-GPG-KEY-easysb</code> and <code>pacman/easysb.asc</code>. Pick your
-					distribution below.</p>
+					<code>rpm/RPM-GPG-KEY-easysb</code> and <code>pacman/easysb.asc</code>, and
+					<code>/easysb.repo</code> registers the rpm source on either dnf generation. Pick
+					your distribution below.</p>
 
 				<h3>Debian &middot; Ubuntu</h3>
 				<div class="cmd">
@@ -1274,21 +1275,18 @@ sudo apt-get install easysb</pre>
 					{{template "copy"}}
 					<pre>sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
 
-sudo tee /etc/yum.repos.d/easysb.repo &gt;/dev/null &lt;&lt;'EOF'
-[easysb]
-name=EasySB
-baseurl=https://sb.kejizero.xyz/rpm/$basearch
-enabled=1
-type=rpm-md
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-EOF
+# Fedora (dnf5)
+sudo dnf config-manager addrepo --from-repofile=https://sb.kejizero.xyz/easysb.repo
+sudo dnf install easysb
 
-# Fedora / RHEL
+# RHEL 9 and older (dnf4), dnf-plugins-core provides config-manager
+sudo dnf install -y dnf-plugins-core
+sudo dnf config-manager --add-repo https://sb.kejizero.xyz/easysb.repo
 sudo dnf install easysb
 
 # openSUSE
+sudo zypper addrepo -f https://sb.kejizero.xyz/rpm/\$basearch easysb
+sudo zypper --gpg-auto-import-keys refresh easysb
 sudo zypper install easysb</pre>
 				</div>
 

@@ -33,6 +33,9 @@ set -euo pipefail
 
 REPO='MinimaxFlora/EasySB'
 # 软件源根地址 / package source root. install.sh、发布工作流与服务器置备脚本用的是同一处。
+# Makefile 的 REPO_URL 也写这个地址（发布出去的 easysb.repo 里有它），两处一起改。
+# The Makefile's REPO_URL names the same host (the published easysb.repo carries it), so
+# the two defaults move together.
 REPO_URL="${EASYSB_REPO_URL:-https://sb.kejizero.xyz}"
 # VERSION / RELEASE_TAG 由 resolve_version 填充（见下），这里不写死任何版本号。
 # VERSION / RELEASE_TAG are filled in by resolve_version; no version is hardcoded.
@@ -502,7 +505,7 @@ EOF
 # rpmdb so both dnf and zypper accept it. Without the key the entry stays permissive and
 # says so, instead of letting dnf fail midway with GPG check FAILED.
 rpm_add_repo() {
-  local tmpkey check=0 keyline=''
+  local tmpdir repofile tmpkey check=0 keyline=''
   tmpkey="$(mktemp)"
   if curl -fsSL --connect-timeout 15 "$REPO_URL/rpm/RPM-GPG-KEY-easysb" -o "$tmpkey" 2>/dev/null && [ -s "$tmpkey" ] \
     && as_root rpm --import "$tmpkey" 2>/dev/null; then
@@ -514,8 +517,14 @@ rpm_add_repo() {
   fi
   rm -f "$tmpkey"
 
-  as_root mkdir -p /etc/yum.repos.d
-  as_root tee /etc/yum.repos.d/easysb.repo >/dev/null <<EOF
+  # 仓库定义先落在临时文件里，文件名固定为 easysb.repo，好让 dnf4 的 --add-repo 把它
+  # 装成 /etc/yum.repos.d/easysb.repo。怎么登记按包管理器分家，见下面各分支。
+  # The repository definition is written to a temporary file, named easysb.repo so that
+  # dnf4's --add-repo installs it as /etc/yum.repos.d/easysb.repo. How it gets registered
+  # differs per package manager, see the branches below.
+  tmpdir="$(mktemp -d)"
+  repofile="$tmpdir/easysb.repo"
+  cat > "$repofile" <<EOF
 [easysb]
 name=EasySB
 baseurl=${REPO_URL}/rpm/\$basearch
@@ -525,28 +534,41 @@ gpgcheck=${check}
 repo_gpgcheck=${check}
 ${keyline}
 EOF
-  ok "/etc/yum.repos.d/easysb.repo"
 
+  as_root mkdir -p /etc/yum.repos.d
   case "$PKG_MGR" in
     dnf)
-      # dnf5 用 config-manager addrepo 把仓库登记进它的配置；dnf4 读的就是这个文件，
-      # 不需要再登记。两者都认 baseurl 里的 $basearch。
-      # dnf5 registers the repository through config-manager addrepo; dnf4 reads the
-      # file as written. Both expand $basearch in the baseurl.
+      # dnf4 与 dnf5 的 config-manager 是两套互不通用的写法，各走各的：
+      #   dnf4 用 --add-repo，这个子命令由 dnf-plugins-core 提供，插件不在时先补上；
+      #   dnf5 用内建的 addrepo 子命令，--from-repofile 直接读这个文件。
+      # dnf4 and dnf5 ship two incompatible config-manager CLIs, so each keeps its own
+      # call: dnf4 uses --add-repo, which comes from dnf-plugins-core and is installed
+      # first when missing; dnf5 uses the built-in addrepo subcommand, whose
+      # --from-repofile reads the file as is.
       if dnf --version 2>/dev/null | head -1 | grep -q 'dnf5'; then
-        as_root dnf config-manager addrepo --from-repofile=/etc/yum.repos.d/easysb.repo
+        as_root dnf config-manager addrepo --from-repofile="$repofile"
       else
-        dim "$(say 'dnf4：仓库文件已就位' 'dnf4: the repo file is in place')"
+        if ! dnf config-manager --help >/dev/null 2>&1; then
+          as_root dnf install -y dnf-plugins-core
+        fi
+        as_root dnf config-manager --add-repo "$repofile"
       fi
+      rm -rf "$tmpdir"
       as_root dnf install -y easysb
       ;;
-    yum) as_root yum install -y easysb ;;
+    yum)
+      as_root install -m 0644 "$repofile" /etc/yum.repos.d/easysb.repo
+      rm -rf "$tmpdir"
+      ok "/etc/yum.repos.d/easysb.repo"
+      as_root yum install -y easysb
+      ;;
     zypper)
+      rm -rf "$tmpdir"
       as_root zypper -n addrepo -f "${REPO_URL}/rpm/\$basearch" easysb >/dev/null 2>&1 || true
       as_root zypper -n --gpg-auto-import-keys refresh easysb
       as_root zypper -n install easysb
       ;;
-    *) die "$(say '这个系统没有可用的 RPM 包管理器' 'no RPM package manager on this system')" ;;
+    *) rm -rf "$tmpdir"; die "$(say '这个系统没有可用的 RPM 包管理器' 'no RPM package manager on this system')" ;;
   esac
 }
 

@@ -42,8 +42,12 @@
   `bin/`; `make repo` builds them and the workflow syncs them there. The three
   index subtrees are signed with one key when `GPG_KEY_ID` is set, and each
   publishes that key inside its own tree: `apt/easysb.gpg`, `rpm/RPM-GPG-KEY-easysb`
-  and `pacman/easysb.asc`. `install.sh --method repo` writes the strict entry only
-  when it finds that key on the server, and the permissive form otherwise.
+  and `pacman/easysb.asc`. The rpm tree root also carries `easysb.repo`, so
+  registering the rpm source is one command per dnf generation: dnf5's
+  `config-manager addrepo --from-repofile` and dnf4's `config-manager --add-repo`
+  (which `dnf-plugins-core` provides). `install.sh --method repo` writes the
+  strict entry only when it finds that key on the server, and the permissive
+  form otherwise.
 
 ## Commits
 

@@ -206,17 +206,20 @@ Both also come from the release server as real repositories, an rpm-md tree and 
 ```bash
 # Fedora / RHEL / openSUSE
 sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-sudo tee /etc/yum.repos.d/easysb.repo >/dev/null <<'EOF'
-[easysb]
-name=EasySB
-baseurl=https://sb.kejizero.xyz/rpm/$basearch
-enabled=1
-type=rpm-md
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-EOF
+
+# Fedora (dnf5)
+sudo dnf config-manager addrepo --from-repofile=https://sb.kejizero.xyz/easysb.repo
 sudo dnf install easysb
+
+# RHEL 9 and older (dnf4), dnf-plugins-core provides config-manager
+sudo dnf install -y dnf-plugins-core
+sudo dnf config-manager --add-repo https://sb.kejizero.xyz/easysb.repo
+sudo dnf install easysb
+
+# openSUSE
+sudo zypper addrepo -f https://sb.kejizero.xyz/rpm/\$basearch easysb
+sudo zypper --gpg-auto-import-keys refresh easysb
+sudo zypper install easysb
 
 # Arch
 curl -fsSL https://sb.kejizero.xyz/pacman/easysb.asc -o /tmp/easysb.asc
@@ -235,12 +238,16 @@ sudo pacman -Sy && sudo pacman -S easysb
 ```
 
 The `rpm --import` puts the key in the rpm database, which is what dnf and zypper
-both verify against. `gpgcheck` verifies every package and `repo_gpgcheck`
-verifies `repomd.xml` against its `repomd.xml.asc`, so the entry refuses an
-unsigned or altered file. pacman verifies the database (`DatabaseRequired`) and
-each package (`Required`) against the same key, which has to be locally trusted
-once. `install.sh --method repo` writes both entries and does both key imports
-for you.
+both verify against. The published `easysb.repo` carries the `baseurl` and the
+`gpgkey` together, so each dnf generation needs one command of its own to
+register it: dnf5's `config-manager addrepo --from-repofile`, and dnf4's
+`config-manager --add-repo`, which comes from `dnf-plugins-core`. `gpgcheck`
+verifies every package and `repo_gpgcheck` verifies `repomd.xml` against its
+`repomd.xml.asc`, so the entry refuses an unsigned or altered file. pacman
+verifies the database (`DatabaseRequired`) and each package (`Required`)
+against the same key, which has to be locally trusted once.
+`install.sh --method repo` runs the same two dnf paths and does both key
+imports for you.
 
 Single files are still on the release page if you prefer to install by hand:
 

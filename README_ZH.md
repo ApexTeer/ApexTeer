@@ -208,17 +208,20 @@ sudo apt-get install easysb
 ```bash
 # Fedora / RHEL / openSUSE
 sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-sudo tee /etc/yum.repos.d/easysb.repo >/dev/null <<'EOF'
-[easysb]
-name=EasySB
-baseurl=https://sb.kejizero.xyz/rpm/$basearch
-enabled=1
-type=rpm-md
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-EOF
+
+# Fedora（dnf5）
+sudo dnf config-manager addrepo --from-repofile=https://sb.kejizero.xyz/easysb.repo
 sudo dnf install easysb
+
+# RHEL 9 及更早（dnf4），config-manager 由 dnf-plugins-core 提供
+sudo dnf install -y dnf-plugins-core
+sudo dnf config-manager --add-repo https://sb.kejizero.xyz/easysb.repo
+sudo dnf install easysb
+
+# openSUSE
+sudo zypper addrepo -f https://sb.kejizero.xyz/rpm/\$basearch easysb
+sudo zypper --gpg-auto-import-keys refresh easysb
+sudo zypper install easysb
 
 # Arch
 curl -fsSL https://sb.kejizero.xyz/pacman/easysb.asc -o /tmp/easysb.asc
@@ -236,11 +239,13 @@ EOF
 sudo pacman -Sy && sudo pacman -S easysb
 ```
 
-`rpm --import` 会把公钥写进 rpm 数据库，dnf 与 zypper 校验时用的就是它。
-`gpgcheck` 校验每个包，`repo_gpgcheck` 用 `repomd.xml.asc` 校验 `repomd.xml`，
-所以未签名或被改过的文件会被拒收。pacman 则用同一把密钥校验数据库
-（`DatabaseRequired`）与每个包（`Required`），这把密钥需要在本地信任一次。
-两条写法与两次密钥导入都由 `install.sh --method repo` 完成。
+`rpm --import` 会把公钥写进 rpm 数据库，dnf 与 zypper 校验时用的就是它。发布在源里的
+`easysb.repo` 把 `baseurl` 与 `gpgkey` 写在一起，所以两代 dnf 各用一条命令登记它：
+dnf5 用 `config-manager addrepo --from-repofile`，dnf4 用 `config-manager --add-repo`，
+后者由 `dnf-plugins-core` 提供。`gpgcheck` 校验每个包，`repo_gpgcheck` 用
+`repomd.xml.asc` 校验 `repomd.xml`，所以未签名或被改过的文件会被拒收。pacman 则用
+同一把密钥校验数据库（`DatabaseRequired`）与每个包（`Required`），这把密钥需要在本地
+信任一次。dnf 的两条路径与两次密钥导入都由 `install.sh --method repo` 完成。
 
 也可以继续用 release 页上的单文件方式安装：
 

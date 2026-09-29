@@ -71,6 +71,12 @@ GPG_BATCH      := --batch --yes --pinentry-mode loopback
 # 软件源目录树 / the repository tree: apt is flat, rpm and pacman are per architecture
 # and bin holds the release tarballs.
 REPO_DIR       ?= $(DIST)/repo
+# 源对外发布的根地址：rpm 树里那份 easysb.repo 用它写 baseurl 与 gpgkey，客户端拿到
+# 这份文件就能登记仓库。install.sh 的默认 REPO_URL 必须与它一致，两处一起改。
+# Public root URL of the sources: the easysb.repo published in the rpm tree writes its
+# baseurl and gpgkey with it, so a client can register the repo from that one file.
+# install.sh's default REPO_URL has to match; change the two together.
+REPO_URL       ?= https://sb.kejizero.xyz
 
 # Debian 架构名 / Debian architecture names: armv7 ships as armhf, 386 as i386.
 DEBARCH_amd64   := amd64
@@ -363,6 +369,13 @@ apt-index: ## 生成 apt 扁平源到 dist/repo/apt（设置 GPG_KEY_ID 时签�
 # search PATH and a distro's %{__gpg} may name a gpg2 that is not installed, so the
 # wrapper uses the absolute path from command -v. createrepo_c must run after signing, or
 # the checksums in the index no longer match the signed packages.
+# 这一目标还在 rpm 树根放一份 easysb.repo，baseurl 与 gpgkey 都写在里面：客户端只要有
+# 这一份文件就能登记源，dnf4 用 --add-repo、dnf5 用 addrepo --from-repofile 各取各的。
+# 没有密钥时按未签名发布，两个校验开关写 0 且不写 gpgkey，与 install.sh 的宽松回退一致。
+# The target also drops an easysb.repo at the root of the rpm tree, carrying baseurl and
+# gpgkey together: one file is enough to register the source, fetched through dnf4's
+# --add-repo or dnf5's addrepo --from-repofile. Without a key it ships unsigned, both
+# switches 0 and no gpgkey line, matching install.sh's permissive fallback.
 rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（设置 GPG_KEY_ID 时签名，需要 createrepo_c）
 	@command -v createrepo_c >/dev/null 2>&1 || { echo "createrepo_c 未安装 / missing: apt-get install -y createrepo-c"; exit 1; }
 	@set -e; sign='$(GPG_BATCH)'; \
@@ -375,6 +388,11 @@ rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（设置 GPG_KEY_ID �
 		printf '#!/bin/sh\n[ "$$1" = gpg ] && shift\nexec %s %s "$$@"\n' "$$(command -v gpg)" "$$sign" > "$$gpg_wrap"; \
 		chmod +x "$$gpg_wrap"; \
 	fi; \
+	mkdir -p "$(REPO_DIR)"; \
+	{ printf '[easysb]\nname=EasySB\nbaseurl=%s/rpm/$$basearch\nenabled=1\ntype=rpm-md\ngpgcheck=%s\nrepo_gpgcheck=%s\n' \
+		'$(REPO_URL)' '$(if $(GPG_KEY_ID),1,0)' '$(if $(GPG_KEY_ID),1,0)'; \
+	  if [ -n "$(GPG_KEY_ID)" ]; then printf 'gpgkey=%s/rpm/RPM-GPG-KEY-easysb\n' '$(REPO_URL)'; fi; } \
+		> "$(REPO_DIR)/easysb.repo"; \
 	for arch in $(RPM_ARCH_DIRS); do \
 		dir="$(REPO_DIR)/rpm/$$arch"; \
 		rm -rf "$$dir"; mkdir -p "$$dir"; \
