@@ -17,11 +17,15 @@ const (
 	// install use it.
 	PathEnv = "EASYSB_UI_CONF"
 
-	// The variables the panel reads on start-up, set by the command line first.
-	SkinEnv  = "EASYSB_SKIN"
+	// SkinEnv selects the skin.
+	SkinEnv = "EASYSB_SKIN"
+	// ThemeEnv selects the palette.
 	ThemeEnv = "EASYSB_THEME"
+	// IconsEnv selects the glyph set: the Unicode symbols, or the ASCII fallback.
 	IconsEnv = "EASYSB_ICONS"
-	LangEnv  = "EASYSB_LANG"
+	// LangEnv selects the interface language. A command line flag sets it before the
+	// panel reads it, so a flag still wins over what was remembered.
+	LangEnv = "EASYSB_LANG"
 
 	// BoardEnv carries the toolbox 看板's selection, so the entry points that build the panel
 	// from flags see the same choice the interface remembers.

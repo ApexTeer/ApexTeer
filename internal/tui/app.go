@@ -1,3 +1,5 @@
+// Package tui is the panel: the bubbletea model, the menu tree, the fixed layout every
+// page is drawn into, the forms and the progress and report screens.
 package tui
 
 import (
@@ -28,6 +30,9 @@ import (
 
 type statusMsg sysinfo.Status
 
+// App is the bubbletea model. It holds the navigation stack rather than a single current
+// page, so Esc always means "one level back", and it owns the pieces every page needs:
+// the language, the icons, the resolved skin and the status bar's reading of the host.
 type App struct {
 	scriptVersion string
 	lang          i18n.Lang
@@ -233,6 +238,8 @@ func skinFromEnv() (theme.Skin, bool, bool) {
 	}
 }
 
+// Init is the one command bubbletea runs at startup: read the host for the status bar,
+// and ask the terminal for its background when the palette is set to follow it.
 func (a *App) Init() tea.Cmd {
 	cmds := []tea.Cmd{collectStatus(a.scriptVersion)}
 	if a.themeAuto {
@@ -627,6 +634,9 @@ func (a *App) handleFormKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// Update is the model's single entry point for everything that happens: key presses,
+// resizes, the terminal's answer about its background, and the results the actions
+// reported back. It returns the model because a message may replace it.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
@@ -819,6 +829,10 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+// View draws the current frame. Which screen is drawn depends on the mode the model is
+// in - a form, a running task, a finished report, or the menu tree - and each of those
+// draws into the same fixed layout, so the frame does not change shape as work starts
+// and ends. Nothing is drawn until the terminal has reported its size.
 func (a *App) View() tea.View {
 	if !a.sized {
 		// Wait for the first size report before drawing.

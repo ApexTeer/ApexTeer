@@ -24,6 +24,8 @@ const openRCUnitPath = "/etc/init.d/easysb-firewall"
 // Backend identifies the available NAT tooling.
 type Backend string
 
+// The NAT backends this host may have. None means neither tool is installed, which the
+// panel reports rather than treating as a failure.
 const (
 	IPTables Backend = "iptables"
 	NFTables Backend = "nft"

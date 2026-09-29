@@ -1,3 +1,6 @@
+// Package theme is the panel's appearance: four complete skins, each with a dark and a
+// light palette, the geometry a skin is allowed to choose, and the small rendering
+// helpers every screen draws its boxes and columns with.
 package theme
 
 import (
@@ -45,22 +48,31 @@ func Dark() Palette { return DefaultSkin().Dark }
 // accents and near-white body text all but disappear there.
 func Light() Palette { return DefaultSkin().Light }
 
+// Bold renders s in bold and in the colour the caller picked, for a heading whose role
+// colour is decided at the call site rather than taken from the palette.
 func (p Palette) Bold(c color.Color, s string) string {
 	return lipgloss.NewStyle().Bold(true).Foreground(c).Render(s)
 }
 
+// Colored renders s in the colour the caller picked. It is the plain form of Bold, for
+// the places a weight change would say something that was not meant.
 func (p Palette) Colored(c color.Color, s string) string {
 	return lipgloss.NewStyle().Foreground(c).Render(s)
 }
 
+// Dim renders secondary text: present, but not competing with the value beside it.
+// Faint is the step below it.
 func (p Palette) Dim(s string) string {
 	return lipgloss.NewStyle().Foreground(p.Muted).Render(s)
 }
 
+// Label renders the name of a field, which the accent colour marks as the thing being
+// asked for rather than the answer. Its pair is Value.
 func (p Palette) Label(s string) string {
 	return lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render(s)
 }
 
+// Value renders the reading that belongs to a Label.
 func (p Palette) Value(s string) string {
 	return lipgloss.NewStyle().Foreground(p.Text).Render(s)
 }
@@ -72,6 +84,9 @@ func (p Palette) SelectedRow(s string) string {
 	return lipgloss.NewStyle().Bold(true).Foreground(p.SelFg).Background(p.SelBg).Render(s)
 }
 
+// State renders a status word in the colour of its meaning: a warning, a success, or -
+// when it is neither - a failure, which is the reading an unknown state should not get
+// by accident.
 func (p Palette) State(s string, ok bool, warn bool) string {
 	switch {
 	case warn:
@@ -96,6 +111,9 @@ func Truncate(s string, w int) string {
 	return ansi.Truncate(s, w, "…")
 }
 
+// Pad right-pads s with spaces to w display cells. Width is counted in cells rather
+// than runes, so a Chinese label holds the same column as a Latin one, and already
+// styled text is padded without its escape sequences being counted.
 func Pad(s string, w int) string {
 	if w <= 0 {
 		return s
@@ -107,6 +125,10 @@ func Pad(s string, w int) string {
 	return s + strings.Repeat(" ", pad)
 }
 
+// Box draws a framed card: the title set into the top rule and the content clipped and
+// padded inside, both to the same width so the right border stays in one column. It
+// returns the frame rather than writing it, so a screen composes it with the rest of a
+// page. A width below the frame's own minimum is raised to it rather than drawn wrong.
 func Box(title, content string, width int, border color.Color, titleColor color.Color) string {
 	if width < 8 {
 		width = 8
