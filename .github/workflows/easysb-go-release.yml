@@ -3,11 +3,11 @@ name: Build EasySB Go release
 # 源码：根目录 Go module（main.go、internal/**）
 # 产物：以 tag `v<VERSION>` 发布的一套资产 —— 每个架构一个发布压缩包
 #       easysb-<版本>-linux-<架构>.tar.gz，三种安装包 easysb_<版本>_linux_<架构>.<扩展名>
-# 软件源：再按发行版打一套包，摆成 linux / pacman / bin 三份源，经一条 SSH 连接整体
-#         送到发布服务器，install.sh --method repo 就是从那里装。
+# 软件源：再按发行版打一套包，摆成 linux / pacman / bin 三份源，用 rsync 经一条 SSH
+#         连接增量送到发布服务器，install.sh --method repo 就是从那里装。
 # Assets: one release tagged `v<VERSION>` carrying a tarball per architecture and the
 # three package formats. A second set of per-distribution packages is laid out as
-# linux / pacman / bin sources and shipped to the release server over a single SSH
+# linux / pacman / bin sources and rsynced to the release server over a single SSH
 # connection.
 
 on:
@@ -261,9 +261,10 @@ jobs:
   deploy:
     needs: [prepare, release]
     runs-on: ubuntu-26.04
-    # 755 MB 的软件源走一条 SSH 连接，正常几分钟；留足余量避免被误杀。
-    # The 755 MB source ships over one SSH connection, normally a few minutes; the margin
-    # keeps a slow-but-working link from being killed mid-swap.
+    # 755 MB 的软件源走一条 SSH 连接，首次同步几分钟，之后只传变化；留足余量，慢链路
+    # 也不会被误杀。
+    # The 755 MB source rsyncs over one SSH connection: minutes on the first run, only
+    # changes afterwards. The margin keeps a slow-but-working link from being killed.
     timeout-minutes: 60
     steps:
       - name: 检出仓库
@@ -316,22 +317,24 @@ jobs:
       - name: 组装软件源
         run: make repo-index GPG_KEY_ID="${GPG_KEY_ID:-}" GPG_PASSPHRASE_FILE="${GPG_PASSPHRASE_FILE:-}"
 
-      # 同步走 SSH，不走 FTP。这套树有 755 MB、438 个文件，FTP 每写一块都要等一个往返回
-      # 执，实测只有 25 KB/s（v5.0.0 第一次分发行版发布就卡在这里，30 分钟只传完两个包）；
-      # 一条 SSH 连接把整棵树当单个流推过去，能跑到链路带宽。产物先在本地打成一个 tar，
-      # 到服务器上解开、校验，再整棵替换站点根，最后退役旧的扁平 apt/ 与 rpm/<架构>/。
+      # 同步用 SSH 上的 rsync：FTP 和「整棵推过去」都试过，都败在这条慢上行上。这套树有
+      # 755 MB、438 个文件，FTP 每写一块都要等一个往返回执（实测 25 KB/s，v5.0.0 第一次
+      # 分发行版发布 30 分钟只传完两个包）；把整棵树打成 tar 用 scp 推，实测上行只有
+      # 350~850 KB/s，传了 36 分钟被对端掐断连接。rsync 只传有变化的文件，内容没变的一律
+      # 跳过，断了下一轮接着传，慢链路也能一轮轮收敛。
       #
-      # 传输前先探一次上行：留下 16 MiB 的时间戳，实测速度低于阈值就立刻失败——比等满
-      # 超时再看半截站点清楚得多。阈值按「755 MB 要在一小时内传完」折算。
-      # The sync runs over SSH, not FTP. The tree is 755 MB across 438 files, and FTP waits a
-      # round trip per write; measured at 25 KB/s, it cannot finish in a job timeout (v5.0.0's
-      # first per-distribution release spent 30 minutes on two packages). One SSH connection
-      # streams the whole tree at link speed. The tree is tarred locally, unpacked and checked
-      # on the server, then swapped in for the site root, retiring the flat apt/ and rpm/<arch>/.
+      # 传输前先探一次上行：实测速度低于「755 MB 在 50 分钟内传不完」的阈值就直接失败，
+      # 比等满超时再看半截站点清楚得多。--delete 收走旧的扁平 apt/ 与 rpm/<架构>/，
+      # --delay-updates 让每个文件先落到临时名再改名，不会露出写了一半的包。
+      # The sync is rsync over SSH: both FTP and one wholesale push failed on this slow uplink.
+      # The tree is 755 MB across 438 files; FTP waits a round trip per write (25 KB/s), and
+      # tarring the whole tree for scp ran 36 minutes at 350-850 KB/s before the peer dropped
+      # the connection. rsync sends only what changed, skips identical files and resumes on the
+      # next run, so a slow link still converges.
       #
-      # A 16 MiB upload probe runs first: measuring the real rate and failing fast beats
-      # discovering a half-published site after the timeout. The threshold is what 755 MB needs
-      # to land inside an hour.
+      # An upload probe measures the real rate first and fails below what 755 MB needs in 50
+      # minutes. --delete retires the flat apt/ and rpm/<arch>/; --delay-updates renames each
+      # file into place, so no half-written package ever shows up.
       - name: 同步到发布服务器
         env:
           # 口令从环境递进去，不进 argv，也不出现在日志里。
@@ -345,47 +348,48 @@ jobs:
         run: |
           set -euo pipefail
           : "${WEBROOT:=/var/www/sb.kejizero.xyz}"
-          ssh_opts=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=20
-                    -o PubkeyAuthentication=no -o PreferredAuthentications=password)
           target="${SERVER_USER}@${SERVER_HOST}"
+          ssh_opts=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=20
+                    -o PubkeyAuthentication=no -o PreferredAuthentications=password
+                    -o ServerAliveInterval=30 -o ServerAliveCountMax=40 -o TCPKeepAlive=yes)
+          srun() { sshpass -e ssh "${ssh_opts[@]}" "$@"; }
 
-          # 暂存放 /var/tmp：/tmp 在某些系统上是内存盘，放不下这棵 755 MB 的树。
-          # Staging goes to /var/tmp: /tmp is a RAM disk on some systems and will not hold
-          # the 755 MB tree.
+          # rsync 让 sshpass 去起 ssh：口令只从环境读，既不进命令行也不进日志。
+          # rsync starts ssh through sshpass, so the password only ever comes from the
+          # environment, never a command line.
+          export RSYNC_RSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=40 -o TCPKeepAlive=yes"
+
+          # 服务器上要有 rsync；缺了就装。
+          # The server needs rsync; install it when missing.
+          srun "$target" 'command -v rsync >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync; }'
+
           probe=/var/tmp/easysb-probe.bin
           head -c 16777216 /dev/urandom > "$probe"
           start=$(date +%s%N)
           sshpass -e scp "${ssh_opts[@]}" "$probe" "${target}:/var/tmp/easysb-probe.bin"
           elapsed_ms=$(( ($(date +%s%N) - start) / 1000000 ))
           rm -f "$probe"
-          sshpass -e ssh "${ssh_opts[@]}" "$target" 'rm -f /var/tmp/easysb-probe.bin'
+          srun "$target" 'rm -f /var/tmp/easysb-probe.bin'
           kbps=$(( 16384000 / (elapsed_ms + 1) ))
           echo "上行探测 / upload probe: ${kbps} KB/s（16 MiB / ${elapsed_ms} ms）"
-          if [ "$kbps" -lt 300 ]; then
-            echo "::error::到发布服务器只有 ${kbps} KB/s，755 MB 传不完；请检查服务器上行带宽"
+          if [ "$kbps" -lt 256 ]; then
+            echo "::error::到发布服务器只有 ${kbps} KB/s，755 MB 在超时前传不完；请检查服务器上行带宽"
             exit 1
           fi
 
-          tar -C dist/repo -cf /var/tmp/easysb-repo.tar .
-          sshpass -e scp "${ssh_opts[@]}" /var/tmp/easysb-repo.tar "${target}:/var/tmp/easysb-repo.tar"
-
-          # 远端只做「解到暂存区、校验、整棵替换」。顶层目录逐个退役，认不出的条目留在原处，
-          # 站点根万一还住了别的东西也不会被顺手清掉。
-          # The remote side only unpacks, checks and swaps. Top-level entries retire one by one,
-          # so anything unrecognised in the site root survives the swap.
-          sshpass -e ssh "${ssh_opts[@]}" "$target" "WEBROOT='$WEBROOT' bash -s" <<'REMOTE'
-          set -euo pipefail
-          stage="$(mktemp -d)"
-          tar -C "$stage" -xf /var/tmp/easysb-repo.tar
+          # --delete 会把本地没有的东西一并从服务器删掉，所以先确认这棵树是完整的：产物
+          # 不全会把整个站点清空。
+          # --delete also removes anything absent locally, so refuse to sync an incomplete
+          # tree: an empty dist/repo would wipe the whole site.
           for entry in linux pacman bin install.sh; do
-            [ -e "$stage/$entry" ] || { echo "产物不完整，缺少 $entry / incomplete tree"; exit 1; }
+            [ -e "dist/repo/$entry" ] || { echo "::error::dist/repo 缺少 $entry，拒绝同步 / refusing to sync an incomplete tree"; exit 1; }
           done
-          mkdir -p "$WEBROOT"
-          for entry in apt rpm linux pacman bin .easysb install.sh .ftp-deploy-sync-state.json; do
-            rm -rf "${WEBROOT:?}/$entry"
-          done
-          cp -a "$stage"/. "$WEBROOT"/
-          rm -rf "$stage" /var/tmp/easysb-repo.tar
-          chown -R easysb: "$WEBROOT"
-          chmod -R a+rX "$WEBROOT"
-          REMOTE
+
+          sshpass -e rsync -az --delete --delay-updates --partial \
+            --stats --human-readable --skip-compress=deb,rpm,zst,gz,xz,bz2,zstd \
+            dist/repo/ "$target:$WEBROOT/"
+
+          # rsync -a 保留源文件的属主与权限，站点根得重新交给 FTP 账号，并让 caddy 读得到。
+          # rsync -a preserves the source ownership and modes, so the site root is handed back
+          # to the FTP account and made readable by caddy.
+          srun "$target" "chown -R easysb: '$WEBROOT' && chmod -R a+rX '$WEBROOT'"
