@@ -237,7 +237,7 @@ sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/e
 
 ### 发布服务器
 
-apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero.xyz`。在 Actions 页跑一次 **Provision the release server** 工作流即可备好：装 caddy 提供 HTTPS、建立站点目录、装 vsftpd 并只开一个被限制在该目录里的账号（留给手工上传）。之后每次发布都会把 `dist/repo` 经一条 SSH 连接整体送上去，源始终是新的。
+apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero.xyz`。在 Actions 页跑一次 **Provision the release server** 工作流即可备好：装 caddy 提供 HTTPS、建立站点目录、装 vsftpd 并只开一个被限制在该目录里的账号（留给手工上传）。之后每次发布都会用 `rsync` 经一条 SSH 连接把 `dist/repo` 增量同步上去，只传有变化的文件，源始终是新的。
 
 置备与发布共用到六个仓库 secret：
 
@@ -434,7 +434,7 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
 | 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make tarball-asset`，二者读的都是 `release/TAGS`），tag 与 release 名都是 `v<VERSION>`，一个 release 装下全部资产 |
 | 软件包 | `make deb`、`make rpm`、`make pacman` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成三种包，架构名与单元文本都只有一处来源（`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` 与 `sb --print-unit`）；`packaging/repo/packages.sh` 打软件源要用的分发行版变体（`make repo-packages`） |
-| 软件源 | `make repo` 先打好这些包，再摊成 Docker 形状的 `linux/` 树加 pacman、bin 两份源，发布工作流经一条 SSH 连接整体送到发布服务器；`packaging/repo/index.sh` 负责生成索引并签名，`packaging/server/` 放一次性置备脚本与站点首页用的 Caddy browse 模板，所以站点根目录既是文件列表又是安装命令 |
+| 软件源 | `make repo` 先打好这些包，再摊成 Docker 形状的 `linux/` 树加 pacman、bin 两份源，发布工作流用 `rsync` 经一条 SSH 连接增量同步到发布服务器；`packaging/repo/index.sh` 负责生成索引并签名，`packaging/server/` 放一次性置备脚本与站点首页用的 Caddy browse 模板，所以站点根目录既是文件列表又是安装命令 |
 
 ---
 

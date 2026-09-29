@@ -87,7 +87,8 @@ and the packaged one is the fallback — the two never fight over one path.
 
 The fixed URLs apt, rpm and pacman need live on the release server
 (`sb.kejizero.xyz`), not on a second release tag: the release workflow ships
-`dist/repo` there over one SSH connection, so the one-command `install.sh` can write a
+`dist/repo` there over one SSH connection with an incremental rsync, so the one-command
+`install.sh` can write a
 source entry that never changes. The server itself is prepared once by
 `packaging/server/provision.sh` (caddy for HTTPS, vsftpd for a manual-upload account,
 a Caddy browse template for the landing page), driven by the "Provision the release
