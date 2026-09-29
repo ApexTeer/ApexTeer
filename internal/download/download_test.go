@@ -77,3 +77,24 @@ func TestDownloadRefusesAnErrorStatus(t *testing.T) {
 		t.Fatal("a 404 must fail the download")
 	}
 }
+
+// TestDownloadRefusesATruncatedBody is the property the self-update leans on: a body
+// that stops short of the length it announced is not a file, and reporting success here
+// means installing a half-written binary over the running one.
+func TestDownloadRefusesATruncatedBody(t *testing.T) {
+	body := bytes.Repeat([]byte("x"), 64<<10)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body[:len(body)/4])
+		// Drop the connection rather than finishing the response, which is what the
+		// client sees as a short read.
+		panic(http.ErrAbortHandler)
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "easysb-linux-amd64")
+	if err := Download(context.Background(), srv.URL+"/easysb-linux-amd64", dest); err == nil {
+		t.Fatal("a truncated body must fail the download")
+	}
+}

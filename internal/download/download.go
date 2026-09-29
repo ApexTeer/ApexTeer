@@ -87,13 +87,21 @@ func DownloadWithProgress(ctx context.Context, url, dest string, timeout time.Du
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	body := &countingBody{body: resp.Body, report: progress, label: path.Base(url), total: resp.ContentLength}
 	if _, err := io.Copy(f, body); err != nil {
+		f.Close()
 		return err
 	}
 	// The last tick may have been up to downloadTick before the end, so the finished
 	// download reports its final size rather than a percentage short of 100.
 	body.emit()
-	return f.Sync()
+	// Sync alone is not enough to call the file written: a filesystem is free to report
+	// a deferred write error only when the descriptor is closed (a full disk on an
+	// overlay or a network mount, for one), and this is the path that replaces the
+	// running binary. A truncated download has to fail here rather than be installed.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
