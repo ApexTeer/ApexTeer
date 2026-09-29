@@ -357,6 +357,14 @@ jobs:
           # rsync 让 sshpass 去起 ssh：口令只从环境读，既不进命令行也不进日志。
           # rsync starts ssh through sshpass, so the password only ever comes from the
           # environment, never a command line.
+          #
+          # 注意别再用 sshpass 包住 rsync：sshpass 起完子进程会把 SSHPASS 从环境里摘掉，
+          # 于是 rsync 里那层 sshpass 读不到口令，连接刚建立就被关掉（v5.0.0 第一次用
+          # rsync 就栽在这里）。口令交给 RSYNC_RSH 这一层就够了。
+          # Do not wrap rsync in sshpass: sshpass unsets SSHPASS before exec'ing its child, so
+          # the sshpass inside rsync finds no password and the connection closes immediately.
+          # Letting RSYNC_RSH own the password is enough.
+          export SSHPASS
           export RSYNC_RSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=40 -o TCPKeepAlive=yes"
 
           # 服务器上要有 rsync；缺了就装。
@@ -385,7 +393,7 @@ jobs:
             [ -e "dist/repo/$entry" ] || { echo "::error::dist/repo 缺少 $entry，拒绝同步 / refusing to sync an incomplete tree"; exit 1; }
           done
 
-          sshpass -e rsync -az --delete --delay-updates --partial \
+          rsync -az --delete --delay-updates --partial \
             --stats --human-readable --skip-compress=deb,rpm,zst,gz,xz,bz2,zstd \
             dist/repo/ "$target:$WEBROOT/"
 
