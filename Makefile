@@ -342,25 +342,38 @@ apt-index: ## 生成 apt 扁平源到 dist/repo/apt（设置 GPG_KEY_ID 时签�
 	ls -lh .
 
 # rpm 要签两处：包本身（gpgcheck）与每个架构目录的 repodata/repomd.xml（repo_gpgcheck）。
-# --addsign 里的 __gpg_sign_cmd 换掉 rpm 默认的 gpg 调用，好让口令同样从文件读入；
-# rpm 自己不查 PATH，发行版宏里的 %{__gpg} 还可能指向本机没装的 gpg2，所以先用
-# command -v 找到 gpg，再把它的绝对路径写进这条命令。createrepo_c 必须在签名之后跑，
+# 口令要读文件，但又不能改 rpm 的 __gpg_sign_cmd：那条命令里的文件名占位符由 rpm 自己
+# 在签名时注入，写法还跟着版本变——老版本是 %{__signature_filename} 与
+# %{__plaintext_filename}，新版本改成了位置参数 %{2} 与 %{1}。照抄一份到 --define 里，
+# 一旦名字对不上就会把占位符原样交给 gpg（报 can't open '%{__plaintext_filename}'）。
+# 所以只把 %{__gpg} 指到一个包装脚本：rpm 仍用它自己那版默认命令，包装脚本只负责在真正
+# 的 gpg 前面补上 --batch --pinentry-mode loopback 与 --passphrase-file，并在老版本多
+# 带一个字面量 gpg 时把它丢掉。rpm 不查 PATH，发行版宏里的 %{__gpg} 还可能指向本机没装
+# 的 gpg2，所以包装脚本里写 command -v gpg 的绝对路径。createrepo_c 必须在签名之后跑，
 # 否则索引里的校验和与签名后的包对不上。
 # rpm signs two things: each package (gpgcheck) and repodata/repomd.xml per architecture
-# (repo_gpgcheck). The __gpg_sign_cmd override replaces rpm's own gpg call so the
-# passphrase is read from the same file. rpm does not search PATH, and a distro's
-# %{__gpg} may name a gpg2 that is not installed, so the absolute path is resolved with
-# command -v first. createrepo_c must run after signing, or the checksums in the index no
-# longer match the signed packages.
+# (repo_gpgcheck). The passphrase has to come from a file, but rpm's __gpg_sign_cmd cannot
+# simply be replaced: the file name placeholders are injected by rpm at signing time and
+# their spelling moves between versions, from %{__signature_filename} and
+# %{__plaintext_filename} to the positional %{2} and %{1}. A copied-down command with the
+# wrong names hands gpg the placeholders verbatim (can't open '%{__plaintext_filename}').
+# Instead only %{__gpg} is pointed at a wrapper script: rpm keeps its own default command
+# and the wrapper prepends --batch --pinentry-mode loopback and --passphrase-file to the
+# real gpg, dropping a literal `gpg` when an older macro still passes one. rpm does not
+# search PATH and a distro's %{__gpg} may name a gpg2 that is not installed, so the
+# wrapper uses the absolute path from command -v. createrepo_c must run after signing, or
+# the checksums in the index no longer match the signed packages.
 rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（设置 GPG_KEY_ID 时签名，需要 createrepo_c）
 	@command -v createrepo_c >/dev/null 2>&1 || { echo "createrepo_c 未安装 / missing: apt-get install -y createrepo-c"; exit 1; }
 	@set -e; sign='$(GPG_BATCH)'; \
 	if [ -n "$(GPG_PASSPHRASE_FILE)" ]; then sign="$$sign --passphrase-file $(GPG_PASSPHRASE_FILE)"; fi; \
 	if [ -n "$(GPG_KEY_ID)" ]; then \
 		command -v rpm >/dev/null 2>&1 || { echo "rpm 未安装 / missing: apt-get install -y rpm"; exit 1; }; \
-		gpg_bin="$$(command -v gpg)"; \
 		mkdir -p "$(REPO_DIR)/rpm"; \
 		gpg --batch --yes --armor --export "$(GPG_KEY_ID)" > "$(REPO_DIR)/rpm/RPM-GPG-KEY-easysb"; \
+		gpg_wrap="$$(mktemp)"; \
+		printf '#!/bin/sh\n[ "$$1" = gpg ] && shift\nexec %s %s "$$@"\n' "$$(command -v gpg)" "$$sign" > "$$gpg_wrap"; \
+		chmod +x "$$gpg_wrap"; \
 	fi; \
 	for arch in $(RPM_ARCH_DIRS); do \
 		dir="$(REPO_DIR)/rpm/$$arch"; \
@@ -368,8 +381,7 @@ rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（设置 GPG_KEY_ID �
 		pkg="$$dir/$(PKG_NAME)_$(VERSION)_linux_$$arch.rpm"; \
 		cp -f "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$$arch.rpm" "$$dir/"; \
 		if [ -n "$(GPG_KEY_ID)" ]; then \
-			rpm --addsign --define "_gpg_name $(GPG_KEY_ID)" \
-				--define "__gpg_sign_cmd $$gpg_bin $$sign -u %{_gpg_name} --output %{__signature_filename} --detach-sign %{__plaintext_filename}" \
+			rpm --addsign --define "_gpg_name $(GPG_KEY_ID)" --define "__gpg $$gpg_wrap" \
 				"$$pkg"; \
 		fi; \
 		createrepo_c --quiet "$$dir"; \
@@ -377,7 +389,8 @@ rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（设置 GPG_KEY_ID �
 			gpg $$sign --armor --detach-sign -u "$(GPG_KEY_ID)" \
 				-o "$$dir/repodata/repomd.xml.asc" "$$dir/repodata/repomd.xml"; \
 		fi; \
-	done
+	done; \
+	if [ -n "$(GPG_KEY_ID)" ]; then rm -f "$$gpg_wrap"; fi
 
 # repo-add 把 `easysb.db` 留成指向 `.db.tar.gz` 的符号链接。上传走的是普通 FTP，
 # 会跳过符号链接，所以这里换成真实文件：先写到 .new，再用 mv 顶掉那个链接，
