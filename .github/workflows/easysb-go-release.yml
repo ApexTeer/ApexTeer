@@ -44,9 +44,15 @@ permissions:
   contents: read
 
 # Only the newest commit may publish, so an older run can never overwrite the
-# release assets after a newer one.
+# release assets after a newer one. The group is per-ref, which keeps that property
+# for master - every push to it still shares one group - while giving each pull
+# request its own. Without the ref, merging a pull request cancelled the very run
+# that was checking it: the merge starts a push run, cancel-in-progress kills the
+# pull request's run mid-gate, and its verdict is never seen before the merge it
+# was supposed to gate. That is what happened to the first pull request this
+# workflow saw.
 concurrency:
-  group: easysb-go-release
+  group: easysb-go-release-${{ github.ref }}
   cancel-in-progress: true
 
 env:
