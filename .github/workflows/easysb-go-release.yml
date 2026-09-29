@@ -35,8 +35,13 @@ on:
       - master
   workflow_dispatch:
 
+# 默认只读：只有 release 作业需要写权限，由它自己声明。deploy 作业拿着服务器口令和
+# GPG 私钥，让它和发布作业共用同一个宽权限令牌没有任何理由。
+# Read-only by default. Only the release job needs to write, and it declares that
+# itself: the deploy job holds the server's password and the signing key, and has no
+# reason to carry the same broad token as the job that publishes.
 permissions:
-  contents: write
+  contents: read
 
 # Only the newest commit may publish, so an older run can never overwrite the
 # release assets after a newer one.
@@ -59,10 +64,10 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -110,10 +115,10 @@ jobs:
         asset: ${{ fromJSON(needs.prepare.outputs.assets) }}
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -122,7 +127,7 @@ jobs:
         run: make tarball-asset ASSET=${{ matrix.asset }} COMMIT=${GITHUB_SHA}
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: easysb-bin-${{ matrix.asset }}
           path: |
@@ -147,16 +152,16 @@ jobs:
         asset: ${{ fromJSON(needs.prepare.outputs.assets) }}
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 下载该架构的二进制
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: easysb-bin-${{ matrix.asset }}
           path: dist
 
       - name: 安装 Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -186,7 +191,7 @@ jobs:
         run: make repo-packages-asset ASSET=${{ matrix.asset }} NO_BUILD=1 REUSE_DIST=1
 
       - name: 上传安装包
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: easysb-packages-${{ matrix.asset }}
           path: |
@@ -210,19 +215,24 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: [prepare, build, packages]
     runs-on: ubuntu-26.04
+    # 这个作业上传资产并清理旧资产，是唯一需要写权限的地方。
+    # This job uploads the assets and prunes the stale ones: the one place that needs
+    # to write.
+    permissions:
+      contents: write
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 下载全部产物
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: easysb-*
           path: dist
           merge-multiple: true
 
       - name: 发布到 Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           token: ${{ github.token }}
           tag_name: v${{ needs.prepare.outputs.version }}
@@ -302,10 +312,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 下载全部产物
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: easysb-*
           path: dist
