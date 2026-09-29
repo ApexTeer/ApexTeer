@@ -22,7 +22,7 @@
 
 ### 修复
 
-- **rpm / pacman 源不再因未签名而被拒**：README 与站点页原先给出的 rpm 条目既没有公钥也没关掉校验，而 dnf5 对新仓库默认 `gpgcheck=1`，安装停在 `Package ... is not signed` / `GPG check FAILED`；pacman 段落则在未签名的情况下声明 `Required`。现在三份源一律签名：rpm 条目写 `gpgcheck=1`、`repo_gpgcheck=1` 与 `gpgkey=`，pacman 段落写 `SigLevel = Required DatabaseRequired` 并由 `install.sh` 导入并本地信任公钥；只有服务器上确实取不到公钥时才退回 `gpgcheck=0` / `Optional TrustAll` 并打印提示。
+- **rpm / pacman 源不再因未签名而被拒**：README 与站点页原先给出的 rpm 条目既没有公钥也没有关掉校验，校验与否于是全听系统默认，未签名的包被拒在 `Package ... is not signed` / `GPG check FAILED`；pacman 段落则在未签名的情况下声明 `Required`。dnf5 又把 `gpgcheck` 交给 `gpgcheck_policy` 展开（默认 `legacy`，`gpgcheck=1` 只等价于 `pkg_gpgcheck=1`），元数据校验不会跟着打开，所以两个开关都要写明。现在三份源一律签名：rpm 条目写 `gpgcheck=1`、`repo_gpgcheck=1` 与 `gpgkey=`，pacman 段落写 `SigLevel = Required DatabaseRequired` 并由 `install.sh` 导入并本地信任公钥；只有服务器上确实取不到公钥时才退回 `gpgcheck=0` / `Optional TrustAll` 并打印提示。
 - **自签占位证书不再被当成已签发**：`Paths` 为了让内核在首次签发前有证书可服务，会解析自签占位对，但 `dueForRenewal` 曾把它的十年有效期当作真实证书，导致第一次签发 `Issue` 直接返回成功、其实什么都没签。现在自签占位一律视为到期，`Issue` / `Renew` 会真正走 ACME。
 - **订阅服务的 TLS 判定与打印的 URL 一致**：监听端改用 `cert.Usable`（与 `subscribe.Endpoint`、面板告警同一个判断），自签占位存在时改为明文 HTTP，不再出现「用自签证书提供 TLS、却打印 `http://` 地址」的不可用订阅。
 - **流量记账基线只在落盘后推进**：采样基线原先在 `Apply` / `Save` 之前前进，任何一次失败都会让那一轮增量在下一轮被减掉、永久丢失；现在只有 `Save` 成功后才推进。
