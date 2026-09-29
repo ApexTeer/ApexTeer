@@ -24,9 +24,10 @@ make            # build ./easysb with the tags from release/TAGS
 make check      # gofmt -l + go vet + go test, the pre-commit gate
 make dist       # cross-compile every release architecture into dist/
 make deb        # package the dist/ binaries into .deb files with fpm
-make rpm        # package them into .rpm files for Fedora / RHEL / openSUSE
+make rpm        # package them into .rpm files for the Fedora / RHEL family
 make pacman     # package them into pacman packages for Arch
-make apt-index  # turn those .deb files into the apt repository index
+make repo       # build the per-distribution packages and lay out the linux/ source tree
+make repo-index # lay out and index the sources when the packages already exist
 ```
 
 `make help` lists every target. The bare Go commands still work; `make build` only
@@ -47,13 +48,20 @@ make screens    # render every screen and assert the layout (python3)
   `main.version` default or a version constant in `install.sh`.
 - The `.deb`, the `.rpm`, the pacman package and the apt repository share the
   release's single sources: the arch names come from the Makefile (`ARCHES` plus
-  the `DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` mappings, because Debian spells
+  the `DEBARCH_MAP` / `RPMARCH_MAP` / `PACMANARCH_*` mappings, because Debian spells
   armv7 `armhf`, rpm spells it `armv7hl` and Arch `armv7h`), and the packaged
   systemd units are printed by the binary (`easysb --print-unit node|sub`) rather
   than copied into `packaging/`. A hand-written unit or a second arch list in the
   workflow drifts. The three formats come from one staged tree (`make pkg-stage`,
   driven per architecture by `make packages-asset`), so installing the `.deb` and
   installing the `.rpm` put down the same bytes.
+- The sources are laid out in Docker's official shape, so a distribution is a
+  directory: apt and rpm share the `linux/<distro>/...` tree (`DEB_SUITES` and
+  `RPM_TREES` in the Makefile, both keyed on asset names), and `packaging/repo/`
+  holds the two scripts that build and index it (`make repo` is `repo-packages`
+  then `repo-index`). Distro directories, suites and release numbers must stay in
+  step with `install.sh`'s `repo_coords`, which is what decides whether a machine
+  gets a source or the tarball.
 - Keep `/etc/sing-box/easysb.conf` compatible with the legacy shell tool. Add
   keys, do not rename or repurpose them. The one exception is a key that
   described a component which no longer exists (v4 dropped `SUB_PORT` and

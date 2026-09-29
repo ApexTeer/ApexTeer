@@ -71,6 +71,12 @@ GPG_BATCH      := --batch --yes --pinentry-mode loopback
 # 软件源目录树 / the repository tree: apt is flat, rpm and pacman are per architecture
 # and bin holds the release tarballs.
 REPO_DIR       ?= $(DIST)/repo
+# 源对外发布的根地址：rpm 树里那份 easysb.repo 用它写 baseurl 与 gpgkey，客户端拿到
+# 这份文件就能登记仓库。install.sh 的默认 REPO_URL 必须与它一致，两处一起改。
+# Public root URL of the sources: the easysb.repo published in the rpm tree writes its
+# baseurl and gpgkey with it, so a client can register the repo from that one file.
+# install.sh's default REPO_URL has to match; change the two together.
+REPO_URL       ?= https://sb.kejizero.xyz
 
 # Debian 架构名 / Debian architecture names: armv7 ships as armhf, 386 as i386.
 DEBARCH_amd64   := amd64
@@ -96,10 +102,52 @@ PACMANARCH_arm64   := aarch64
 PACMANARCH_armv7   := armv7h
 PACMANARCH_riscv64 := riscv64
 
-DEB_ARCHS := $(foreach a,$(ARCHES),$(DEBARCH_$(a)))
-# 源里按架构分目录时用的名字，与包名用的是同一份映射。
-RPM_ARCH_DIRS    := $(foreach a,$(ARCHES),$(RPMARCH_$(a)))
+# pacman 源里按架构分目录时用的名字，与包名用的是同一份映射。
+# The per-architecture directory names in the pacman source, from the same mapping the
+# package names use.
 PACMAN_ARCH_DIRS := $(foreach a,$(PACMAN_ARCHES),$(PACMANARCH_$(a)))
+
+# 软件源按发行版与发行版号各出一份包，与 Docker 官方源一致：apt 一条套件一份，rpm 一个
+# release 一份，版本串里带着发行版（`5.0.0-1~debian.12~bookworm`、`5.0.0-1.el9`），所以
+# 升级发行版时包也跟着升级。每项：
+#   DEB_SUITES  发行版/套件/发行版号/架构（资产名，逗号分隔）
+#   RPM_TREES   发行版/发行版号/rpm 后缀/架构（资产名，逗号分隔）
+# 架构一律写资产名，Debian 的 armhf 与 rpm 的 x86_64 由 DEBARCH_* / RPMARCH_* 那两份映射
+# 翻过去，这样同一份表在打包、摆目录、写索引三处都能用。发行版不支持的架构直接不列：
+# bookworm 没有 riscv64，Debian 与 Ubuntu 早就不发 i386，Fedora 不发 s390x。
+# 同一份 rpm 由 centos、rhel、rocky 的同名 release 共用，所以这里列的是发行版目录，包只
+# 按后缀打一次。
+# The sources carry one package per distribution release, matching Docker's official
+# sources: one per apt suite and one per rpm release, with the distribution in the version
+# string (`5.0.0-1~debian.12~bookworm`, `5.0.0-1.el9`), so upgrading the distribution also
+# upgrades the package. Architectures are always written as asset names and translated by
+# the DEBARCH_* / RPMARCH_* mappings, so one table serves packaging, layout and indexing.
+# Architectures a release does not have are simply absent: bookworm has no riscv64, Debian
+# and Ubuntu no longer publish i386, Fedora no s390x. One rpm serves centos, rhel and rocky
+# for the same release, so it is built once per suffix.
+DEB_SUITES := \
+	debian/bookworm/12/amd64,arm64,armv7,s390x \
+	debian/trixie/13/amd64,arm64,armv7,riscv64,s390x \
+	ubuntu/jammy/22.04/amd64,arm64,armv7,riscv64,s390x \
+	ubuntu/noble/24.04/amd64,arm64,armv7,riscv64,s390x
+RPM_TREES := \
+	centos/9/el9/amd64,arm64,s390x \
+	centos/10/el10/amd64,arm64,s390x \
+	rhel/9/el9/amd64,arm64,s390x \
+	rhel/10/el10/amd64,arm64,s390x \
+	rocky/9/el9/amd64,arm64,s390x \
+	rocky/10/el10/amd64,arm64,s390x \
+	fedora/41/fc41/amd64,arm64 \
+	fedora/42/fc42/amd64,arm64
+
+# 脚本按资产名取各生态的架构名，映射仍只有 DEBARCH_* / RPMARCH_* 一处定义。
+# The scripts look the ecosystem's architecture name up by asset; the mapping still lives
+# only in DEBARCH_* / RPMARCH_*.
+DEBARCH_MAP := $(foreach a,$(ARCHES),$(a)=$(DEBARCH_$(a)))
+RPMARCH_MAP := $(foreach a,$(ARCHES),$(a)=$(RPMARCH_$(a)))
+# 按发行版打好的包先落在这个平面目录里，目录树由 index.sh 摆。
+# The per-distribution packages land flat here; index.sh lays out the tree.
+REPO_PKGS   ?= $(DIST)/repopkgs
 
 comma := ,
 empty :=
@@ -111,7 +159,8 @@ space := $(empty) $(empty)
         lint check render screens dist dist-asset tarballs tarball-asset \
         release-matrix install tidy \
         version pkg-stage deb deb-asset rpm rpm-asset pacman pacman-asset \
-        packages-asset apt-index rpm-index pacman-index repo help clean
+        packages-asset apt-index rpm-index pacman-index \
+        repo repo-index repo-packages repo-packages-asset help clean
 
 # --- 构建 / Build -------------------------------------------------------------
 
@@ -302,81 +351,53 @@ packages-asset: ## 打包单个架构的全部格式到 dist/（ASSET=…）
 
 # --- 软件源 / Repository ------------------------------------------------------
 
-# 源根目录 dist/repo 的四个子目录各是一种客户端要的东西：apt 是扁平的 deb 源，
-# rpm 与 pacman 按架构分目录，bin 放发布压缩包。安装脚本 install.sh 只认这四个路径。
-# The repository root dist/repo has four subtrees, one per client: a flat apt archive,
-# per-architecture rpm and pacman trees, and bin for the release tarballs. install.sh
-# knows only these four paths.
+# 源根目录 dist/repo 照 Docker 官方源（download.docker.com/linux）的形状摆：每个发行版一个
+# 子树，apt 是 dists/<套件>/{pool,stable/binary-<架构>}，rpm 是 <发行版号>/<基架>/stable，
+# 公钥与 rpm 的 easysb.repo 放在发行版子树根，bin 放发布压缩包，install.sh 放在站点根。
+# The repository root dist/repo follows Docker's official sources (download.docker.com/
+# linux): one subtree per distribution, apt as dists/<suite>/{pool,stable/binary-<arch>},
+# rpm as <release>/<basearch>/stable, with the public key and the rpm's easysb.repo at the
+# distribution root, bin for the tarballs and install.sh at the site root.
 #
-# 三份索引的署名密钥是同一个，各源只按本生态的惯例换文件名与编码：apt 的公钥必须是非
-# armored 的二进制 keyring（Signed-By 走 apt-key/gpgv，armored 读不出里面的 key），
-# Release.gpg 与 InRelease 才是 armored；rpm-md 与 pacman 发 armored 公钥，各自的签名
-# 则按客户端查找的名字与编码放。
-# The three indexes are signed by one key; each source only changes the file name and
-# encoding its ecosystem expects: apt's public key must be a non-armored binary keyring
-# (Signed-By goes through apt-key/gpgv, which cannot read an armored file) with armored
-# Release.gpg and InRelease, while the rpm-md and pacman trees publish an armored key and
-# keep the signature encodings those clients look for.
-apt-index: ## 生成 apt 扁平源到 dist/repo/apt（设置 GPG_KEY_ID 时签名）
-	@command -v apt-ftparchive >/dev/null 2>&1 || { echo "apt-ftparchive 未安装 / missing: apt-get install -y apt-utils"; exit 1; }
-	@set -e; sign='$(GPG_BATCH)'; \
-	if [ -n "$(GPG_PASSPHRASE_FILE)" ]; then sign="$$sign --passphrase-file $(GPG_PASSPHRASE_FILE)"; fi; \
-	apt="$(REPO_DIR)/apt"; rm -rf "$$apt"; mkdir -p "$$apt"; \
-	cp -f $(DIST)/*.deb "$$apt/"; \
-	cd "$$apt"; \
-	apt-ftparchive packages . | sed 's|^Filename: \./|Filename: |' > Packages; \
-	gzip -9 -c Packages > Packages.gz; \
-	apt-ftparchive \
-		-o APT::FTPArchive::Release::Origin="$(PKG_NAME)" \
-		-o APT::FTPArchive::Release::Label="$(PKG_NAME)" \
-		-o APT::FTPArchive::Release::Suite=stable \
-		-o APT::FTPArchive::Release::Codename=stable \
-		-o APT::FTPArchive::Release::Architectures="$(DEB_ARCHS)" \
-		-o APT::FTPArchive::Release::Description="$(PKG_DESC)" \
-		release . > Release; \
-	if [ -n "$(GPG_KEY_ID)" ]; then \
-		gpg $$sign --armor --detach-sign -u "$(GPG_KEY_ID)" -o Release.gpg Release; \
-		gpg $$sign --clearsign -u "$(GPG_KEY_ID)" -o InRelease Release; \
-		gpg --batch --yes --export "$(GPG_KEY_ID)" > $(PKG_NAME).gpg; \
-	fi; \
-	ls -lh .
+# 摆放、索引与签名都在 packaging/repo/index.sh 里，rpm 签名的包装脚本细节也写在那里；
+# 这里的三个目标只是把 Makefile 里那份发行版与架构表传进去，表仍然只有这一处定义。
+# Laying out, indexing and signing live in packaging/repo/index.sh, including the rpm
+# signing wrapper; these targets only hand it the distribution and architecture tables,
+# which are still defined in exactly one place.
+apt-index: ## 生成 apt 源到 dist/repo/linux/<发行版>/dists/<套件>（设置 GPG_KEY_ID 时签名）
+	@REPO_DIR='$(REPO_DIR)' REPO_PKGS='$(REPO_PKGS)' \
+	 PKG_NAME='$(PKG_NAME)' VERSION='$(VERSION)' PKG_DESC='$(PKG_DESC)' \
+	 DEB_SUITES='$(DEB_SUITES)' DEBARCH_MAP='$(DEBARCH_MAP)' \
+	 GPG_KEY_ID='$(GPG_KEY_ID)' GPG_PASSPHRASE_FILE='$(GPG_PASSPHRASE_FILE)' \
+	 bash packaging/repo/index.sh apt
 
-# rpm 要签两处：包本身（gpgcheck）与每个架构目录的 repodata/repomd.xml（repo_gpgcheck）。
-# --addsign 里的 __gpg_sign_cmd 换掉 rpm 默认的 gpg 调用，好让口令同样从文件读入；
-# rpm 自己不查 PATH，发行版宏里的 %{__gpg} 还可能指向本机没装的 gpg2，所以先用
-# command -v 找到 gpg，再把它的绝对路径写进这条命令。createrepo_c 必须在签名之后跑，
-# 否则索引里的校验和与签名后的包对不上。
-# rpm signs two things: each package (gpgcheck) and repodata/repomd.xml per architecture
-# (repo_gpgcheck). The __gpg_sign_cmd override replaces rpm's own gpg call so the
-# passphrase is read from the same file. rpm does not search PATH, and a distro's
-# %{__gpg} may name a gpg2 that is not installed, so the absolute path is resolved with
-# command -v first. createrepo_c must run after signing, or the checksums in the index no
-# longer match the signed packages.
-rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（设置 GPG_KEY_ID 时签名，需要 createrepo_c）
-	@command -v createrepo_c >/dev/null 2>&1 || { echo "createrepo_c 未安装 / missing: apt-get install -y createrepo-c"; exit 1; }
-	@set -e; sign='$(GPG_BATCH)'; \
-	if [ -n "$(GPG_PASSPHRASE_FILE)" ]; then sign="$$sign --passphrase-file $(GPG_PASSPHRASE_FILE)"; fi; \
-	if [ -n "$(GPG_KEY_ID)" ]; then \
-		command -v rpm >/dev/null 2>&1 || { echo "rpm 未安装 / missing: apt-get install -y rpm"; exit 1; }; \
-		gpg_bin="$$(command -v gpg)"; \
-		mkdir -p "$(REPO_DIR)/rpm"; \
-		gpg --batch --yes --armor --export "$(GPG_KEY_ID)" > "$(REPO_DIR)/rpm/RPM-GPG-KEY-easysb"; \
-	fi; \
-	for arch in $(RPM_ARCH_DIRS); do \
-		dir="$(REPO_DIR)/rpm/$$arch"; \
-		rm -rf "$$dir"; mkdir -p "$$dir"; \
-		pkg="$$dir/$(PKG_NAME)_$(VERSION)_linux_$$arch.rpm"; \
-		cp -f "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$$arch.rpm" "$$dir/"; \
-		if [ -n "$(GPG_KEY_ID)" ]; then \
-			rpm --addsign --define "_gpg_name $(GPG_KEY_ID)" \
-				--define "__gpg_sign_cmd $$gpg_bin $$sign -u %{_gpg_name} --output %{__signature_filename} --detach-sign %{__plaintext_filename}" \
-				"$$pkg"; \
-		fi; \
-		createrepo_c --quiet "$$dir"; \
-		if [ -n "$(GPG_KEY_ID)" ]; then \
-			gpg $$sign --armor --detach-sign -u "$(GPG_KEY_ID)" \
-				-o "$$dir/repodata/repomd.xml.asc" "$$dir/repodata/repomd.xml"; \
-		fi; \
+rpm-index: ## 生成 rpm-md 源到 dist/repo/linux/<发行版>/<发行版号>/<基架>（设置 GPG_KEY_ID 时签名）
+	@REPO_DIR='$(REPO_DIR)' REPO_PKGS='$(REPO_PKGS)' \
+	 PKG_NAME='$(PKG_NAME)' VERSION='$(VERSION)' REPO_URL='$(REPO_URL)' \
+	 RPM_TREES='$(RPM_TREES)' RPMARCH_MAP='$(RPMARCH_MAP)' \
+	 GPG_KEY_ID='$(GPG_KEY_ID)' GPG_PASSPHRASE_FILE='$(GPG_PASSPHRASE_FILE)' \
+	 bash packaging/repo/index.sh rpm
+
+# 一个架构一次把按发行版拆的包全部打出来，落在 dist/repopkgs；目录树由 apt-index /
+# rpm-index 摆。发布工作流的打包作业每个架构调一次它，再把这些包随其它产物一起上传。
+# One call per architecture builds every per-distribution package into dist/repopkgs; the
+# tree is laid out by apt-index / rpm-index. The release workflow's packaging job calls it
+# once per architecture and uploads the packages with the rest of the artifacts.
+repo-packages-asset: ## 打包单个架构的按发行版包到 dist/repopkgs（ASSET=…）
+	@test -n "$(ASSET)" || { echo "ASSET 未设置 / ASSET required, one of: $(ARCHES)"; exit 1; }
+	@$(MAKE) --no-print-directory pkg-stage ASSET=$(ASSET) NO_BUILD=$(NO_BUILD) REUSE_DIST=$(REUSE_DIST)
+	@REPO_PKGS='$(REPO_PKGS)' STAGE_DIR='$(STAGE_DIR)' \
+	 PKG_NAME='$(PKG_NAME)' VERSION='$(VERSION)' \
+	 PKG_MAINTAINER='$(PKG_MAINTAINER)' PKG_VENDOR='$(PKG_VENDOR)' \
+	 PKG_LICENSE='$(PKG_LICENSE)' PKG_URL='$(PKG_URL)' \
+	 PKG_DESC='$(PKG_DESC)' PKG_SUMMARY='$(PKG_SUMMARY)' \
+	 DEB_SUITES='$(DEB_SUITES)' RPM_TREES='$(RPM_TREES)' \
+	 DEBARCH_MAP='$(DEBARCH_MAP)' RPMARCH_MAP='$(RPMARCH_MAP)' \
+	 bash packaging/repo/packages.sh $(ASSET)
+
+repo-packages: ## 打包全部架构的按发行版包到 dist/repopkgs
+	@set -e; for asset in $(ARCHES); do \
+		$(MAKE) --no-print-directory repo-packages-asset ASSET=$$asset NO_BUILD=$(NO_BUILD) REUSE_DIST=$(REUSE_DIST); \
 	done
 
 # repo-add 把 `easysb.db` 留成指向 `.db.tar.gz` 的符号链接。上传走的是普通 FTP，
@@ -423,15 +444,18 @@ pacman-index: ## 生成 pacman 源到 dist/repo/pacman/<架构>（设置 GPG_KEY
 # 站点页面不走静态 index.html：置备脚本让 Caddy 用 dist/repo 里这份模板渲染目录列表，
 # 所以站点首页既是文件列表，又带着安装说明。模板和图标都放进 .easysb/ 这个点目录，
 # Caddyfile 的点号文件规则（@hidden path /.*）把它们挡在列表之外，读者在根目录只看得到
-# 四个源目录；图标另有一条精确路径的路由负责送出。
+# 各发行版子树与 bin；图标另有一条精确路径的路由负责送出。
 # The site page is not a static index.html: provisioning points Caddy at this template, so
 # the home page is the directory listing plus the install notes. The template and the icon
 # live in the dot-directory .easysb/, which the Caddyfile's @hidden path /.* rule keeps off
-# the listing, so the root shows the four source directories alone; a dedicated exact-path
+# the listing, so the root shows the distribution subtrees and bin alone; a dedicated exact-path
 # route serves the icon.
-repo: apt-index rpm-index pacman-index ## 组装完整软件源到 dist/repo（apt / rpm / pacman / bin）
+repo: repo-packages repo-index ## 组装完整软件源到 dist/repo（linux/<发行版> / pacman / bin）
+
+repo-index: apt-index rpm-index pacman-index ## 生成全部索引与站点文件（包已备好时单独用）
 	@set -e; bin="$(REPO_DIR)/bin"; rm -rf "$$bin"; mkdir -p "$$bin"; \
 	cp -f $(wildcard $(DIST)/$(PKG_NAME)-*-linux-*.tar.gz) "$$bin/"; \
+	cp -f install.sh "$(REPO_DIR)/install.sh"; \
 	mkdir -p "$(REPO_DIR)/.easysb"; \
 	cp -f packaging/server/browse.html "$(REPO_DIR)/.easysb/browse.html"; \
 	cp -f packaging/server/favicon.svg "$(REPO_DIR)/.easysb/favicon.svg"; \

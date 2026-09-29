@@ -61,8 +61,8 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 ```text
 .
 ├── main.go                       # Go 入口（TUI 主程序）
-├── install.sh                    # 安装脚本（一键 / 软件源 / 手动安装包）
-├── packaging/                    # 软件包生命周期脚本（deb/、rpm/）与服务器置备（server/）
+├── install.sh                    # 安装脚本（一键：配源安装，或装本地安装包）
+├── packaging/                    # 软件包生命周期脚本（deb/、rpm/）、软件源构建（repo/）与服务器置备（server/）
 ├── VERSION                       # 发布 tag 的唯一来源
 ├── AGENTS.md                     # 面向 AI Agent 与协作者的说明
 ├── go.mod                        # Go module 定义
@@ -101,25 +101,23 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 
 ## 快速开始
 
-三种方式都出自同一个 `install.sh`。
-
-一键安装：检测系统与架构，补全运行依赖，优先下载发布压缩包（回退源码构建）：
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
-```
-
-软件源安装：为本系统添加 apt / rpm / pacman 源，交给系统包管理器安装：
+一条命令，和 Docker 的 `get.docker.com` 一个形状：脚本自己识别发行版与架构，配好本机的
+签名软件源，再交给系统包管理器安装。软件源按发行版分别构建：Debian 12/13、Ubuntu
+22.04/24.04、Fedora 41/42、RHEL 9/10（含 CentOS、Rocky、AlmaLinux）与 Arch；不在这个
+名单里的系统（Alpine、openSUSE）回退到发布压缩包。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh) --method repo
+curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-手动安装：安装一个自己下载好的安装包文件：
+同一个脚本还带着另外几种用法。安装一个自己下载好的安装包文件：
 
 ```bash
-bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
+curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash -s -- --method package --package ./easysb_5.0.0_linux_amd64.deb
 ```
+
+`--method repo` 强制只走软件源（没有源写法就报错），`--from-source` 从源码构建，
+`--binary ./easysb` 用自己编译好的二进制，`--lang C` 切回中文输出。
 
 安装完成后以快捷指令 `sb` 启动深色仪表盘。
 
@@ -167,89 +165,49 @@ Debian 与 Ubuntu 可以添加 apt 软件源后用 `apt install` / `apt upgrade`
 # 架构：amd64、arm64、armhf、i386、riscv64、s390x
 sudo dpkg -i easysb_5.0.0_linux_amd64.deb
 
-# 也可以让安装脚本取回并安装同一个文件
+# 或者把这个文件交给安装脚本
 bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
 ```
 
 ### apt 软件源
 
-apt 索引与 `.deb` 由 `https://sb.kejizero.xyz/apt` 提供，地址固定，所以一条软件源配置能一直用下去。索引带签名，公钥就在同一目录下，文件名 `easysb.gpg`：
+apt 索引与 `.deb` 由 `https://sb.kejizero.xyz/linux/<发行版>` 提供，每个发行版一棵树（`debian`、`ubuntu`），地址固定，所以一条软件源配置能一直用下去。安装脚本会替你配好，逐字照 Docker 官方脚本的写法：armored 公钥落到 `/etc/apt/keyrings/easysb.asc`，源写进 `/etc/apt/sources.list.d/easysb.list` 的一行里，同时给出 arch、signed-by、发行版目录与套件，随后由 apt 装上包。
 
 ```bash
-# 信任仓库的签名密钥
-sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://sb.kejizero.xyz/apt/easysb.gpg | sudo tee /etc/apt/keyrings/easysb.gpg >/dev/null
-
-sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://sb.kejizero.xyz/apt
-Suites: ./
-Signed-By: /etc/apt/keyrings/easysb.gpg
-EOF
-
-sudo apt-get update
-sudo apt-get install easysb
+curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-`install.sh --method repo` 写的就是上面这两个文件，并接着执行安装。
+脚本写出的那一行，形状就是 Docker 的 `deb [...] $URL/linux/ubuntu noble stable`：
 
-三份源共用一把密钥签名。把 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY`，口令配置成 `GPG_PASSPHRASE`，发布工作流会导入密钥并签完全部产物：apt 的 `Release`（`InRelease` 与 `Release.gpg`）、每个 `.rpm`、rpm-md 的 `repomd.xml`、每个 pacman 包以及 pacman 数据库。口令通过文件读入，不会出现在进程列表里。公钥按各源习惯的名字随源发布：apt 用的是 `Signed-By` 需要的二进制 keyring `apt/easysb.gpg`，rpm 与 pacman 用的是 armored 的 `rpm/RPM-GPG-KEY-easysb` 与 `pacman/easysb.asc`。
+```text
+deb [arch=amd64 signed-by=/etc/apt/keyrings/easysb.asc] https://sb.kejizero.xyz/linux/debian bookworm stable
+```
 
-没有该 secret 时发布出去的源不带签名，三种写法各有宽松形式：`Trusted: yes` 代替 `Signed-By:`，`gpgcheck=0` 与 `repo_gpgcheck=0` 且不带 `gpgkey`，以及 `SigLevel = Optional TrustAll`。`install.sh --method repo` 会按服务器上实际发布的情况选对应写法。
+之后 `sudo apt upgrade` 就能一路把面板升级上去。四个套件分别是 `bookworm`（Debian 12）、`trixie`（Debian 13）、`jammy`（Ubuntu 22.04）与 `noble`（Ubuntu 24.04）；每个 `.deb` 的版本串里都带着它，`5.0.0-1~debian.12~bookworm`、`5.0.0-1~ubuntu.24.04~noble`，所以升级发行版时会装上对应那份。
+
+三份源共用一把密钥签名。把 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY`，口令配置成 `GPG_PASSPHRASE`，发布工作流会导入密钥并签完全部产物：apt 的 `Release`（`InRelease` 与 `Release.gpg`）、每个 `.rpm`、rpm-md 的 `repomd.xml`、每个 pacman 包以及 pacman 数据库。口令通过文件读入，不会出现在进程列表里。公钥一律按 Docker 官方源的做法发 armored 文件：`linux/debian/gpg`、`linux/ubuntu/gpg`，rpm 一侧是 `linux/<发行版>/gpg`，pacman 一侧是 `pacman/easysb.asc`。
+
+没有该 secret 时发布出去的源不带签名，三种写法各有宽松形式：`trusted=yes` 代替 `signed-by=`，`gpgcheck=0` 且不带 `gpgkey`，以及 `SigLevel = Optional TrustAll`。安装脚本会按服务器上实际发布的情况选对应写法。
 
 ---
 
 ## RPM 与 pacman 软件包
 
-同一个 release 还提供供 Fedora / RHEL / openSUSE 使用的 `.rpm`，以及供 Arch 使用的 pacman 包。两者与 `.deb` 打成的是同一个二进制、同一段单元文本、同一棵暂存树，所以三种格式彼此一致，也与运行时一致。
+同一个 release 还提供供 Fedora / RHEL 系使用的 `.rpm`，以及供 Arch 使用的 pacman 包。两者与 `.deb` 打成的是同一个二进制、同一段单元文本、同一棵暂存树，所以三种格式彼此一致，也与运行时一致。
 
-两种包在发布服务器上也都是真正的软件源：rpm-md 目录与 pacman 数据库，所以 `install.sh --method repo` 会为本系统添加源并直接从源安装：
+两种包在发布服务器上也都是真正的软件源：rpm-md 目录与 pacman 数据库。同一条一键命令会为本系统添加源并直接从源安装，不需要手工复制任何配置：
 
 ```bash
-# Fedora / RHEL / openSUSE
-sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-sudo tee /etc/yum.repos.d/easysb.repo >/dev/null <<'EOF'
-[easysb]
-name=EasySB
-baseurl=https://sb.kejizero.xyz/rpm/$basearch
-enabled=1
-type=rpm-md
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-EOF
-sudo dnf install easysb
-
-# Arch
-curl -fsSL https://sb.kejizero.xyz/pacman/easysb.asc -o /tmp/easysb.asc
-sudo pacman-key --add /tmp/easysb.asc
-
-# 在本地信任刚导入的这把密钥
-sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/easysb.asc | awk -F: '/^fpr:/{print $10; exit}')"
-
-sudo tee -a /etc/pacman.conf >/dev/null <<'EOF'
-
-[easysb]
-SigLevel = Required DatabaseRequired
-Server = https://sb.kejizero.xyz/pacman/$arch
-EOF
-sudo pacman -Sy && sudo pacman -S easysb
+curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-`rpm --import` 会把公钥写进 rpm 数据库，dnf 与 zypper 校验时用的就是它。
-`gpgcheck` 校验每个包，`repo_gpgcheck` 用 `repomd.xml.asc` 校验 `repomd.xml`，
-所以未签名或被改过的文件会被拒收。pacman 则用同一把密钥校验数据库
-（`DatabaseRequired`）与每个包（`Required`），这把密钥需要在本地信任一次。
-两条写法与两次密钥导入都由 `install.sh --method repo` 完成。
+rpm 的目录树也按 Docker 那样分。每个发行版一个目录，`linux/centos`、`linux/rhel`、`linux/rocky` 或 `linux/fedora`，里面放一份 `easysb.repo` 与 armored 的 `gpg` 公钥；包本身在 `linux/<发行版>/<发行版号>/<基架>/stable` 下，所以有 `linux/centos/9/x86_64/stable`、`linux/fedora/42/aarch64/stable` 这样的形状。脚本登记的 `easysb.repo` 把 `baseurl`、`gpgcheck` 与 `gpgkey` 的地址写在一起，包管理器在第一次安装时会自己取回并信任签名公钥，不需要再单独导入一次。两代 dnf 登记这份文件的方式不同，按命令是否存在各走各的：dnf5 用内建的 `config-manager addrepo --from-repofile`，dnf4 用 `dnf-plugins-core` 提供的 `config-manager --add-repo`，只有 yum 的系统则用 `yum-config-manager --add-repo`；之后 `makecache` 再安装。每个 `.rpm` 的版本串里带着对应发行版号，`5.0.0-1.el9`、`5.0.0-1.fc42`，CentOS、RHEL 与 Rocky 共用同一份 `el9` 构建，一个文件供三家使用。pacman 一侧，脚本导入 `pacman/easysb.asc`、在本地信任它并写好 `[easysb]` 段落，pacman 随后用同一把密钥校验数据库（`DatabaseRequired`）与每个包（`Required`）。
 
 也可以继续用 release 页上的单文件方式安装：
 
 ```bash
 # Fedora / RHEL（dnf 会一并装好依赖）
 sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
-
-# openSUSE
-sudo zypper install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
 
 # Arch
 sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.pkg.tar.zst
@@ -475,8 +433,8 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 校验 | `easysb core check -c <配置>` 用将来真正服务节点的同一套引擎构建配置，部署路径重启服务前跑的就是它 |
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
 | 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make tarball-asset`，二者读的都是 `release/TAGS`），tag 与 release 名都是 `v<VERSION>`，一个 release 装下全部资产 |
-| 软件包 | `make deb`、`make rpm`、`make pacman` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成三种包，架构名与单元文本都只有一处来源（`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` 与 `sb --print-unit`） |
-| 软件源 | `make repo` 把同一批文件摊成 apt / rpm / pacman / bin 四份源，发布工作流用 FTP-Deploy-Action 同步到发布服务器；`packaging/server/` 放一次性置备脚本与站点首页用的 Caddy browse 模板，所以站点根目录既是文件列表又是安装命令 |
+| 软件包 | `make deb`、`make rpm`、`make pacman` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成三种包，架构名与单元文本都只有一处来源（`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` 与 `sb --print-unit`）；`packaging/repo/packages.sh` 打软件源要用的分发行版变体（`make repo-packages`） |
+| 软件源 | `make repo` 先打好这些包，再摊成 Docker 形状的 `linux/` 树加 pacman、bin 两份源，发布工作流用 FTP-Deploy-Action 同步到发布服务器；`packaging/repo/index.sh` 负责生成索引并签名，`packaging/server/` 放一次性置备脚本与站点首页用的 Caddy browse 模板，所以站点根目录既是文件列表又是安装命令 |
 
 ---
 
@@ -490,7 +448,7 @@ make
 make check
 make dist
 
-# 打 .deb / .rpm / pacman 包，并摊成发布服务器要的 apt / rpm / pacman / bin 四份源
+# 打 .deb / .rpm / pacman 包，再打分发行版的包，摊成发布服务器要的 linux / pacman / bin 源
 make deb
 make rpm
 make pacman
