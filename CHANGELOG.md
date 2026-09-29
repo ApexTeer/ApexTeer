@@ -65,6 +65,7 @@
 - **`make` 在 `VERSION` / `release/TAGS` 读不到时直接报错**：`VERSION` 原本带 `2>/dev/null` 且没有兜底，文件缺失会静默产出 `easysb__linux_amd64.deb` 这类畸形资产名；`release/TAGS` 为空则会静默丢掉 `with_v2ray_api` 等能力位，两者都是发布之后才会发现的问题。`vet` 同时改为发布标签与无标签各跑一遍，此前 `stats_on.go`、`disk_linux.go` 这些带标签的另一半从未被 vet 过。
 - **整棵树固定 LF**：`.gitattributes` 原先只固定 `*.sh` 与 `release/TAGS`，`core.autocrlf=true`（Git for Windows 默认）的检出会把 CRLF 写进每个 Go 文件，于是 `make check` 的 `gofmt -l` 在那种机器上把 158 个 Go 文件全部报成未格式化，而代码本身没动过。`.editorconfig` 早已声明全树 LF，现在 git 与它一致。
 - 文档订正：`docs/pitfalls.md` 里「`make_latest: false`」与工作流实际的 `true` 矛盾（工作流早已改过，只有文档停在过去）；`docs/architecture.md` 的包清单补上一直漏掉的 `internal/deploy` 与 `internal/ui`，`config.json` 的 `0600` 写进运行时路径表。
+- **补齐导出标识符的文档注释，并清掉静态检查的存量问题**：`docs/conventions.md` 要求包与导出标识符都有文档注释，实测有 38 处没有、6 个包没有包注释，现在全部补上（`theme`、`i18n`、`ui`、`sysinfo`、`tui` 的 `App` / `Init` / `Update` / `View` 等）。另有两段注释挂错了声明：描述「皮肤是什么」的那段落在 `Corners` 上，描述已不存在的 `NewestVersion` 的那句被并进了 `NewestVersionFor` 的注释。七个变量以 `max` / `cap` / `real` 命名，遮蔽了同名内建函数，已改为说明其含义的名字（`ceiling` / `maxLine` / `limit` / `caError`）；十六个由签名要求、本身不用的参数改名 `_`。删除死代码 `keyColumn` 与一个未使用的测试辅助函数，`download.DownloadWithProgress` 改名 `download.WithProgress` 去掉重复。`revive` 从 69 条降到 0 条；`staticcheck` 只剩 `bbr` 两条以专有名词开头的错误文案（`Debian … is too old`），那是 ST1005 本就允许的例外，且它们是给运维看的界面文案。
 
 ## [5.0.0] - 2026-09-26
 
