@@ -3,11 +3,12 @@ name: Build EasySB Go release
 # 源码：根目录 Go module（main.go、internal/**）
 # 产物：以 tag `v<VERSION>` 发布的一套资产 —— 每个架构一个发布压缩包
 #       easysb-<版本>-linux-<架构>.tar.gz，三种安装包 easysb_<版本>_linux_<架构>.<扩展名>
-# 软件源：再按发行版打一套包，摆成 linux / pacman / bin 三份源，用 FTP-Deploy-Action
-#         同步到发布服务器，install.sh --method repo 就是从那里装。
+# 软件源：再按发行版打一套包，摆成 linux / pacman / bin 三份源，经一条 SSH 连接整体
+#         送到发布服务器，install.sh --method repo 就是从那里装。
 # Assets: one release tagged `v<VERSION>` carrying a tarball per architecture and the
 # three package formats. A second set of per-distribution packages is laid out as
-# linux / pacman / bin sources and synced to the release server with FTP-Deploy-Action.
+# linux / pacman / bin sources and shipped to the release server over a single SSH
+# connection.
 
 on:
   push:
@@ -260,7 +261,10 @@ jobs:
   deploy:
     needs: [prepare, release]
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    # 755 MB 的软件源走一条 SSH 连接，正常几分钟；留足余量避免被误杀。
+    # The 755 MB source ships over one SSH connection, normally a few minutes; the margin
+    # keeps a slow-but-working link from being killed mid-swap.
+    timeout-minutes: 60
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
@@ -275,16 +279,18 @@ jobs:
       # apt-ftparchive 来自 apt-utils，createrepo_c 来自 createrepo-c，pacman 的
       # repo-add 由 pacman-package-manager 提供，rpm 提供 `rpm --addsign`。repo-add 靠
       # bsdtar（libarchive-tools）解包，配方是 zstd 压缩，两个都必须装上，否则它会判定
-      # 「不是包」而失败。
+      # 「不是包」而失败。sshpass 给同步步骤用，口令走环境变量，不进命令行。
       # apt-ftparchive ships in apt-utils, createrepo_c in createrepo-c, pacman's
       # repo-add in pacman-package-manager and `rpm --addsign` in rpm. repo-add unpacks
       # through bsdtar (libarchive-tools) and the packages are zstd compressed, so both are
       # required; without them repo-add calls every package "not a package file" and fails.
+      # sshpass drives the sync step; the password travels through the environment, never
+      # through a command line.
       - name: 安装索引工具
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq apt-utils createrepo-c pacman-package-manager \
-            libarchive-tools zstd rpm
+            libarchive-tools zstd rpm sshpass
 
       # 私钥可以带口令：导入不需要口令，签名时从 GPG_PASSPHRASE_FILE 读，口令不进 argv。
       # The private key may be passphrase protected: importing needs no passphrase, and
@@ -310,38 +316,76 @@ jobs:
       - name: 组装软件源
         run: make repo-index GPG_KEY_ID="${GPG_KEY_ID:-}" GPG_PASSPHRASE_FILE="${GPG_PASSPHRASE_FILE:-}"
 
-      # FTP 账号只能写站点根目录，所以 server-dir 是相对的家目录起点 ./。
-      # The FTP account is confined to the site root, so server-dir is the home-relative ./.
+      # 同步走 SSH，不走 FTP。这套树有 755 MB、438 个文件，FTP 每写一块都要等一个往返回
+      # 执，实测只有 25 KB/s（v5.0.0 第一次分发行版发布就卡在这里，30 分钟只传完两个包）；
+      # 一条 SSH 连接把整棵树当单个流推过去，能跑到链路带宽。产物先在本地打成一个 tar，
+      # 到服务器上解开、校验，再整棵替换站点根，最后退役旧的扁平 apt/ 与 rpm/<架构>/。
+      #
+      # 传输前先探一次上行：留下 16 MiB 的时间戳，实测速度低于阈值就立刻失败——比等满
+      # 超时再看半截站点清楚得多。阈值按「755 MB 要在一小时内传完」折算。
+      # The sync runs over SSH, not FTP. The tree is 755 MB across 438 files, and FTP waits a
+      # round trip per write; measured at 25 KB/s, it cannot finish in a job timeout (v5.0.0's
+      # first per-distribution release spent 30 minutes on two packages). One SSH connection
+      # streams the whole tree at link speed. The tree is tarred locally, unpacked and checked
+      # on the server, then swapped in for the site root, retiring the flat apt/ and rpm/<arch>/.
+      #
+      # A 16 MiB upload probe runs first: measuring the real rate and failing fast beats
+      # discovering a half-published site after the timeout. The threshold is what 755 MB needs
+      # to land inside an hour.
       - name: 同步到发布服务器
-        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
-        with:
-          # 地址同样来自 secret，与置备工作流共用一个值。
-          # The address comes from the same secret the provisioning workflow uses.
-          server: ${{ secrets.SERVER_HOST }}
-          username: easysb
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps
-          port: 21
-          # 服务器用自签证书给登录通道加密，所以不校验证书链。
-          # The server presents a self-signed certificate for the login channel.
-          security: loose
-          local-dir: ./dist/repo/
-          server-dir: ./
-          log-level: standard
-          # 换布局时不必清空站点根：动作记录了上一轮上传过的文件，本地没有的会在这一轮
-          # 删掉，扁平的 apt/ 与 rpm/<架构>/ 就是这样退场的。清空反而每次都要重传整棵树，
-          # 一次超时就会把站点留在半截状态（v5.0.0 的第一次分发行版发布正是如此）。
-          # A layout change does not need a wipe: the action tracks what the last run
-          # uploaded and deletes remote files that are gone locally, which is how the flat
-          # apt/ and rpm/<arch>/ retire. Wiping forces a full re-upload every time, and one
-          # timeout then leaves the site half-published (as v5.0.0's first per-distribution
-          # release did).
-          #
-          # 整棵树有几千个小文件，默认 30 秒的操作超时会在批量上传中途断开控制连接。
-          # The tree is thousands of small files; the 30-second default operation timeout
-          # drops the control connection mid-upload.
-          timeout: 900000
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/.ftp-deploy-sync-state.json
+        env:
+          # 口令从环境递进去，不进 argv，也不出现在日志里。
+          # The password arrives through the environment, never an argument.
+          SSHPASS: ${{ secrets.SERVER_SSH_PASSWORD }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          # 站点根目录可以从 secret 覆盖；没有就用置备时的默认值。
+          # The site root can be overridden from a secret; otherwise the provisioning default.
+          WEBROOT: ${{ secrets.SERVER_WEBROOT }}
+        run: |
+          set -euo pipefail
+          : "${WEBROOT:=/var/www/sb.kejizero.xyz}"
+          ssh_opts=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=20
+                    -o PubkeyAuthentication=no -o PreferredAuthentications=password)
+          target="${SERVER_USER}@${SERVER_HOST}"
+
+          # 暂存放 /var/tmp：/tmp 在某些系统上是内存盘，放不下这棵 755 MB 的树。
+          # Staging goes to /var/tmp: /tmp is a RAM disk on some systems and will not hold
+          # the 755 MB tree.
+          probe=/var/tmp/easysb-probe.bin
+          head -c 16777216 /dev/urandom > "$probe"
+          start=$(date +%s%N)
+          sshpass -e scp "${ssh_opts[@]}" "$probe" "${target}:/var/tmp/easysb-probe.bin"
+          elapsed_ms=$(( ($(date +%s%N) - start) / 1000000 ))
+          rm -f "$probe"
+          sshpass -e ssh "${ssh_opts[@]}" "$target" 'rm -f /var/tmp/easysb-probe.bin'
+          kbps=$(( 16384000 / (elapsed_ms + 1) ))
+          echo "上行探测 / upload probe: ${kbps} KB/s（16 MiB / ${elapsed_ms} ms）"
+          if [ "$kbps" -lt 300 ]; then
+            echo "::error::到发布服务器只有 ${kbps} KB/s，755 MB 传不完；请检查服务器上行带宽"
+            exit 1
+          fi
+
+          tar -C dist/repo -cf /var/tmp/easysb-repo.tar .
+          sshpass -e scp "${ssh_opts[@]}" /var/tmp/easysb-repo.tar "${target}:/var/tmp/easysb-repo.tar"
+
+          # 远端只做「解到暂存区、校验、整棵替换」。顶层目录逐个退役，认不出的条目留在原处，
+          # 站点根万一还住了别的东西也不会被顺手清掉。
+          # The remote side only unpacks, checks and swaps. Top-level entries retire one by one,
+          # so anything unrecognised in the site root survives the swap.
+          sshpass -e ssh "${ssh_opts[@]}" "$target" "WEBROOT='$WEBROOT' bash -s" <<'REMOTE'
+          set -euo pipefail
+          stage="$(mktemp -d)"
+          tar -C "$stage" -xf /var/tmp/easysb-repo.tar
+          for entry in linux pacman bin install.sh; do
+            [ -e "$stage/$entry" ] || { echo "产物不完整，缺少 $entry / incomplete tree"; exit 1; }
+          done
+          mkdir -p "$WEBROOT"
+          for entry in apt rpm linux pacman bin .easysb install.sh .ftp-deploy-sync-state.json; do
+            rm -rf "${WEBROOT:?}/$entry"
+          done
+          cp -a "$stage"/. "$WEBROOT"/
+          rm -rf "$stage" /var/tmp/easysb-repo.tar
+          chown -R easysb: "$WEBROOT"
+          chmod -R a+rX "$WEBROOT"
+          REMOTE

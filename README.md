@@ -238,7 +238,7 @@ Like the `.deb`, these packages install the files and refresh the systemd unit c
 
 ### Release server
 
-The fixed URLs apt, rpm and pacman need are served by one host, `sb.kejizero.xyz`. Prepare it once from the Actions tab: run the **Provision the release server** workflow, which installs caddy for HTTPS, creates the site tree, and installs vsftpd with one account confined to that tree. After that, every release run syncs `dist/repo` there with FTP-Deploy-Action, over FTPS, and the sources stay current.
+The fixed URLs apt, rpm and pacman need are served by one host, `sb.kejizero.xyz`. Prepare it once from the Actions tab: run the **Provision the release server** workflow, which installs caddy for HTTPS, creates the site tree, and installs vsftpd with one account confined to that tree for manual uploads. After that, every release run ships `dist/repo` there over a single SSH connection, and the sources stay current.
 
 The setup and the release runs need six repository secrets:
 
@@ -453,7 +453,7 @@ numbers come from — including why there is no geekbench or fio — is in
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
 | Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make tarball-asset`, which read `release/TAGS`) and publishes one release, tagged and named `v<VERSION>` |
 | Packages | `make deb`, `make rpm` and `make pacman` wrap the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` and `sb --print-unit`); `packaging/repo/packages.sh` builds the per-distribution variants the sources carry (`make repo-packages`) |
-| Sources | `make repo` builds those packages and lays them out as a Docker-shaped `linux/` tree plus pacman and bin, and the release workflow syncs it to the release server with FTP-Deploy-Action; `packaging/repo/index.sh` writes the indexes and signs them, and `packaging/server/` holds the one-shot provisioning script and the Caddy browse template the landing page is rendered from, so the site root is the directory listing plus the install commands |
+| Sources | `make repo` builds those packages and lays them out as a Docker-shaped `linux/` tree plus pacman and bin, and the release workflow ships it to the release server over a single SSH connection; `packaging/repo/index.sh` writes the indexes and signs them, and `packaging/server/` holds the one-shot provisioning script and the Caddy browse template the landing page is rendered from, so the site root is the directory listing plus the install commands |
 
 ---
 
