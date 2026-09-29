@@ -8,6 +8,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -91,6 +92,11 @@ func WriteServerConfig(cfg state.Config, accounts []user.User) ([]byte, error) {
 	return data, nil
 }
 
+// checkConfig is the acceptance test a deployment runs before restarting the node. It
+// is a variable so that a test can drive the rejection path without having to render a
+// document the engine refuses, which would otherwise depend on the build tags.
+var checkConfig = sbcore.Check
+
 // Apply writes the configuration for the given accounts, validates it and
 // restarts the core. A node that was never deployed is left alone: there is no
 // certificate and no service to restart yet, and pre-created accounts must not
@@ -106,8 +112,12 @@ func Apply(ctx context.Context, cfg state.Config, accounts []user.User) error {
 	if _, err := WriteServerConfig(cfg, accounts); err != nil {
 		return err
 	}
-	if err := sbcore.Check(ctx, configPath); err != nil {
-		return ErrRejected
+	if err := checkConfig(ctx, configPath); err != nil {
+		// The core's message names the field it refused, and the only place a
+		// rejection is reported is a log line. Returning the sentinel alone left an
+		// operator with "the core rejected the generated configuration" and nothing
+		// to act on.
+		return fmt.Errorf("%w: %w", ErrRejected, err)
 	}
 	return service.Do(ctx, "restart")
 }

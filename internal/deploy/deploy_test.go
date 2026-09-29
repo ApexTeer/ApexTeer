@@ -196,3 +196,45 @@ func TestWriteServerConfigKeepsCredentialsRootOnly(t *testing.T) {
 		t.Fatalf("config.json mode = %04o, want 0600: it carries every account's credentials", got)
 	}
 }
+
+// TestApplyLeavesAnUndeployedNodeAlone pins the early return: a host that has accounts
+// but no node yet must not be made to fail on a configuration there is no certificate
+// for.
+func TestApplyLeavesAnUndeployedNodeAlone(t *testing.T) {
+	writeInto(t, t.TempDir())
+
+	cfg := state.Default()
+	cfg.NodeDeployed = false
+
+	if err := Apply(context.Background(), cfg, []user.User{testAccount(t)}); err != nil {
+		t.Fatalf("Apply on a node that was never deployed = %v, want nil", err)
+	}
+}
+
+// TestApplyKeepsTheCoreRejectionReason is why the sentinel is wrapped rather than
+// returned bare: the panel's only report of a rejection is a log line, and the core's
+// own message is what names the field the operator has to fix.
+func TestApplyKeepsTheCoreRejectionReason(t *testing.T) {
+	const domain = "example.com"
+	installTestCertificate(t, t.TempDir(), domain)
+	writeInto(t, t.TempDir())
+
+	original := checkConfig
+	t.Cleanup(func() { checkConfig = original })
+	checkConfig = func(context.Context, string) error {
+		return errors.New(`unknown inbound type: "no-such-inbound"`)
+	}
+
+	cfg := state.Default()
+	cfg.Domain = domain
+	cfg.Enabled = taggedProtocols()
+	cfg.NodeDeployed = true
+
+	err := Apply(context.Background(), cfg, []user.User{testAccount(t)})
+	if !errors.Is(err, ErrRejected) {
+		t.Fatalf("Apply = %v, want an error that wraps %v", err, ErrRejected)
+	}
+	if !strings.Contains(err.Error(), "no-such-inbound") {
+		t.Fatalf("Apply dropped the core's own message: %v", err)
+	}
+}
