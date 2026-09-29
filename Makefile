@@ -314,15 +314,15 @@ packages-asset: ## 打包单个架构的全部格式到 dist/（ASSET=…）
 # per-architecture rpm and pacman trees, and bin for the release tarballs. install.sh
 # knows only these four paths.
 #
-# 三份索引的署名密钥是同一个，各源只按本生态的惯例换文件名与编码：apt 的公钥必须是非
-# armored 的二进制 keyring（Signed-By 走 apt-key/gpgv，armored 读不出里面的 key），
-# Release.gpg 与 InRelease 才是 armored；rpm-md 与 pacman 发 armored 公钥，各自的签名
-# 则按客户端查找的名字与编码放。
-# The three indexes are signed by one key; each source only changes the file name and
-# encoding its ecosystem expects: apt's public key must be a non-armored binary keyring
-# (Signed-By goes through apt-key/gpgv, which cannot read an armored file) with armored
-# Release.gpg and InRelease, while the rpm-md and pacman trees publish an armored key and
-# keep the signature encodings those clients look for.
+# 三份索引的署名密钥是同一个，公钥一律照 Docker 官方源的做法发 armored 的 .asc：apt 发
+# apt/easysb.asc（apt 2.4 起 Signed-By 直接读 armored 文件），rpm 发 RPM-GPG-KEY-easysb，
+# pacman 发 easysb.asc；各自的签名仍按客户端查找的名字与编码放，apt 是 Release.gpg 与
+# InRelease，rpm 是 repomd.xml.asc，pacman 是 .sig。
+# The three indexes are signed by one key and every source publishes the public key the way
+# Docker's official repository does, as an armored .asc: apt/easysb.asc (apt 2.4 and newer
+# read an armored file from Signed-By directly), rpm/RPM-GPG-KEY-easysb and
+# pacman/easysb.asc. Each signature keeps the name and encoding its client looks for: apt's
+# Release.gpg and InRelease, rpm's repomd.xml.asc, pacman's .sig.
 apt-index: ## 生成 apt 扁平源到 dist/repo/apt（设置 GPG_KEY_ID 时签名）
 	@command -v apt-ftparchive >/dev/null 2>&1 || { echo "apt-ftparchive 未安装 / missing: apt-get install -y apt-utils"; exit 1; }
 	@set -e; sign='$(GPG_BATCH)'; \
@@ -343,7 +343,7 @@ apt-index: ## 生成 apt 扁平源到 dist/repo/apt（设置 GPG_KEY_ID 时签�
 	if [ -n "$(GPG_KEY_ID)" ]; then \
 		gpg $$sign --armor --detach-sign -u "$(GPG_KEY_ID)" -o Release.gpg Release; \
 		gpg $$sign --clearsign -u "$(GPG_KEY_ID)" -o InRelease Release; \
-		gpg --batch --yes --export "$(GPG_KEY_ID)" > $(PKG_NAME).gpg; \
+		gpg --batch --yes --armor --export "$(GPG_KEY_ID)" > $(PKG_NAME).asc; \
 	fi; \
 	ls -lh .
 
@@ -463,6 +463,7 @@ pacman-index: ## 生成 pacman 源到 dist/repo/pacman/<架构>（设置 GPG_KEY
 repo: apt-index rpm-index pacman-index ## 组装完整软件源到 dist/repo（apt / rpm / pacman / bin）
 	@set -e; bin="$(REPO_DIR)/bin"; rm -rf "$$bin"; mkdir -p "$$bin"; \
 	cp -f $(wildcard $(DIST)/$(PKG_NAME)-*-linux-*.tar.gz) "$$bin/"; \
+	cp -f install.sh "$(REPO_DIR)/install.sh"; \
 	mkdir -p "$(REPO_DIR)/.easysb"; \
 	cp -f packaging/server/browse.html "$(REPO_DIR)/.easysb/browse.html"; \
 	cp -f packaging/server/favicon.svg "$(REPO_DIR)/.easysb/favicon.svg"; \

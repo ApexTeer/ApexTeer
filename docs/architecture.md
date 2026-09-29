@@ -15,7 +15,7 @@ panel's own release (`internal/update`) and the optional BBR kernel packages
 ├── main.go                         # entry point, flags, version resolution, `core run`, `--tool`
 ├── VERSION                         # program version, single source of truth
 ├── release/TAGS                    # the one definition of the build tag set
-├── install.sh                      # installer: one-click, package source, or a local package
+├── install.sh                      # installer: one command sets up the source and installs
 ├── Makefile                        # build / test / dist entry points (see `make help`)
 ├── packaging/                      # package lifecycle scripts (deb/, rpm/) and server/
 ├── go.mod / go.sum                 # module github.com/MinimaxFlora/EasySB, Go 1.27.1
@@ -72,7 +72,7 @@ staged tree (`make pkg-stage`), which one architecture's job drives end to end w
 | `sing-box.service` | `easysb --print-unit node --unit-exec /usr/bin/easysb`, the same `internal/service.UnitBody` the panel writes at runtime |
 | `easysb.service` | `easysb --print-unit sub --unit-exec /usr/bin/easysb`, the same `internal/subd.UnitBody` |
 | Package architecture | `DEBARCH_*`, `RPMARCH_*` and `PACMANARCH_*` in the `Makefile` (armv7 → `armhf` / `armv7hl` / `armv7h`; rpm spells 386 `i686`; Arch has no i386 or s390x, so no pacman package is made for them) |
-| Source trees | `make repo` lays the same files out as four sources: `make apt-index` runs `apt-ftparchive` over `dist/*.deb`, `make rpm-index` runs `createrepo_c` per rpm architecture, `make pacman-index` runs `repo-add` per pacman architecture, and `bin/` takes the tarballs. With `GPG_KEY_ID` set each index is signed with that one key and publishes its public key in the form its client expects: `Release` / `InRelease` plus the binary keyring `apt/easysb.gpg`, `repomd.xml.asc` per architecture plus `rpm/RPM-GPG-KEY-easysb` and a signature on every `.rpm`, and `pacman/easysb.asc` plus a `.sig` for every package and for `easysb.db`. `make rpm-index` also writes `easysb.repo` at the root of the rpm tree, carrying `baseurl` and `gpgkey` together, so one fetch registers the source through dnf4's `config-manager --add-repo` or dnf5's `config-manager addrepo --from-repofile` |
+| Source trees | `make repo` lays the same files out as four sources: `make apt-index` runs `apt-ftparchive` over `dist/*.deb`, `make rpm-index` runs `createrepo_c` per rpm architecture, `make pacman-index` runs `repo-add` per pacman architecture, and `bin/` takes the tarballs. The root also carries `install.sh`, so the one-command install (`curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash`) is served from the same fixed address, the way `get.docker.com` serves Docker's. With `GPG_KEY_ID` set each index is signed with that one key and publishes its public key as an armored file, the way Docker's official repository does: `Release` / `InRelease` plus `apt/easysb.asc`, `repomd.xml.asc` per architecture plus `rpm/RPM-GPG-KEY-easysb` and a signature on every `.rpm`, and `pacman/easysb.asc` plus a `.sig` for every package and for `easysb.db`. `make rpm-index` also writes `easysb.repo` at the root of the rpm tree, carrying `baseurl` and `gpgkey` together, so one fetch registers the source through dnf4's `config-manager --add-repo` or dnf5's `config-manager addrepo --from-repofile` |
 
 `dist/easysb-linux-<asset>` is only an intermediate: `pkg-stage` copies it into the
 staged tree and `tarball-asset` wraps it, and neither the release nor the sources ever
@@ -86,7 +86,7 @@ and the packaged one is the fallback — the two never fight over one path.
 
 The fixed URLs apt, rpm and pacman need live on the release server
 (`sb.kejizero.xyz`), not on a second release tag: the release workflow syncs
-`dist/repo` there with FTP-Deploy-Action, so `install.sh --method repo` can write a
+`dist/repo` there with FTP-Deploy-Action, so the one-command `install.sh` can write a
 source entry that never changes. The server itself is prepared once by
 `packaging/server/provision.sh` (caddy for HTTPS, vsftpd for the upload account,
 a Caddy browse template for the landing page), driven by the "Provision the release

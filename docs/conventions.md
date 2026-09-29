@@ -37,15 +37,18 @@
   where `<arch>` is that ecosystem's own spelling. `dist/easysb-linux-<asset>` is
   an intermediate and is never published by itself.
 - The package sources live on the release server, not on a second release tag, so
-  `install.sh --method repo` has one fixed address (`https://sb.kejizero.xyz`)
-  to point at. Its four subtrees are `apt/`, `rpm/<arch>/`, `pacman/<arch>/` and
+  the one-command `install.sh` has one fixed address (`https://sb.kejizero.xyz`)
+  to point at. The root carries `install.sh` itself, so the one command (`curl -fsSL
+  https://sb.kejizero.xyz/install.sh | sudo bash`) needs no second address. Its four
+  subtrees are `apt/`, `rpm/<arch>/`, `pacman/<arch>/` and
   `bin/`; `make repo` builds them and the workflow syncs them there. The three
   index subtrees are signed with one key when `GPG_KEY_ID` is set, and each
-  publishes that key inside its own tree: `apt/easysb.gpg`, `rpm/RPM-GPG-KEY-easysb`
-  and `pacman/easysb.asc`. The rpm tree root also carries `easysb.repo`, so
+  publishes that key armoured inside its own tree: `apt/easysb.asc`,
+  `rpm/RPM-GPG-KEY-easysb` and `pacman/easysb.asc`, the way Docker's own
+  repository does. The rpm tree root also carries `easysb.repo`, so
   registering the rpm source is one command per dnf generation: dnf5's
   `config-manager addrepo --from-repofile` and dnf4's `config-manager --add-repo`
-  (which `dnf-plugins-core` provides). `install.sh --method repo` writes the
+  (which `dnf-plugins-core` provides). `install.sh` writes the
   strict entry only when it finds that key on the server, and the permissive
   form otherwise.
 

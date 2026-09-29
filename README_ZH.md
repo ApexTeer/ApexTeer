@@ -61,7 +61,7 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 ```text
 .
 ├── main.go                       # Go 入口（TUI 主程序）
-├── install.sh                    # 安装脚本（一键 / 软件源 / 手动安装包）
+├── install.sh                    # 安装脚本（一键：配源安装，或装本地安装包）
 ├── packaging/                    # 软件包生命周期脚本（deb/、rpm/）与服务器置备（server/）
 ├── VERSION                       # 发布 tag 的唯一来源
 ├── AGENTS.md                     # 面向 AI Agent 与协作者的说明
@@ -101,25 +101,21 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 
 ## 快速开始
 
-三种方式都出自同一个 `install.sh`。
-
-一键安装：检测系统与架构，补全运行依赖，优先下载发布压缩包（回退源码构建）：
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
-```
-
-软件源安装：为本系统添加 apt / rpm / pacman 源，交给系统包管理器安装：
+一条命令，和 Docker 的 `get.docker.com` 一个形状：脚本自己识别发行版与架构，配好本机的
+签名软件源，再交给系统包管理器安装。没有源写法的系统（如 Alpine）回退到发布压缩包。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh) --method repo
+curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-手动安装：安装一个自己下载好的安装包文件：
+同一个脚本还带着另外几种用法。安装一个自己下载好的安装包文件：
 
 ```bash
-bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
+curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash -s -- --method package --package ./easysb_5.0.0_linux_amd64.deb
 ```
+
+`--method repo` 强制只走软件源（没有源写法就报错），`--from-source` 从源码构建，
+`--binary ./easysb` 用自己编译好的二进制，`--lang C` 切回中文输出。
 
 安装完成后以快捷指令 `sb` 启动深色仪表盘。
 
@@ -167,35 +163,23 @@ Debian 与 Ubuntu 可以添加 apt 软件源后用 `apt install` / `apt upgrade`
 # 架构：amd64、arm64、armhf、i386、riscv64、s390x
 sudo dpkg -i easysb_5.0.0_linux_amd64.deb
 
-# 也可以让安装脚本取回并安装同一个文件
+# 或者把这个文件交给安装脚本
 bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
 ```
 
 ### apt 软件源
 
-apt 索引与 `.deb` 由 `https://sb.kejizero.xyz/apt` 提供，地址固定，所以一条软件源配置能一直用下去。索引带签名，公钥就在同一目录下，文件名 `easysb.gpg`：
+apt 索引与 `.deb` 由 `https://sb.kejizero.xyz/apt` 提供，地址固定，所以一条软件源配置能一直用下去。安装脚本会替你配好，形状与 Docker 官方脚本相同：armored 公钥落到 `/etc/apt/keyrings/easysb.asc`，源写进 `/etc/apt/sources.list.d/easysb.list` 的一行里，随后由 apt 装上包。
 
 ```bash
-# 信任仓库的签名密钥
-sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://sb.kejizero.xyz/apt/easysb.gpg | sudo tee /etc/apt/keyrings/easysb.gpg >/dev/null
-
-sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://sb.kejizero.xyz/apt
-Suites: ./
-Signed-By: /etc/apt/keyrings/easysb.gpg
-EOF
-
-sudo apt-get update
-sudo apt-get install easysb
+curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-`install.sh --method repo` 写的就是上面这两个文件，并接着执行安装。
+之后 `sudo apt upgrade` 就能一路把面板升级上去。
 
-三份源共用一把密钥签名。把 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY`，口令配置成 `GPG_PASSPHRASE`，发布工作流会导入密钥并签完全部产物：apt 的 `Release`（`InRelease` 与 `Release.gpg`）、每个 `.rpm`、rpm-md 的 `repomd.xml`、每个 pacman 包以及 pacman 数据库。口令通过文件读入，不会出现在进程列表里。公钥按各源习惯的名字随源发布：apt 用的是 `Signed-By` 需要的二进制 keyring `apt/easysb.gpg`，rpm 与 pacman 用的是 armored 的 `rpm/RPM-GPG-KEY-easysb` 与 `pacman/easysb.asc`。
+三份源共用一把密钥签名。把 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY`，口令配置成 `GPG_PASSPHRASE`，发布工作流会导入密钥并签完全部产物：apt 的 `Release`（`InRelease` 与 `Release.gpg`）、每个 `.rpm`、rpm-md 的 `repomd.xml`、每个 pacman 包以及 pacman 数据库。口令通过文件读入，不会出现在进程列表里。公钥一律按 Docker 官方源的做法发 armored 文件：`apt/easysb.asc`、`rpm/RPM-GPG-KEY-easysb` 与 `pacman/easysb.asc`。
 
-没有该 secret 时发布出去的源不带签名，三种写法各有宽松形式：`Trusted: yes` 代替 `Signed-By:`，`gpgcheck=0` 与 `repo_gpgcheck=0` 且不带 `gpgkey`，以及 `SigLevel = Optional TrustAll`。`install.sh --method repo` 会按服务器上实际发布的情况选对应写法。
+没有该 secret 时发布出去的源不带签名，三种写法各有宽松形式：`trusted=yes` 代替 `signed-by=`，`gpgcheck=0` 与 `repo_gpgcheck=0` 且不带 `gpgkey`，以及 `SigLevel = Optional TrustAll`。安装脚本会按服务器上实际发布的情况选对应写法。
 
 ---
 
@@ -203,49 +187,13 @@ sudo apt-get install easysb
 
 同一个 release 还提供供 Fedora / RHEL / openSUSE 使用的 `.rpm`，以及供 Arch 使用的 pacman 包。两者与 `.deb` 打成的是同一个二进制、同一段单元文本、同一棵暂存树，所以三种格式彼此一致，也与运行时一致。
 
-两种包在发布服务器上也都是真正的软件源：rpm-md 目录与 pacman 数据库，所以 `install.sh --method repo` 会为本系统添加源并直接从源安装：
+两种包在发布服务器上也都是真正的软件源：rpm-md 目录与 pacman 数据库。同一条一键命令会为本系统添加源并直接从源安装，不需要手工复制任何配置：
 
 ```bash
-# Fedora / RHEL / openSUSE
-sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-
-# Fedora（dnf5）
-sudo dnf config-manager addrepo --from-repofile=https://sb.kejizero.xyz/easysb.repo
-sudo dnf install easysb
-
-# RHEL 9 及更早（dnf4），config-manager 由 dnf-plugins-core 提供
-sudo dnf install -y dnf-plugins-core
-sudo dnf config-manager --add-repo https://sb.kejizero.xyz/easysb.repo
-sudo dnf install easysb
-
-# openSUSE
-sudo zypper addrepo -f https://sb.kejizero.xyz/rpm/\$basearch easysb
-sudo zypper --gpg-auto-import-keys refresh easysb
-sudo zypper install easysb
-
-# Arch
-curl -fsSL https://sb.kejizero.xyz/pacman/easysb.asc -o /tmp/easysb.asc
-sudo pacman-key --add /tmp/easysb.asc
-
-# 在本地信任刚导入的这把密钥
-sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/easysb.asc | awk -F: '/^fpr:/{print $10; exit}')"
-
-sudo tee -a /etc/pacman.conf >/dev/null <<'EOF'
-
-[easysb]
-SigLevel = Required DatabaseRequired
-Server = https://sb.kejizero.xyz/pacman/$arch
-EOF
-sudo pacman -Sy && sudo pacman -S easysb
+curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-`rpm --import` 会把公钥写进 rpm 数据库，dnf 与 zypper 校验时用的就是它。发布在源里的
-`easysb.repo` 把 `baseurl` 与 `gpgkey` 写在一起，所以两代 dnf 各用一条命令登记它：
-dnf5 用 `config-manager addrepo --from-repofile`，dnf4 用 `config-manager --add-repo`，
-后者由 `dnf-plugins-core` 提供。`gpgcheck` 校验每个包，`repo_gpgcheck` 用
-`repomd.xml.asc` 校验 `repomd.xml`，所以未签名或被改过的文件会被拒收。pacman 则用
-同一把密钥校验数据库（`DatabaseRequired`）与每个包（`Required`），这把密钥需要在本地
-信任一次。dnf 的两条路径与两次密钥导入都由 `install.sh --method repo` 完成。
+这条命令背后就是 Docker 的写法。rpm 一侧，脚本只登记源自己发布的 `easysb.repo`；那份文件把 `baseurl`、`gpgcheck`、`repo_gpgcheck` 与 `gpgkey` 的地址写在一起，包管理器在第一次安装时会自己取回并信任签名公钥，不需要再单独导入一次。两代 dnf 登记这份文件的方式不同，按命令是否存在各走各的：dnf5 用内建的 `config-manager addrepo --from-repofile`，dnf4 用 `dnf-plugins-core` 提供的 `config-manager --add-repo`，只有 yum 的系统则用 `yum-config-manager --add-repo`。`gpgcheck` 校验每个包，`repo_gpgcheck` 用 `repomd.xml.asc` 校验 `repomd.xml`，所以未签名或被改过的文件会被拒收。pacman 一侧，脚本导入 `pacman/easysb.asc`、在本地信任它并写好 `[easysb]` 段落，pacman 随后用同一把密钥校验数据库（`DatabaseRequired`）与每个包（`Required`）。
 
 也可以继续用 release 页上的单文件方式安装：
 

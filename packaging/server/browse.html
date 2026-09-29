@@ -1248,68 +1248,22 @@ main {
 				<p>The four directories above are one source each: <code>/apt</code> a flat apt archive,
 					<code>/rpm/$basearch</code> an rpm-md repository, <code>/pacman/$arch</code> a pacman
 					database, and <code>/bin</code> the release tarballs. All three sources are signed with
-					one key, served inside each tree as <code>apt/easysb.gpg</code>,
+					one key, served inside each tree as <code>apt/easysb.asc</code>,
 					<code>rpm/RPM-GPG-KEY-easysb</code> and <code>pacman/easysb.asc</code>, and
 					<code>/easysb.repo</code> registers the rpm source on either dnf generation. Pick
 					your distribution below.</p>
 
-				<h3>Debian &middot; Ubuntu</h3>
+				<h3>One command</h3>
+				<p>The script detects the distribution and architecture, adds the matching signed
+					source and installs through the OS package manager &mdash; Debian / Ubuntu, Fedora,
+					RHEL, openSUSE and Arch alike. A system with no source recipe (Alpine) falls back to
+					the release tarball.</p>
 				<div class="cmd">
 					{{template "copy"}}
-					<pre>sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://sb.kejizero.xyz/apt/easysb.gpg | sudo tee /etc/apt/keyrings/easysb.gpg &gt;/dev/null
-
-sudo tee /etc/apt/sources.list.d/easysb.sources &gt;/dev/null &lt;&lt;'EOF'
-Types: deb
-URIs: https://sb.kejizero.xyz/apt
-Suites: ./
-Signed-By: /etc/apt/keyrings/easysb.gpg
-EOF
-
-sudo apt-get update
-sudo apt-get install easysb</pre>
+					<pre>curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash</pre>
 				</div>
 
-				<h3>Fedora &middot; RHEL &middot; openSUSE</h3>
-				<div class="cmd">
-					{{template "copy"}}
-					<pre>sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-
-# Fedora (dnf5)
-sudo dnf config-manager addrepo --from-repofile=https://sb.kejizero.xyz/easysb.repo
-sudo dnf install easysb
-
-# RHEL 9 and older (dnf4), dnf-plugins-core provides config-manager
-sudo dnf install -y dnf-plugins-core
-sudo dnf config-manager --add-repo https://sb.kejizero.xyz/easysb.repo
-sudo dnf install easysb
-
-# openSUSE
-sudo zypper addrepo -f https://sb.kejizero.xyz/rpm/\$basearch easysb
-sudo zypper --gpg-auto-import-keys refresh easysb
-sudo zypper install easysb</pre>
-				</div>
-
-				<h3>Arch Linux</h3>
-				<div class="cmd">
-					{{template "copy"}}
-					<pre>curl -fsSL https://sb.kejizero.xyz/pacman/easysb.asc -o /tmp/easysb.asc
-sudo pacman-key --add /tmp/easysb.asc
-
-# locally trust the key that just went in
-sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/easysb.asc | awk -F: '/^fpr:/{print $10; exit}')"
-
-sudo tee -a /etc/pacman.conf &gt;/dev/null &lt;&lt;'EOF'
-
-[easysb]
-SigLevel = Required DatabaseRequired
-Server = https://sb.kejizero.xyz/pacman/$arch
-EOF
-
-sudo pacman -Sy &amp;&amp; sudo pacman -S easysb</pre>
-				</div>
-
-				<h3>Anything else</h3>
+				<h3>Or a package file</h3>
 				<p>Download the <code>.deb</code>, <code>.rpm</code>, <code>.pkg.tar.zst</code> or the
 					<code>easysb-&lt;version&gt;-linux-&lt;arch&gt;.tar.gz</code> from
 					<a href="https://github.com/MinimaxFlora/EasySB/releases">the release page</a>, or let

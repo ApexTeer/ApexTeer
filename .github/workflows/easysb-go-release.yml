@@ -194,16 +194,10 @@ jobs:
             - 内核 / Core: sing-box 已编译进面板（来源 https://github.com/SagerNet/sing-box），无需单独安装
               the sing-box core is compiled into the panel, nothing to install separately
 
-            一键安装 / One-click:
+            一键安装 / One-click（自动识别发行版，配好签名软件源并安装，同 Docker）:
 
              ```bash
-            bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
-            ```
-
-            软件源安装 / From the package source:
-
-             ```bash
-            bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh) --method repo
+            curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
             ```
 
             手动安装 / Manual: 下载本页对应架构的 `.deb` / `.rpm` / `.pkg.tar.zst`，或
