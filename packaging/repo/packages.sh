@@ -82,12 +82,24 @@ build_deb() {
 build_rpm() {
   local suffix="$1" out="$2"
   [ -s "$out" ] && { echo "  已存在 / exists: $(basename "$out")"; return 0; }
+  # rpm 6（Ubuntu 26.04 的 rpmbuild 6.1）默认产出 rpm format 6 的包，它只能承载 OpenPGP
+  # v6 签名（RPMSIGTAG_OPENPGP）。RHEL/CentOS/Rocky 9、10 与 Fedora 41、42 的 rpm ≤ 4.20
+  # 不认识这个标签，索引里的包看着就是没签名，dnf 一律报 “is not signed”。显式要 format 4，
+  # rpm 6 才会退回把签名写进老的 RSA/DSA 标签，整个矩阵都能验。rpm 4.x 不认识 _rpmformat，
+  # 这一行在那里是空操作。
+  # rpm 6 (rpmbuild 6.1 on Ubuntu 26.04) builds rpm format 6 packages, which can only carry
+  # an OpenPGP v6 signature (RPMSIGTAG_OPENPGP). rpm <= 4.20 on RHEL/CentOS/Rocky 9, 10 and
+  # Fedora 41, 42 does not know that tag, so the package reads as unsigned and dnf always
+  # answers "is not signed". Asking for format 4 explicitly makes rpm 6 fall back to writing
+  # the signature into the legacy RSA/DSA tag every target understands. rpm 4.x does not know
+  # _rpmformat, where this is a no-op.
   fpm -s dir -t rpm --force \
     -n "$PKG_NAME" -v "$VERSION" --iteration "1.${suffix}" -a "$rpmarch" \
     --rpm-summary "$PKG_SUMMARY" --license "$PKG_LICENSE" \
     --description "$PKG_DESC" --url "$PKG_URL" \
     --vendor "$PKG_VENDOR" --maintainer "$PKG_MAINTAINER" \
     --depends ca-certificates \
+    --rpm-rpmbuild-define "_rpmformat 4" \
     --after-install packaging/rpm/post \
     --after-remove packaging/rpm/postun \
     --package "$out" -C "$stage" .
