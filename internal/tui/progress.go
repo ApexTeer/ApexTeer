@@ -364,7 +364,7 @@ func (p *progressModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd,
 	key := strings.ToLower(msg.String())
 	if p.done {
 		switch key {
-		case "enter", "esc", "backspace":
+		case "esc", "backspace":
 			// q is deliberately absent: it quits the panel from every page, so it
 			// reaches the global shortcut instead of dismissing this screen.
 			return nil, true
@@ -514,7 +514,7 @@ func (p *progressModel) hintTail(pal theme.Palette, lang i18n.Lang, width, rows 
 		if !p.noCopy {
 			parts = append(parts, lang.T("task_copy"))
 		}
-		parts = append(parts, lang.T("task_press_enter"), lang.T("hint_quit"))
+		parts = append(parts, lang.T("hint_back"), lang.T("hint_quit"))
 		hint = strings.Join(parts, "  ")
 	} else {
 		hint = lang.T("hint_back") + "  " + lang.T("cancelled")

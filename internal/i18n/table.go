@@ -480,7 +480,6 @@ var table = []entry{
 	{"task_running", "执行中", "running"},
 	{"task_done", "执行完成", "finished"},
 	{"task_failed", "执行失败", "failed"},
-	{"task_press_enter", "Enter 返回", "Enter return"},
 	{"task_scroll", "↑/↓ 滚动", "↑/↓ scroll"},
 	{"task_copy", "C 复制", "C copy"},
 	{"copied", "已复制到剪贴板", "Copied to clipboard"},
