@@ -15,6 +15,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,10 +107,15 @@ func Default() Config {
 	return c
 }
 
+// stateFile is where the node state is read and written. It is a variable so that a
+// test can round-trip a state file in a temporary directory: what such a test is about
+// is the document and the file left behind, and neither belongs in /etc on a build host.
+var stateFile = sysinfo.StateFile
+
 // Load reads the state file, applying defaults for any missing value.
 func Load() Config {
 	c := Default()
-	f, err := os.Open(sysinfo.StateFile)
+	f, err := os.Open(stateFile)
 	if err != nil {
 		return c
 	}
@@ -274,11 +280,31 @@ func (c Config) Save() error {
 		lines = append(lines, fmt.Sprintf("%s=%q", k, c.raw[k]))
 	}
 
-	tmp := sysinfo.StateFile + ".tmp"
-	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+	// A fresh temporary name per write, not StateFile+".tmp", the way the account
+	// store writes its own file: a fixed name is a path anything with write access to
+	// the directory can have prepared as a symlink beforehand, and two writers sharing
+	// one temporary path can interleave into a truncated document that is then renamed
+	// into place. CreateTemp applies 0600 too, so the state never lands under the umask
+	// of the invoking shell.
+	f, err := os.CreateTemp(filepath.Dir(stateFile), filepath.Base(stateFile)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, sysinfo.StateFile)
+	tmp := f.Name()
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, stateFile); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func (c Config) extraKeys() []string {
