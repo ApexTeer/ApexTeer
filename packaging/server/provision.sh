@@ -4,13 +4,13 @@
 # ------------------------------------------------------------------------------
 #  在一台 Debian / Ubuntu 主机上准备软件源站点，全部步骤可重复执行：
 #    - 安装 caddy，写站点配置，用自动签发的证书对外提供 HTTPS
-#    - 建立站点根目录与 apt / rpm / pacman / bin 四个子目录
+#    - 建立站点根目录与 linux / pacman / bin 三个子目录
 #    - 安装 vsftpd 并建一个只能写站点根的 FTP 账号，供发布工作流上传
 #
 #  Prepares a Debian / Ubuntu host to serve the package sources. Every step is
 #  idempotent:
 #    - install caddy, write the site config, serve HTTPS with an automatic certificate
-#    - create the site root and its apt / rpm / pacman / bin subtrees
+#    - create the site root and its linux / pacman / bin subtrees
 #    - install vsftpd and one FTP account confined to the site root, for the release
 #      workflow to upload through
 #
@@ -131,8 +131,27 @@ start_caddy() {
 
 make_webroot() {
   log "建立站点根目录 / creating $WEBROOT"
-  mkdir -p "$WEBROOT"/{apt,rpm,pacman,bin} "$(dirname "$BROWSE_TEMPLATE")"
-  ok "$WEBROOT/{apt,rpm,pacman,bin,.easysb}"
+  # linux 下按发行版分目录（linux/<发行版>/…），与 Docker 官方源一样；pacman 仍按架构分，
+  # bin 放发布压缩包。
+  # linux holds one subtree per distribution (linux/<distro>/...), like Docker's official
+  # sources; pacman stays per-architecture and bin carries the release tarballs.
+  mkdir -p "$WEBROOT"/{linux,pacman,bin} "$(dirname "$BROWSE_TEMPLATE")"
+  ok "$WEBROOT/{linux,pacman,bin,.easysb}"
+
+  # 源从前是扁平的 apt/ 与 rpm/<架构>/，公钥、easysb.repo 也散在根上。换成分发行版的
+  # linux/ 之后这些路径没人再写，但 FTP 同步只增不改，不在这里收走就会一直留着，读者看到
+  # 两套互相矛盾的源。与新布局同名的文件不动。
+  # The sources used to be a flat apt/ and rpm/<arch>/, with the key and easysb.repo loose at
+  # the root. Nothing writes those paths after the move to the per-distribution linux/, but
+  # the FTP sync only adds files, so they would linger and readers would see two conflicting
+  # sources. Anything that shares a name with the new layout is left alone.
+  local stale
+  for stale in apt rpm easysb.repo RPM-GPG-KEY-easysb; do
+    if [ -e "$WEBROOT/$stale" ]; then
+      rm -rf "$WEBROOT/$stale"
+      warn "删除旧布局的 $stale / removed the old-layout $stale"
+    fi
+  done
 
   # 站点首页曾经是这份静态文件。file_server 只要见到 index.html 就直接发它，放着不管
   # 的话模板永远轮不到渲染；而 FTP 同步只增不改，也不会替我们收走它，所以在这里删掉。
@@ -177,7 +196,7 @@ write_browse_template() {
 	</head>
 	<body>
 		<h1>{{html .Name}}</h1>
-		<p>EasySB package sources: /apt, /rpm, /pacman, /bin</p>
+		<p>EasySB package sources: /linux, /pacman, /bin</p>
 		<ul>
 			{{- range .Items}}
 			<li><a href="{{html .URL}}">{{html .Name}}</a></li>
@@ -386,7 +405,7 @@ summary() {
 置备完成 / provisioned
   站点 / site      https://${SITE_DOMAIN}
   根目录 / root    ${WEBROOT}
-  源 / sources     https://${SITE_DOMAIN}/apt, /rpm, /pacman, /bin
+  源 / sources     https://${SITE_DOMAIN}/linux, /pacman, /bin
   FTP 账号 / user  ${FTP_USER}  被动端口 / passive ports ${FTP_PASV_MIN}-${FTP_PASV_MAX}
 
 发布工作流用 FTPS 连接到 21 端口上传；请确认云厂商防火墙放行了 21、${FTP_PASV_MIN}-${FTP_PASV_MAX}、80 与 443。

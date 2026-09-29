@@ -1245,19 +1245,20 @@ main {
 					units come with them. The package deliberately does not start either unit, because a
 					fresh install has no node configuration yet: run <code>sb</code>, configure the node,
 					and the panel enables and starts the service.</p>
-				<p>The four directories above are one source each: <code>/apt</code> a flat apt archive,
-					<code>/rpm/$basearch</code> an rpm-md repository, <code>/pacman/$arch</code> a pacman
-					database, and <code>/bin</code> the release tarballs. All three sources are signed with
-					one key, served inside each tree as <code>apt/easysb.asc</code>,
-					<code>rpm/RPM-GPG-KEY-easysb</code> and <code>pacman/easysb.asc</code>, and
-					<code>/easysb.repo</code> registers the rpm source on either dnf generation. Pick
-					your distribution below.</p>
+				<p>The directories above are the sources: <code>/linux</code> carries one signed apt archive
+					and one rpm-md repository per distribution, laid out the way Docker's official sources
+					are &mdash; apt under <code>linux/&lt;distro&gt;/dists/&lt;suite&gt;</code>, rpm under
+					<code>linux/&lt;distro&gt;/&lt;release&gt;/&lt;basearch&gt;</code>. Each distribution's
+					public key is <code>linux/&lt;distro&gt;/gpg</code>, and the <code>easysb.repo</code>
+					beside it registers the rpm source on either dnf generation. <code>/pacman/$arch</code>
+					is the pacman database with its key at <code>pacman/easysb.asc</code>, and
+					<code>/bin</code> holds the release tarballs.</p>
 
 				<h3>One command</h3>
 				<p>The script detects the distribution and architecture, adds the matching signed
-					source and installs through the OS package manager &mdash; Debian / Ubuntu, Fedora,
-					RHEL, openSUSE and Arch alike. A system with no source recipe (Alpine) falls back to
-					the release tarball.</p>
+					source and installs through the OS package manager &mdash; Debian 12 / 13, Ubuntu
+					22.04 / 24.04, Fedora 41 / 42, RHEL, CentOS, Rocky and Arch alike. A system with no
+					source of its own (Alpine, openSUSE) falls back to the release tarball.</p>
 				<div class="cmd">
 					{{template "copy"}}
 					<pre>curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash</pre>

@@ -17,7 +17,7 @@ panel's own release (`internal/update`) and the optional BBR kernel packages
 ├── release/TAGS                    # the one definition of the build tag set
 ├── install.sh                      # installer: one command sets up the source and installs
 ├── Makefile                        # build / test / dist entry points (see `make help`)
-├── packaging/                      # package lifecycle scripts (deb/, rpm/) and server/
+├── packaging/                      # package lifecycle scripts (deb/, rpm/), the source builder (repo/) and server/
 ├── go.mod / go.sum                 # module github.com/MinimaxFlora/EasySB, Go 1.27.1
 ├── templates/                      # readable JSONC samples and subscription template
 │   ├── anytls/
@@ -71,8 +71,9 @@ staged tree (`make pkg-stage`), which one architecture's job drives end to end w
 | Release tarball | `make tarball-asset` wraps that binary as `dist/easysb-<version>-linux-<asset>.tar.gz`, with the member `easysb` at the root, which is what `install.sh` and `internal/update` unpack |
 | `sing-box.service` | `easysb --print-unit node --unit-exec /usr/bin/easysb`, the same `internal/service.UnitBody` the panel writes at runtime |
 | `easysb.service` | `easysb --print-unit sub --unit-exec /usr/bin/easysb`, the same `internal/subd.UnitBody` |
-| Package architecture | `DEBARCH_*`, `RPMARCH_*` and `PACMANARCH_*` in the `Makefile` (armv7 → `armhf` / `armv7hl` / `armv7h`; rpm spells 386 `i686`; Arch has no i386 or s390x, so no pacman package is made for them) |
-| Source trees | `make repo` lays the same files out as four sources: `make apt-index` runs `apt-ftparchive` over `dist/*.deb`, `make rpm-index` runs `createrepo_c` per rpm architecture, `make pacman-index` runs `repo-add` per pacman architecture, and `bin/` takes the tarballs. The root also carries `install.sh`, so the one-command install (`curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash`) is served from the same fixed address, the way `get.docker.com` serves Docker's. With `GPG_KEY_ID` set each index is signed with that one key and publishes its public key as an armored file, the way Docker's official repository does: `Release` / `InRelease` plus `apt/easysb.asc`, `repomd.xml.asc` per architecture plus `rpm/RPM-GPG-KEY-easysb` and a signature on every `.rpm`, and `pacman/easysb.asc` plus a `.sig` for every package and for `easysb.db`. `make rpm-index` also writes `easysb.repo` at the root of the rpm tree, carrying `baseurl` and `gpgkey` together, so one fetch registers the source through dnf4's `config-manager --add-repo` or dnf5's `config-manager addrepo --from-repofile` |
+| Package architecture | `DEBARCH_MAP`, `RPMARCH_MAP` and `PACMANARCH_*` in the `Makefile` (armv7 → `armhf` / `armv7hl` / `armv7h`; rpm spells 386 `i686`; Arch has no i386 or s390x, so no pacman package is made for them). The maps always key on an asset name (`amd64`, `armv7`, …), so one table drives packaging, layout and indexing |
+| Source packages | `make repo-packages` builds one variant per distribution release, with the distribution in the version string: `5.0.0-1~debian.12~bookworm`, `5.0.0-1.el9`, `5.0.0-1.fc42`. `packaging/repo/packages.sh` drives fpm from the `Makefile`'s `DEB_SUITES` / `RPM_TREES` tables and writes into `REPO_PKGS` (`dist/repopkgs`). These are separate from the release assets: those are the generic files on the release page, these only feed the sources |
+| Source trees | `make repo-index` lays the packages out as Docker's official `linux/` tree: `packaging/repo/index.sh` writes `linux/<distro>/dists/<suite>/pool/stable/<arch>/*.deb` with `Packages` and `Release` beside it (plus `InRelease` / `Release.gpg` when signed), `linux/<distro>/<release>/<basearch>/stable/` with a `repodata/` for rpm, `linux/<distro>/easysb.repo` and the armored `linux/<distro>/gpg` per distribution, `pacman/<arch>/` via `repo-add` and `bin/` for the tarballs. `make repo` is `repo-packages` then `repo-index`. The root also carries `install.sh`, so the one-command install (`curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash`) is served from the same fixed address, the way `get.docker.com` serves Docker's. With `GPG_KEY_ID` set everything is signed with that one key and each tree publishes its armored public key: `linux/<distro>/gpg` on both apt and rpm sides, and `pacman/easysb.asc` plus a `.sig` for every package and for `easysb.db`. The `easysb.repo` carries `baseurl`, `gpgcheck` and `gpgkey` together, so one fetch registers the source through dnf4's `config-manager --add-repo` or dnf5's `config-manager addrepo --from-repofile` |
 
 `dist/easysb-linux-<asset>` is only an intermediate: `pkg-stage` copies it into the
 staged tree and `tarball-asset` wraps it, and neither the release nor the sources ever
@@ -92,10 +93,10 @@ source entry that never changes. The server itself is prepared once by
 a Caddy browse template for the landing page), driven by the "Provision the release
 server" workflow. The landing page is not a static file: `packaging/server/browse.html`
 is the template Caddy renders over the directory listing, so the home page shows the
-four source directories and the install commands together. It travels to the server
+the source directories and the install commands together. It travels to the server
 inside `dist/repo/.easysb/`, where the Caddyfile's dotfile rule keeps it from being
 served or listed; `packaging/server/favicon.svg` travels with it, and an exact-path
-route serves it as `/favicon.svg`, so the root listing stays the four sources alone.
+route serves it as `/favicon.svg`, so the root listing stays the sources alone.
 
 ## Packages
 

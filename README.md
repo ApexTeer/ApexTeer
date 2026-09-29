@@ -62,7 +62,7 @@ EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol de
 .
 ├── main.go                       # Go entrypoint (TUI)
 ├── install.sh                    # Installer (one command: source + package, or a local file)
-├── packaging/                    # Package lifecycle scripts (deb/, rpm/) and server/
+├── packaging/                    # Package lifecycle scripts (deb/, rpm/), the source builder (repo/) and server/
 ├── VERSION                       # Single source of truth for the release tag
 ├── AGENTS.md                     # Guide for AI agents and contributors
 ├── go.mod                        # Go module definition
@@ -103,8 +103,10 @@ Ports are prompted one by one: Enter takes the default, `r` picks a random port,
 
 One command, the same shape as Docker's `get.docker.com`: the script detects the
 distribution and architecture, configures this machine's signed package source and
-installs through the OS package manager. A system with no source recipe (Alpine) falls
-back to the release tarball.
+installs through the OS package manager. The sources are built for Debian 12 and 13,
+Ubuntu 22.04 and 24.04, Fedora 41 and 42, RHEL 9 and 10 (CentOS, Rocky and AlmaLinux
+included) and Arch; a system outside that list (Alpine, openSUSE) falls back to the
+release tarball.
 
 ```bash
 curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
@@ -170,23 +172,29 @@ bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
 
 ### apt repository
 
-The apt index and the `.deb` files are served from `https://sb.kejizero.xyz/apt`, a fixed address, so one sources entry covers every later version. The installer sets it up for you, in the same shape Docker's own script uses: the armored key lands at `/etc/apt/keyrings/easysb.asc`, the entry is one line in `/etc/apt/sources.list.d/easysb.list`, and apt installs the package.
+The apt index and the `.deb` files are served from `https://sb.kejizero.xyz/linux/<distribution>`, one tree per distribution (`debian`, `ubuntu`), a fixed address, so one sources entry covers every later version. The setup is Docker's own, character for character: the armored key lands at `/etc/apt/keyrings/easysb.asc`, the entry is one line in `/etc/apt/sources.list.d/easysb.list` carrying `arch`, `signed-by`, the distribution directory and the suite, and apt installs the package.
 
 ```bash
 curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-After that `sudo apt upgrade` keeps the panel current.
+The entry the installer writes is shaped like Docker's `deb [...] $URL/linux/ubuntu noble stable`:
 
-All three sources are signed with one key. Add the armored private key as the repository secret `GPG_PRIVATE_KEY` and its passphrase as `GPG_PASSPHRASE`; the release workflow imports it and signs every artifact: apt's `Release` (`InRelease` and `Release.gpg`), each `.rpm`, the rpm-md `repomd.xml`, each pacman package and the pacman database. The passphrase is read from a file, so it never reaches a process list. Every source publishes the public key the way Docker's official repository does, as an armored file: `apt/easysb.asc`, `rpm/RPM-GPG-KEY-easysb` and `pacman/easysb.asc`.
+```text
+deb [arch=amd64 signed-by=/etc/apt/keyrings/easysb.asc] https://sb.kejizero.xyz/linux/debian bookworm stable
+```
 
-A release run without the secret publishes unsigned sources, and each entry then has a permissive form: `trusted=yes` in place of `signed-by=`, `gpgcheck=0` and `repo_gpgcheck=0` with no `gpgkey`, and `SigLevel = Optional TrustAll`. The installer picks whichever form matches what the server actually published.
+After that `sudo apt upgrade` keeps the panel current. The four suites are `bookworm` (Debian 12), `trixie` (Debian 13), `jammy` (Ubuntu 22.04) and `noble` (Ubuntu 24.04); each `.deb` carries that in its version, `5.0.0-1~debian.12~bookworm` and `5.0.0-1~ubuntu.24.04~noble`, so a distribution upgrade pulls the matching package.
+
+All three sources are signed with one key. Add the armored private key as the repository secret `GPG_PRIVATE_KEY` and its passphrase as `GPG_PASSPHRASE`; the release workflow imports it and signs every artifact: apt's `Release` (`InRelease` and `Release.gpg`), each `.rpm`, the rpm-md `repomd.xml`, each pacman package and the pacman database. The passphrase is read from a file, so it never reaches a process list. Every source publishes the public key the way Docker's official repository does, as an armored file: `linux/debian/gpg`, `linux/ubuntu/gpg`, `linux/<distro>/gpg` on the rpm side and `pacman/easysb.asc`.
+
+A release run without the secret publishes unsigned sources, and each entry then has a permissive form: `trusted=yes` in place of `signed-by=`, `gpgcheck=0` with no `gpgkey`, and `SigLevel = Optional TrustAll`. The installer picks whichever form matches what the server actually published.
 
 ---
 
 ## RPM and pacman Packages
 
-The same release also carries an `.rpm` for Fedora, RHEL and openSUSE, and a pacman package for Arch. Both wrap the identical binary, the identical units and the same staged tree as the `.deb`, so all three formats agree with each other and with the runtime.
+The same release also carries an `.rpm` for the Fedora and RHEL family, and a pacman package for Arch. Both wrap the identical binary, the identical units and the same staged tree as the `.deb`, so all three formats agree with each other and with the runtime.
 
 Both also come from the release server as real repositories, an rpm-md tree and a pacman database. The same one command adds the source for this system and installs through it, so there is nothing to copy by hand:
 
@@ -194,16 +202,13 @@ Both also come from the release server as real repositories, an rpm-md tree and 
 curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-Behind the one command the setup is Docker's own. On the rpm side the installer only registers the `easysb.repo` the source publishes; that file carries the `baseurl`, `gpgcheck`, `repo_gpgcheck` and the `gpgkey` URL together, so the package manager fetches and trusts the signing key by itself on the first install and no separate key import is needed. The two dnf generations register it differently, each chosen by which command exists: dnf5 uses its built-in `config-manager addrepo --from-repofile`, dnf4 uses `config-manager --add-repo` from `dnf-plugins-core`, and a yum-only system uses `yum-config-manager --add-repo`. `gpgcheck` verifies every package and `repo_gpgcheck` verifies `repomd.xml` against its `repomd.xml.asc`, so the entry refuses an unsigned or altered file. On the pacman side the installer imports `pacman/easysb.asc`, locally trusts it and writes the `[easysb]` block; pacman then verifies the database (`DatabaseRequired`) and each package (`Required`) against that key.
+The rpm tree is split the way Docker's is. Each distribution has one directory, `linux/centos`, `linux/rhel`, `linux/rocky` or `linux/fedora`, carrying a single `easysb.repo` and the armored `gpg` key; the packages themselves sit under `linux/<distro>/<release>/<basearch>/stable`, so `linux/centos/9/x86_64/stable` and `linux/fedora/42/aarch64/stable` are the shapes. The `easysb.repo` the installer registers carries the `baseurl`, `gpgcheck` and the `gpgkey` URL together, so the package manager fetches and trusts the signing key by itself on the first install and no separate key import is needed. The two dnf generations register it differently, each chosen by which command exists: dnf5 uses its built-in `config-manager addrepo --from-repofile`, dnf4 uses `config-manager --add-repo` from `dnf-plugins-core`, and a yum-only system uses `yum-config-manager --add-repo`; then `makecache` and the install. Each `.rpm` carries the release in its version, `5.0.0-1.el9` and `5.0.0-1.fc42`, and CentOS, RHEL and Rocky share one `el9` build, so one file serves all three. On the pacman side the installer imports `pacman/easysb.asc`, locally trusts it and writes the `[easysb]` block; pacman then verifies the database (`DatabaseRequired`) and each package (`Required`) against that key.
 
 Single files are still on the release page if you prefer to install by hand:
 
 ```bash
 # Fedora / RHEL (dnf installs the dependencies too)
 sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
-
-# openSUSE
-sudo zypper install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
 
 # Arch
 sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.pkg.tar.zst
@@ -447,8 +452,8 @@ numbers come from — including why there is no geekbench or fio — is in
 | Validation | `easysb core check -c <config>` builds the configuration with the same engine that would serve it, which is what the deploy path runs before restarting |
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
 | Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make tarball-asset`, which read `release/TAGS`) and publishes one release, tagged and named `v<VERSION>` |
-| Packages | `make deb`, `make rpm` and `make pacman` wrap the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` and `sb --print-unit`) |
-| Sources | `make repo` lays the same files out as apt / rpm / pacman / bin trees and the release workflow syncs them to the release server with FTP-Deploy-Action; `packaging/server/` holds the one-shot provisioning script and the Caddy browse template the landing page is rendered from, so the site root is the directory listing plus the install commands |
+| Packages | `make deb`, `make rpm` and `make pacman` wrap the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` and `sb --print-unit`); `packaging/repo/packages.sh` builds the per-distribution variants the sources carry (`make repo-packages`) |
+| Sources | `make repo` builds those packages and lays them out as a Docker-shaped `linux/` tree plus pacman and bin, and the release workflow syncs it to the release server with FTP-Deploy-Action; `packaging/repo/index.sh` writes the indexes and signs them, and `packaging/server/` holds the one-shot provisioning script and the Caddy browse template the landing page is rendered from, so the site root is the directory listing plus the install commands |
 
 ---
 
@@ -463,8 +468,8 @@ make
 make check
 make dist
 
-# Package the .deb / .rpm / pacman files, then lay out the apt / rpm / pacman / bin
-# sources the release server serves
+# Package the .deb / .rpm / pacman files, then build the per-distribution packages and
+# lay out the linux / pacman / bin sources the release server serves
 make deb
 make rpm
 make pacman

@@ -474,6 +474,63 @@ install_auto() {
 # client only registers a file the source publishes, and the package manager fetches and
 # trusts the key on the first install, so the script never imports a key on its own.
 
+# 源按发行版分目录，和 Docker 官方源一样：apt 是 linux/<发行版> 下按套件分，rpm 是
+# linux/<发行版>/<发行版号>/<基架>。所以先算出这台机器对应哪个目录、哪条套件，只认我们
+# 真出过包的发行版；表里没有的系统没有对应目录，auto 会退回发布压缩包，而不是留下一份取
+# 不到东西的源。发行版目录与套件要和 Makefile 的 DEB_SUITES / RPM_TREES 保持一致。
+# The source is split per distribution like Docker's official one: apt under linux/<distro>
+# per suite, rpm under linux/<distro>/<release>/<basearch>. So work out this machine's
+# directory and suite first, and recognise only the distributions we publish; a system that
+# is not in the table has no directory, so auto falls back to the release tarball instead of
+# leaving a source that cannot be fetched. Distro directories and suites must match the
+# Makefile's DEB_SUITES / RPM_TREES.
+REPO_APT_DISTRO=''; REPO_APT_SUITE=''
+REPO_RPM_DISTRO=''; REPO_RPM_RELEASE=''
+
+repo_coords() {
+  local id='' vid='' major=''
+  REPO_APT_DISTRO=''; REPO_APT_SUITE=''
+  REPO_RPM_DISTRO=''; REPO_RPM_RELEASE=''
+  [ -r /etc/os-release ] || return 1
+  id="$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-}")"
+  vid="$(. /etc/os-release 2>/dev/null; printf '%s' "${VERSION_ID:-}")"
+
+  case "$id:$vid" in
+    debian:12)    REPO_APT_DISTRO='debian'; REPO_APT_SUITE='bookworm' ;;
+    debian:13)    REPO_APT_DISTRO='debian'; REPO_APT_SUITE='trixie' ;;
+    ubuntu:22.04) REPO_APT_DISTRO='ubuntu'; REPO_APT_SUITE='jammy' ;;
+    ubuntu:24.04) REPO_APT_DISTRO='ubuntu'; REPO_APT_SUITE='noble' ;;
+  esac
+
+  case "$id" in
+    fedora)
+      case "$vid" in
+        41|42) REPO_RPM_DISTRO='fedora'; REPO_RPM_RELEASE="$vid" ;;
+      esac
+      ;;
+    centos|rhel|rocky|almalinux|ol)
+      # 目录只发 centos / rhel / rocky 三家，同一份 rpm 三方共用，所以兼容发行版
+      # （AlmaLinux、Oracle Linux）挂到 rhel 目录下，release 取 VERSION_ID 的主版本号。
+      # Only centos / rhel / rocky exist as directories and they share one rpm, so the
+      # compatible distributions (AlmaLinux, Oracle Linux) attach to the rhel directory and
+      # the release is the major of VERSION_ID.
+      major="${vid%%.*}"
+      case "$major" in
+        9|10)
+          case "$id" in
+            centos) REPO_RPM_DISTRO='centos' ;;
+            rocky)  REPO_RPM_DISTRO='rocky' ;;
+            *)      REPO_RPM_DISTRO='rhel' ;;
+          esac
+          REPO_RPM_RELEASE="$major"
+          ;;
+      esac
+      ;;
+  esac
+
+  [ -n "$REPO_APT_SUITE" ] || [ -n "$REPO_RPM_RELEASE" ]
+}
+
 # apt 的架构名（amd64、armhf、arm64）与 Go 的 GOARCH 不是一套写法；Docker 在这里问的是
 # dpkg，没有 dpkg 时才退回本地映射。
 # apt architecture names (amd64, armhf, arm64) are not GOARCH; Docker asks dpkg here and
@@ -493,16 +550,18 @@ debian_arch() {
 }
 
 # apt 完全照 Docker 的写法：armored 公钥落到 /etc/apt/keyrings/easysb.asc，源写进
-# /etc/apt/sources.list.d/easysb.list，一行 deb 里同时给出 arch 与 signed-by。我们的源是
-# 扁平的（Release 就在 /apt 根下），所以套件写 ./，Docker 那种按发行版代号分目录的源用不上。
+# /etc/apt/sources.list.d/easysb.list，一行 deb 里同时给出 arch、signed-by、发行版目录与
+# 套件，与 Docker 的 `deb [...] $URL/linux/ubuntu noble stable` 逐字同形。
 # The apt source follows Docker's recipe exactly: the armored key lands in
 # /etc/apt/keyrings/easysb.asc and the source in /etc/apt/sources.list.d/easysb.list, one deb
-# line carrying arch and signed-by together. This source is flat (Release sits at /apt), so
-# the suite is ./ rather than Docker's per-release codename directory.
+# line carrying arch, signed-by, the distribution directory and the suite, character for
+# character like Docker's `deb [...] $URL/linux/ubuntu noble stable`.
 apt_add_repo() {
   local key='/etc/apt/keyrings/easysb.asc'
   local list='/etc/apt/sources.list.d/easysb.list'
   local arch tmpkey entry
+
+  [ -n "$REPO_APT_SUITE" ] || die "$(say "这个发行版还没有 apt 源: ${OS_ID}" "no apt source for this distribution: ${OS_ID}")"
 
   arch="$(debian_arch)"
   as_root env DEBIAN_FRONTEND=noninteractive apt-get -qq update >/dev/null
@@ -513,17 +572,17 @@ apt_add_repo() {
 
   as_root install -m 0755 -d /etc/apt/keyrings
   tmpkey="$(mktemp)"
-  if curl -fsSL --connect-timeout 15 "$REPO_URL/apt/easysb.asc" -o "$tmpkey" 2>/dev/null && [ -s "$tmpkey" ]; then
+  if curl -fsSL --connect-timeout 15 "$REPO_URL/linux/$REPO_APT_DISTRO/gpg" -o "$tmpkey" 2>/dev/null && [ -s "$tmpkey" ]; then
     as_root install -m 0644 "$tmpkey" "$key"
     as_root chmod a+r "$key"
     ok "$(say '已安装签名密钥' 'signing key installed'): $key"
-    entry="deb [arch=${arch} signed-by=${key}] ${REPO_URL}/apt ./"
+    entry="deb [arch=${arch} signed-by=${key}] ${REPO_URL}/linux/${REPO_APT_DISTRO} ${REPO_APT_SUITE} stable"
   else
     # 拿不到公钥时退回信任该源：HTTPS 仍保证传输不被替换，只是不校验索引签名。
     # Without the public key fall back to trusting the source: HTTPS still protects the
     # transport, only the index signature goes unchecked.
     warn "$(say '未取到签名密钥，改用信任该源' 'no signing key, trusting the source instead')"
-    entry="deb [arch=${arch} trusted=yes] ${REPO_URL}/apt ./"
+    entry="deb [arch=${arch} trusted=yes] ${REPO_URL}/linux/${REPO_APT_DISTRO} ${REPO_APT_SUITE} stable"
   fi
   rm -f "$tmpkey"
 
@@ -537,20 +596,22 @@ apt_add_repo() {
   as_root env DEBIAN_FRONTEND=noninteractive apt-get -y -qq install easysb
 }
 
-# rpm 源同样照 Docker 的写法：只登记源自己发布的 easysb.repo，公钥写在那份文件的 gpgkey=
-# 上，由包管理器第一次安装时自己取回并信任，脚本从不单独导入密钥。dnf5、dnf4、yum 三代的
-# 登记命令互不通用，按命令是否存在各走各的；登记前先删掉同名文件，重跑不会叠加。装包时
-# Docker 有 dnf 就用 dnf（哪怕登记走的是 dnf5），没有才用 yum，这里跟着它。
-# The rpm source also follows Docker's recipe: only the easysb.repo the source publishes is
-# registered, and the public key lives in that file's gpgkey= entry, fetched and trusted by
-# the package manager on the first install; the script never imports a key itself. The three
-# generations dnf5, dnf4 and yum take three different registration commands, chosen by which
-# command exists, and the target file is removed first so a re-run replaces it. For the
-# install step Docker reaches for dnf whenever dnf exists, even when registration went
+# rpm 源同样照 Docker 的写法：只登记源自己发布的 linux/<发行版>/easysb.repo，公钥写在那份
+# 文件的 gpgkey= 上，由包管理器第一次安装时自己取回并信任，脚本从不单独导入密钥。dnf5、
+# dnf4、yum 三代的登记命令互不通用，按命令是否存在各走各的；登记前先删掉同名文件，重跑不会
+# 叠加。装包时 Docker 有 dnf 就用 dnf（哪怕登记走的是 dnf5），没有才用 yum，这里跟着它。
+# The rpm source also follows Docker's recipe: only the linux/<distro>/easysb.repo the source
+# publishes is registered, and the public key lives in that file's gpgkey= entry, fetched and
+# trusted by the package manager on the first install; the script never imports a key itself.
+# The three generations dnf5, dnf4 and yum take three different registration commands, chosen
+# by which command exists, and the target file is removed first so a re-run replaces it. For
+# the install step Docker reaches for dnf whenever dnf exists, even when registration went
 # through dnf5, and only falls back to yum without it.
 rpm_add_repo() {
-  local repo_file_url="$REPO_URL/easysb.repo"
+  local repo_file_url="$REPO_URL/linux/$REPO_RPM_DISTRO/easysb.repo"
   local pkg_manager pkg_flags
+
+  [ -n "$REPO_RPM_RELEASE" ] || die "$(say "这个发行版还没有 rpm 源: ${OS_ID}" "no rpm source for this distribution: ${OS_ID}")"
 
   case "$PKG_MGR" in
     dnf|yum)
@@ -575,16 +636,6 @@ rpm_add_repo() {
       as_root "$pkg_manager" makecache
       # shellcheck disable=SC2086
       as_root $pkg_manager $pkg_flags install easysb
-      ;;
-    zypper)
-      # openSUSE 不在 Docker 的支持列表里，沿用 zypper 自己的写法：先删旧定义再 addrepo，
-      # --gpg-auto-import-keys 让 refresh 顺带把公钥收进本地密钥环。
-      # openSUSE is not in Docker's supported list, so this keeps zypper's own recipe: drop
-      # the old definition, add the repo, and let --gpg-auto-import-keys take the key in.
-      as_root zypper -n removerepo easysb >/dev/null 2>&1 || true
-      as_root zypper -n addrepo -f "${REPO_URL}/rpm/\$basearch" easysb
-      as_root zypper -n --gpg-auto-import-keys refresh easysb
-      as_root zypper -n install easysb
       ;;
     *) die "$(say '这个系统没有可用的 RPM 包管理器' 'no RPM package manager on this system')" ;;
   esac
@@ -634,23 +685,32 @@ EOF
 install_repo() {
   log "$(say '添加软件源并安装' 'Adding the package source and installing')"
   dim "repo: $REPO_URL"
+  # repo 方式不经过 has_repo_recipe，坐标在这里算一次；不支持的发行版由下面各自的分支报错。
+  # The repo method does not go through has_repo_recipe, so resolve the coordinates here;
+  # an unsupported distribution is reported by the branch below.
+  repo_coords || true
   case "$PKG_MGR" in
     apt)    apt_add_repo ;;
-    dnf|yum|zypper) rpm_add_repo ;;
+    dnf|yum) rpm_add_repo ;;
     pacman) pacman_add_repo ;;
     *) die "$(say "这个系统（$PKG_MGR）没有对应的软件源写法" "no repository recipe for $PKG_MGR")" ;;
   esac
   ok "$(say '安装完成' 'installed')"
 }
 
-# auto 走 Docker 的默认路线：本机有软件源写法就先配源再装。没有写法的系统（apk / 未知）
-# 交给发布压缩包，这样一键命令在任何系统上都成立。
+# auto 走 Docker 的默认路线：本机既有软件源写法、又是我们出过包的发行版，就先配源再装。
+# 其余情况交给发布压缩包，这样一键命令在任何系统上都成立。openSUSE 也归到压缩包：我们的
+# rpm 源只按 Fedora / RHEL 系分目录，与 Docker 一样不支持它。
 # auto takes Docker's default route: set up the package source and install when this machine
-# has a recipe for one. A system without one (apk, or an unknown manager) is left to the
-# release tarball, so the one-command install holds on every system.
+# has a recipe for one and runs a distribution we publish. Everything else is left to the
+# release tarball, so the one-command install holds on every system. openSUSE counts as
+# everything else: like Docker, our rpm source is split for the Fedora / RHEL family only.
 has_repo_recipe() {
+  repo_coords || return 1
   case "$PKG_MGR" in
-    apt|dnf|yum|zypper|pacman) return 0 ;;
+    apt) [ -n "$REPO_APT_SUITE" ] ;;
+    dnf|yum) [ -n "$REPO_RPM_RELEASE" ] ;;
+    pacman) return 0 ;;
     *) return 1 ;;
   esac
 }
