@@ -328,13 +328,19 @@ jobs:
           local-dir: ./dist/repo/
           server-dir: ./
           log-level: standard
-          # 先把站点根清空再上传：树从扁平的 apt/ 与 rpm/<架构>/ 换成分发行版的 linux/，
-          # 同步又只增不改，不这么做旧路径会与新的并存。站点根只有这套源，清空是安全的。
-          # Wipe the site root before uploading: the tree moved from a flat apt/ and
-          # rpm/<arch>/ to the per-distribution linux/, and the sync only ever adds, so old
-          # paths would sit beside the new ones. The root holds nothing but this source, so
-          # the wipe is safe.
-          dangerous-clean-slate: true
+          # 换布局时不必清空站点根：动作记录了上一轮上传过的文件，本地没有的会在这一轮
+          # 删掉，扁平的 apt/ 与 rpm/<架构>/ 就是这样退场的。清空反而每次都要重传整棵树，
+          # 一次超时就会把站点留在半截状态（v5.0.0 的第一次分发行版发布正是如此）。
+          # A layout change does not need a wipe: the action tracks what the last run
+          # uploaded and deletes remote files that are gone locally, which is how the flat
+          # apt/ and rpm/<arch>/ retire. Wiping forces a full re-upload every time, and one
+          # timeout then leaves the site half-published (as v5.0.0's first per-distribution
+          # release did).
+          #
+          # 整棵树有几千个小文件，默认 30 秒的操作超时会在批量上传中途断开控制连接。
+          # The tree is thousands of small files; the 30-second default operation timeout
+          # drops the control connection mid-upload.
+          timeout: 900000
           exclude: |
             **/.git*
             **/.git*/**
