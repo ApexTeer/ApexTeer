@@ -63,6 +63,10 @@ GPG_KEY_ID     ?=
 # 口令保护的密钥：口令从 0600 文件读入，不进进程列表 / a passphrase-protected key is
 # unlocked from a 0600 file, so the passphrase never shows up in a process list.
 GPG_PASSPHRASE_FILE ?=
+# 三份源共用的一组 gpg 参数：--batch 供 CI 无人值守，loopback 让口令从文件读入。
+# One set of gpg options shared by the three sources: --batch for unattended CI, and
+# loopback so a passphrase is read from a file.
+GPG_BATCH      := --batch --yes --pinentry-mode loopback
 
 # 软件源目录树 / the repository tree: apt is flat, rpm and pacman are per architecture
 # and bin holds the release tarballs.
@@ -304,13 +308,20 @@ packages-asset: ## 打包单个架构的全部格式到 dist/（ASSET=…）
 # per-architecture rpm and pacman trees, and bin for the release tarballs. install.sh
 # knows only these four paths.
 #
-# 公钥必须是非 armored 的二进制 keyring：apt 的 Signed-By 走 apt-key/gpgv，armored 文件
-# 会被拒（读不出里面的 key）。Release.gpg 与 InRelease 两个签名才是 armored。
-# The public key must be a non-armored binary keyring: apt verifies Signed-By through
-# apt-key/gpgv, which rejects an armored file. The two signatures stay armored.
+# 三份索引的署名密钥是同一个，各源只按本生态的惯例换文件名与编码：apt 的公钥必须是非
+# armored 的二进制 keyring（Signed-By 走 apt-key/gpgv，armored 读不出里面的 key），
+# Release.gpg 与 InRelease 才是 armored；rpm-md 与 pacman 发 armored 公钥，各自的签名
+# 则按客户端查找的名字与编码放。
+# The three indexes are signed by one key; each source only changes the file name and
+# encoding its ecosystem expects: apt's public key must be a non-armored binary keyring
+# (Signed-By goes through apt-key/gpgv, which cannot read an armored file) with armored
+# Release.gpg and InRelease, while the rpm-md and pacman trees publish an armored key and
+# keep the signature encodings those clients look for.
 apt-index: ## 生成 apt 扁平源到 dist/repo/apt（设置 GPG_KEY_ID 时签名）
 	@command -v apt-ftparchive >/dev/null 2>&1 || { echo "apt-ftparchive 未安装 / missing: apt-get install -y apt-utils"; exit 1; }
-	@set -e; apt="$(REPO_DIR)/apt"; rm -rf "$$apt"; mkdir -p "$$apt"; \
+	@set -e; sign='$(GPG_BATCH)'; \
+	if [ -n "$(GPG_PASSPHRASE_FILE)" ]; then sign="$$sign --passphrase-file $(GPG_PASSPHRASE_FILE)"; fi; \
+	apt="$(REPO_DIR)/apt"; rm -rf "$$apt"; mkdir -p "$$apt"; \
 	cp -f $(DIST)/*.deb "$$apt/"; \
 	cd "$$apt"; \
 	apt-ftparchive packages . | sed 's|^Filename: \./|Filename: |' > Packages; \
@@ -324,21 +335,48 @@ apt-index: ## 生成 apt 扁平源到 dist/repo/apt（设置 GPG_KEY_ID 时签�
 		-o APT::FTPArchive::Release::Description="$(PKG_DESC)" \
 		release . > Release; \
 	if [ -n "$(GPG_KEY_ID)" ]; then \
-		sign="--batch --yes --pinentry-mode loopback"; \
-		if [ -n "$(GPG_PASSPHRASE_FILE)" ]; then sign="$$sign --passphrase-file $(GPG_PASSPHRASE_FILE)"; fi; \
 		gpg $$sign --armor --detach-sign -u "$(GPG_KEY_ID)" -o Release.gpg Release; \
 		gpg $$sign --clearsign -u "$(GPG_KEY_ID)" -o InRelease Release; \
 		gpg --batch --yes --export "$(GPG_KEY_ID)" > $(PKG_NAME).gpg; \
 	fi; \
 	ls -lh .
 
-rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（需要 createrepo_c）
+# rpm 要签两处：包本身（gpgcheck）与每个架构目录的 repodata/repomd.xml（repo_gpgcheck）。
+# --addsign 里的 __gpg_sign_cmd 换掉 rpm 默认的 gpg 调用，好让口令同样从文件读入；
+# rpm 自己不查 PATH，发行版宏里的 %{__gpg} 还可能指向本机没装的 gpg2，所以先用
+# command -v 找到 gpg，再把它的绝对路径写进这条命令。createrepo_c 必须在签名之后跑，
+# 否则索引里的校验和与签名后的包对不上。
+# rpm signs two things: each package (gpgcheck) and repodata/repomd.xml per architecture
+# (repo_gpgcheck). The __gpg_sign_cmd override replaces rpm's own gpg call so the
+# passphrase is read from the same file. rpm does not search PATH, and a distro's
+# %{__gpg} may name a gpg2 that is not installed, so the absolute path is resolved with
+# command -v first. createrepo_c must run after signing, or the checksums in the index no
+# longer match the signed packages.
+rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（设置 GPG_KEY_ID 时签名，需要 createrepo_c）
 	@command -v createrepo_c >/dev/null 2>&1 || { echo "createrepo_c 未安装 / missing: apt-get install -y createrepo-c"; exit 1; }
-	@set -e; for arch in $(RPM_ARCH_DIRS); do \
+	@set -e; sign='$(GPG_BATCH)'; \
+	if [ -n "$(GPG_PASSPHRASE_FILE)" ]; then sign="$$sign --passphrase-file $(GPG_PASSPHRASE_FILE)"; fi; \
+	if [ -n "$(GPG_KEY_ID)" ]; then \
+		command -v rpm >/dev/null 2>&1 || { echo "rpm 未安装 / missing: apt-get install -y rpm"; exit 1; }; \
+		gpg_bin="$$(command -v gpg)"; \
+		mkdir -p "$(REPO_DIR)/rpm"; \
+		gpg --batch --yes --armor --export "$(GPG_KEY_ID)" > "$(REPO_DIR)/rpm/RPM-GPG-KEY-easysb"; \
+	fi; \
+	for arch in $(RPM_ARCH_DIRS); do \
 		dir="$(REPO_DIR)/rpm/$$arch"; \
 		rm -rf "$$dir"; mkdir -p "$$dir"; \
+		pkg="$$dir/$(PKG_NAME)_$(VERSION)_linux_$$arch.rpm"; \
 		cp -f "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$$arch.rpm" "$$dir/"; \
+		if [ -n "$(GPG_KEY_ID)" ]; then \
+			rpm --addsign --define "_gpg_name $(GPG_KEY_ID)" \
+				--define "__gpg_sign_cmd $$gpg_bin $$sign -u %{_gpg_name} --output %{__signature_filename} --detach-sign %{__plaintext_filename}" \
+				"$$pkg"; \
+		fi; \
 		createrepo_c --quiet "$$dir"; \
+		if [ -n "$(GPG_KEY_ID)" ]; then \
+			gpg $$sign --armor --detach-sign -u "$(GPG_KEY_ID)" \
+				-o "$$dir/repodata/repomd.xml.asc" "$$dir/repodata/repomd.xml"; \
+		fi; \
 	done
 
 # repo-add 把 `easysb.db` 留成指向 `.db.tar.gz` 的符号链接。上传走的是普通 FTP，
@@ -347,17 +385,39 @@ rpm-index: ## 生成 rpm-md 源到 dist/repo/rpm/<架构>（需要 createrepo_c�
 # repo-add leaves `easysb.db` as a symlink to `easysb.db.tar.gz`, and the FTP upload
 # skips symlinks, so each is replaced with a real file: written as .new, then mv over
 # the link. The `.tar.gz` itself is kept as well.
-pacman-index: ## 生成 pacman 源到 dist/repo/pacman/<架构>（需要 repo-add）
+#
+# pacman 也签两处：每个包旁的 `.sig`，以及数据库 `easysb.db` 的 `.sig`。签名自己做而不是
+# 交给 `repo-add --sign`，因为那把签名推给 gpg 时没有传口令的入口，带口令的密钥会卡住；
+# 自己签完把同一份数据库签名挂到 `.db.sig` 与 `.db.tar.gz.sig` 两个名字上，镜像上两份都在。
+# pacman signs two things as well: the `.sig` next to each package, and one for the
+# database `easysb.db`. Signing is done here rather than through `repo-add --sign`, which
+# gives gpg no way to take a passphrase and would block on a protected key; the database
+# signature is then published under both the `.db.sig` and `.db.tar.gz.sig` names.
+pacman-index: ## 生成 pacman 源到 dist/repo/pacman/<架构>（设置 GPG_KEY_ID 时签名，需要 repo-add）
 	@command -v repo-add >/dev/null 2>&1 || { echo "repo-add 未安装 / missing: pacman/libarchive 提供的 repo-add"; exit 1; }
-	@set -e; for arch in $(PACMAN_ARCH_DIRS); do \
+	@set -e; sign='$(GPG_BATCH)'; \
+	if [ -n "$(GPG_PASSPHRASE_FILE)" ]; then sign="$$sign --passphrase-file $(GPG_PASSPHRASE_FILE)"; fi; \
+	if [ -n "$(GPG_KEY_ID)" ]; then \
+		mkdir -p "$(REPO_DIR)/pacman"; \
+		gpg --batch --yes --armor --export "$(GPG_KEY_ID)" > "$(REPO_DIR)/pacman/easysb.asc"; \
+	fi; \
+	for arch in $(PACMAN_ARCH_DIRS); do \
 		dir="$(REPO_DIR)/pacman/$$arch"; \
 		rm -rf "$$dir"; mkdir -p "$$dir"; \
+		pkg="$$dir/$(PKG_NAME)_$(VERSION)_linux_$$arch.pkg.tar.zst"; \
 		cp -f "$(DIST)/$(PKG_NAME)_$(VERSION)_linux_$$arch.pkg.tar.zst" "$$dir/"; \
+		if [ -n "$(GPG_KEY_ID)" ]; then \
+			gpg $$sign --detach-sign -u "$(GPG_KEY_ID)" "$$pkg"; \
+		fi; \
 		( cd "$$dir" && repo-add --quiet "$(PKG_NAME).db.tar.gz" *.pkg.tar.zst ); \
 		for part in db files; do \
 			cp -f "$$dir/$(PKG_NAME).$$part.tar.gz" "$$dir/$(PKG_NAME).$$part.new"; \
 			mv -f "$$dir/$(PKG_NAME).$$part.new" "$$dir/$(PKG_NAME).$$part"; \
 		done; \
+		if [ -n "$(GPG_KEY_ID)" ]; then \
+			gpg $$sign --detach-sign -u "$(GPG_KEY_ID)" -o "$$dir/$(PKG_NAME).db.sig" "$$dir/$(PKG_NAME).db"; \
+			cp -f "$$dir/$(PKG_NAME).db.sig" "$$dir/$(PKG_NAME).db.tar.gz.sig"; \
+		fi; \
 	done
 
 # 站点页面不走静态 index.html：置备脚本让 Caddy 用 dist/repo 里这份模板渲染目录列表，

@@ -494,7 +494,26 @@ EOF
   as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y easysb
 }
 
+# 源带签名时按本格式的写法打开校验：包签名（gpgcheck）与 repomd.xml.asc（repo_gpgcheck），
+# 公钥先导入 rpmdb，这样 dnf 与 zypper 都能认。公钥不在时退回不校验并说明原因，而不是让
+# dnf 半路报 GPG check FAILED。
+# When the source is signed, both checks go on the way this format expects: package
+# signatures (gpgcheck) and repomd.xml.asc (repo_gpgcheck). The key is imported into the
+# rpmdb so both dnf and zypper accept it. Without the key the entry stays permissive and
+# says so, instead of letting dnf fail midway with GPG check FAILED.
 rpm_add_repo() {
+  local tmpkey check=0 keyline=''
+  tmpkey="$(mktemp)"
+  if curl -fsSL --connect-timeout 15 "$REPO_URL/rpm/RPM-GPG-KEY-easysb" -o "$tmpkey" 2>/dev/null && [ -s "$tmpkey" ] \
+    && as_root rpm --import "$tmpkey" 2>/dev/null; then
+    check=1
+    keyline="gpgkey=${REPO_URL}/rpm/RPM-GPG-KEY-easysb"
+    ok "$(say '已导入签名密钥，开启 GPG 校验' 'signing key imported, GPG checking on')"
+  else
+    warn "$(say '未取到可用的签名密钥，本源的 GPG 校验保持关闭' 'no usable signing key, GPG checking stays off for this source')"
+  fi
+  rm -f "$tmpkey"
+
   as_root mkdir -p /etc/yum.repos.d
   as_root tee /etc/yum.repos.d/easysb.repo >/dev/null <<EOF
 [easysb]
@@ -502,8 +521,9 @@ name=EasySB
 baseurl=${REPO_URL}/rpm/\$basearch
 enabled=1
 type=rpm-md
-gpgcheck=0
-repo_gpgcheck=0
+gpgcheck=${check}
+repo_gpgcheck=${check}
+${keyline}
 EOF
   ok "/etc/yum.repos.d/easysb.repo"
 
@@ -531,12 +551,36 @@ EOF
 }
 
 pacman_add_repo() {
-  local conf='/etc/pacman.conf'
+  local conf='/etc/pacman.conf' tmpkey fpr siglevel='Optional TrustAll'
+  tmpkey="$(mktemp)"
+  if curl -fsSL --connect-timeout 15 "$REPO_URL/pacman/easysb.asc" -o "$tmpkey" 2>/dev/null && [ -s "$tmpkey" ]; then
+    fpr="$(gpg --batch --with-colons --import-options show-only --import "$tmpkey" 2>/dev/null \
+      | awk -F: '/^fpr:/{print $10; exit}' || true)"
+    # pacman 只在本地信任过这把密钥后才认它的签名，所以导入之后还要 lsign 一次；指纹由这份
+    # 公钥自己算出来，不写死在脚本里。
+    # pacman trusts a signature only after the key has been locally signed, so the import is
+    # followed by an lsign. The fingerprint is read from the key itself, never hardcoded.
+    if [ -n "$fpr" ]; then
+      if [ ! -d /etc/pacman.d/gnupg ]; then
+        as_root pacman-key --init >/dev/null 2>&1 || true
+      fi
+      if as_root pacman-key --add "$tmpkey" >/dev/null 2>&1 && as_root pacman-key --lsign-key "$fpr" >/dev/null 2>&1; then
+        siglevel='Required DatabaseRequired'
+        ok "$(say '已导入并本地信任签名密钥' 'signing key imported and locally trusted'): $fpr"
+      else
+        warn "$(say '签名密钥导入失败，本源的校验保持宽松' 'could not import the signing key, this source stays permissive')"
+      fi
+    fi
+  else
+    warn "$(say '未取到签名密钥，本源的校验保持宽松' 'no signing key, this source stays permissive')"
+  fi
+  rm -f "$tmpkey"
+
   if ! grep -qE '^\[easysb\]' "$conf" 2>/dev/null; then
     as_root tee -a "$conf" >/dev/null <<EOF
 
 [easysb]
-SigLevel = Optional TrustAll
+SigLevel = ${siglevel}
 Server = ${REPO_URL}/pacman/\$arch
 EOF
     ok "$(say '已写入' 'written'): $conf"
