@@ -24,6 +24,21 @@ VERSION := $(shell tr -d '[:space:]' < VERSION 2>/dev/null)
 # COMMIT can be overridden on the command line (CI passes the full GITHUB_SHA).
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 
+# 这两处文件读不到就地报错。空标签会静默丢掉 with_v2ray_api 之类的能力位，空版本号
+# 会产出 easysb__linux_amd64.deb 这种畸形资产名——两者都是发出去之后才发现的问题，
+# 在这里停下比发一个坏包便宜。VERSION 缺失时 2>/dev/null 正好把原因也吞掉，所以这
+# 个守卫是唯一会说话的地方。
+# Both of these have to be readable, so they fail here rather than downstream: empty
+# tags silently drop capability bits such as with_v2ray_api, and an empty version yields
+# asset names like easysb__linux_amd64.deb. The 2>/dev/null above swallows the reason
+# VERSION could not be read, which makes this guard the only thing that can speak.
+ifeq ($(strip $(TAGS)),)
+$(error release/TAGS is missing or empty: the build tag set is defined there)
+endif
+ifeq ($(strip $(VERSION)),)
+$(error VERSION is missing or empty: it is the release number embedded in the binary)
+endif
+
 # 本地构建保留符号表，便于调试；发布构建去掉，与发布工作流一致。
 # A local build keeps symbols for debugging; a release build strips them, matching CI.
 LDFLAGS         := $(if $(strip $(COMMIT)),-X main.commit=$(COMMIT))
@@ -192,7 +207,8 @@ test-plain: ## 不带标签运行测试（覆盖无流量统计的构建）
 test-race: ## 带竞态检测运行测试
 	$(GO) test -tags "$(TAGS)" -race ./...
 
-vet: ## go vet 静态检查
+vet: ## go vet 静态检查（发布标签与无标签各一遍）
+	$(GO) vet -tags "$(TAGS)" ./...
 	$(GO) vet ./...
 
 fmt: ## 就地格式化

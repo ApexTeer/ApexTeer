@@ -4,7 +4,7 @@ package bench
 
 // freeSpace cannot answer off Linux, and says so rather than guessing. The disk benchmark
 // then relies on the write itself failing, which is a clear error too, just later.
-func freeSpace(dir string) (int64, bool) {
+func freeSpace(_ string) (int64, bool) {
 	return 0, false
 }
 

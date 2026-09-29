@@ -25,7 +25,7 @@ func issueCertAction() actionFunc {
 		lang := a.lang
 
 		startDomainPrompt := func(email string) {
-			a.openForm(lang.T("domain_issue"), lang.T("domain_prompt"), "", "", func(a *App, value string) (tea.Cmd, error) {
+			a.openForm(lang.T("domain_issue"), lang.T("domain_prompt"), "", "", func(_ *App, value string) (tea.Cmd, error) {
 				domain := strings.TrimSpace(value)
 				if domain == "" {
 					return nil, errors.New(lang.T("cancelled"))
@@ -40,7 +40,7 @@ func issueCertAction() actionFunc {
 			startDomainPrompt(saved)
 			return nil
 		}
-		a.openForm(lang.T("domain_email"), lang.T("domain_email"), "", "", func(a *App, value string) (tea.Cmd, error) {
+		a.openForm(lang.T("domain_email"), lang.T("domain_email"), "", "", func(_ *App, value string) (tea.Cmd, error) {
 			email := strings.TrimSpace(value)
 			if email == "" {
 				return nil, errors.New(lang.T("domain_email_required"))
@@ -248,7 +248,7 @@ func renewTimerAction() actionFunc {
 		if installed {
 			detail = lang.T("domain_timer_on")
 		}
-		a.openForm(lang.T("domain_timer"), domainTimerPrompt(lang, detail), "", "", func(a *App, value string) (tea.Cmd, error) {
+		a.openForm(lang.T("domain_timer"), domainTimerPrompt(lang, detail), "", "", func(_ *App, value string) (tea.Cmd, error) {
 			switch strings.ToLower(strings.TrimSpace(value)) {
 			case "y", "yes":
 				return a.startTask(lang.T("domain_timer"), timerTask(lang, !installed)), nil
@@ -337,7 +337,7 @@ func confirmRemoveCert(a *App, domain string) tea.Cmd {
 	lang := a.lang
 	cfg := state.Load()
 	clearActive := cfg.CertDomain == domain
-	a.openForm(lang.T("domain_remove"), domainRemovePrompt(lang, domain), "", "", func(a *App, value string) (tea.Cmd, error) {
+	a.openForm(lang.T("domain_remove"), domainRemovePrompt(lang, domain), "", "", func(_ *App, value string) (tea.Cmd, error) {
 		switch strings.ToLower(strings.TrimSpace(value)) {
 		case "y", "yes":
 			return a.startTask(lang.T("domain_remove"), removeCertTask(lang, domain, clearActive)), nil

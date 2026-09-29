@@ -25,10 +25,23 @@ on:
       - 'packaging/**'
       - 'install.sh'
       - '.github/workflows/easysb-go-release.yml'
+  # A pull request runs the same gate as a push. The jobs that publish - release and
+  # deploy - are held back to a push, so nothing is published from a branch, but the
+  # check, the cross-compile and the packaging all run before the merge rather than
+  # after it. Without this trigger a merged pull request went straight from review to a
+  # published release and to the release server, with no automated gate in between.
+  pull_request:
+    branches:
+      - master
   workflow_dispatch:
 
+# 默认只读：只有 release 作业需要写权限，由它自己声明。deploy 作业拿着服务器口令和
+# GPG 私钥，让它和发布作业共用同一个宽权限令牌没有任何理由。
+# Read-only by default. Only the release job needs to write, and it declares that
+# itself: the deploy job holds the server's password and the signing key, and has no
+# reason to carry the same broad token as the job that publishes.
 permissions:
-  contents: write
+  contents: read
 
 # Only the newest commit may publish, so an older run can never overwrite the
 # release assets after a newer one.
@@ -51,20 +64,34 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
 
       # 构建标签、LD 标志、架构映射都只在 Makefile / release/TAGS 里定义一次：
-      # make test 读 release/TAGS 的标签，make dist-asset 读同一处并盖上提交号。
+      # make check 读 release/TAGS 的标签，make dist-asset 读同一处并盖上提交号。
       # Tags, link flags and the arch mapping live once, in the Makefile and
-      # release/TAGS: make test reads the tags, make dist-asset reads the same file.
-      - name: 单元测试
-        run: make test
+      # release/TAGS: make check reads the tags, make dist-asset reads the same file.
+      #
+      # 关卡就是 make check：gofmt、vet（发布标签与无标签各一遍）和带标签的测试。过去
+      # 这里只跑 make test，于是 AGENTS.md 写成"提交前关卡"的另外两项只在开发者的机器
+      # 上执行过，谁忘了都没有人拦。
+      # The gate is `make check`: gofmt, vet in both tag sets, and the tagged tests. This
+      # step used to run `make test` alone, so the other two thirds of the gate AGENTS.md
+      # calls the pre-commit gate only ever ran on a developer's machine.
+      - name: 提交前关卡
+        run: make check
+
+      # 竞态检测单独一步：它让整套测试慢上几倍，而它要查的是记账循环、订阅服务这类并发
+      # 代码，所以不塞进 make check，留给关卡保持快。
+      # The race detector gets its own step: it multiplies the suite's runtime, and what
+      # it looks for lives in the concurrent code, so it is not folded into make check.
+      - name: 竞态检测
+        run: make test-race
 
       - name: 生成架构矩阵
         id: matrix
@@ -88,10 +115,10 @@ jobs:
         asset: ${{ fromJSON(needs.prepare.outputs.assets) }}
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -100,7 +127,7 @@ jobs:
         run: make tarball-asset ASSET=${{ matrix.asset }} COMMIT=${GITHUB_SHA}
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: easysb-bin-${{ matrix.asset }}
           path: |
@@ -125,16 +152,16 @@ jobs:
         asset: ${{ fromJSON(needs.prepare.outputs.assets) }}
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 下载该架构的二进制
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: easysb-bin-${{ matrix.asset }}
           path: dist
 
       - name: 安装 Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -164,7 +191,7 @@ jobs:
         run: make repo-packages-asset ASSET=${{ matrix.asset }} NO_BUILD=1 REUSE_DIST=1
 
       - name: 上传安装包
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: easysb-packages-${{ matrix.asset }}
           path: |
@@ -179,22 +206,33 @@ jobs:
   # One release carries every asset, tagged and named v<version>, matching sing-box.
   # The packages no longer get a separate `debian` tag: the release server carries the
   # sources instead (see deploy).
+  #
+  # 只有 push 才发布：pull_request 也走这套工作流（构建与打包都要在合并前过一遍），但
+  # 从分支发出一个 release 不是它该做的事。
+  # Only a push publishes. A pull request runs the same workflow so that the build and the
+  # packaging are exercised before the merge, but a branch must never cut a release.
   release:
+    if: github.event_name != 'pull_request'
     needs: [prepare, build, packages]
     runs-on: ubuntu-26.04
+    # 这个作业上传资产并清理旧资产，是唯一需要写权限的地方。
+    # This job uploads the assets and prunes the stale ones: the one place that needs
+    # to write.
+    permissions:
+      contents: write
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 下载全部产物
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: easysb-*
           path: dist
           merge-multiple: true
 
       - name: 发布到 Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           token: ${{ github.token }}
           tag_name: v${{ needs.prepare.outputs.version }}
@@ -258,7 +296,13 @@ jobs:
   #
   # 先跑一次 “Provision the release server” 工作流把服务器准备好，这里才传得上去。
   # Run the "Provision the release server" workflow once before this can upload.
+  #
+  # 同样是 push 才同步：这个作业拿着服务器口令往生产站点 rsync，分支上的任何一次提交
+  # 都不该碰它。
+  # Also push-only: this job rsyncs to the production site with the server's password, and
+  # nothing on a branch may reach it.
   deploy:
+    if: github.event_name != 'pull_request'
     needs: [prepare, release]
     runs-on: ubuntu-26.04
     # 755 MB 的软件源走一条 SSH 连接，首次同步几分钟，之后只传变化；留足余量，慢链路
@@ -268,10 +312,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 下载全部产物
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: easysb-*
           path: dist

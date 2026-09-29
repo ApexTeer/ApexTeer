@@ -1,3 +1,8 @@
+// Command easysb is the panel. One binary is four things: the TUI, which is what it does
+// with no arguments; the node itself (`easysb core run`, which the sing-box service unit
+// starts); the subscription service (`easysb --serve`); and a set of one-shot modes -
+// `--render`, `--tool`, `--unlock`, `--renew-certs`, `--apply-firewall`, `--print-unit` -
+// that exist so a host driven by a script needs no terminal at all.
 package main
 
 import (

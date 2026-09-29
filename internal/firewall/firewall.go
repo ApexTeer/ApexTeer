@@ -24,6 +24,8 @@ const openRCUnitPath = "/etc/init.d/easysb-firewall"
 // Backend identifies the available NAT tooling.
 type Backend string
 
+// The NAT backends this host may have. None means neither tool is installed, which the
+// panel reports rather than treating as a failure.
 const (
 	IPTables Backend = "iptables"
 	NFTables Backend = "nft"
@@ -276,20 +278,39 @@ func RemoveUnit() error {
 	return service.DaemonReload()
 }
 
+// runUnitAction runs the init system's own tool for one unit action. It is a variable
+// so that a test can drive UnitAction's failure path without an init system to fail for
+// real: what such a test is about is that the failure reaches the caller.
+var runUnitAction = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	return cmd.CombinedOutput()
+}
+
 // UnitAction executes a lifecycle action ("enable" or "disable") on the unit.
 func UnitAction(ctx context.Context, action string) error {
 	name, args := "systemctl", []string{action, UnitName + ".service"}
 	if service.Detect() == service.OpenRC {
 		name, args = "rc-update", []string{mapAction(action), UnitName, "default"}
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	out, err := cmd.CombinedOutput()
+	out, err := runUnitAction(ctx, name, args...)
 	if err != nil {
-		_ = out
-		return nil
+		return unitActionError(action, out, err)
 	}
 	return nil
+}
+
+// unitActionError words a failed unit action the way internal/service words one: the
+// tool's own message when it printed one, and the exit status otherwise. The failure has
+// to reach the caller, because an enable that did not take leaves a host whose
+// port-hopping rules are gone after the next reboot while the panel said they were
+// installed.
+func unitActionError(action string, out []byte, err error) error {
+	msg := strings.TrimSpace(string(out))
+	if msg == "" {
+		msg = err.Error()
+	}
+	return errors.New(action + " " + UnitName + ": " + msg)
 }
 
 func mapAction(action string) string {

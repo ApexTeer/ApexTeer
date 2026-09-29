@@ -50,12 +50,12 @@ func RunMemoryWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.
 	// reclaim pages under the benchmark and score the swap, or to get the panel killed.
 	shrinkNote := ""
 	if avail, ok := availableMemoryFunc(); ok {
-		max := avail / memHeadroom
-		if max < minMemBuffer {
+		ceiling := avail / memHeadroom
+		if ceiling < minMemBuffer {
 			return toolbox.Result{}, fmt.Errorf("bench: memory: only %s of memory is available, and at least %s is needed for one buffer", humanSize(avail), humanSize(minMemBuffer))
 		}
-		if int64(n) > max {
-			n = int(max)
+		if int64(n) > ceiling {
+			n = int(ceiling)
 			shrinkNote = fmt.Sprintf("The buffers were shrunk to %s each: the host reports only %s of memory available, and this test holds two buffers at once.", humanSize(int64(n)), humanSize(avail))
 		}
 	}

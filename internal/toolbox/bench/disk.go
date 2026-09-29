@@ -57,8 +57,8 @@ func RunDiskWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.Re
 		if free < minDiskFree {
 			return toolbox.Result{}, fmt.Errorf("bench: disk: %s has %s free, and at least %s is needed to measure anything", dir, humanSize(free), humanSize(minDiskFree))
 		}
-		if max := free / diskShare; size > max {
-			size = max
+		if ceiling := free / diskShare; size > ceiling {
+			size = ceiling
 			shrinkNote = fmt.Sprintf("The test file was shrunk to %s: %s had only %s free, and this tool never takes more than a quarter of it.", humanSize(size), dir, humanSize(free))
 		}
 	}

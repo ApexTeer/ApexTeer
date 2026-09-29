@@ -191,9 +191,9 @@ func firstLine(text string) string {
 		if line == "" {
 			continue
 		}
-		const cap = 200
-		if len(line) > cap {
-			return line[:cap] + "…"
+		const maxLine = 200
+		if len(line) > maxLine {
+			return line[:maxLine] + "…"
 		}
 		return line
 	}

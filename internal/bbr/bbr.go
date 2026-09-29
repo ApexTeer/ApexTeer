@@ -52,6 +52,8 @@ var Qdiscs = []string{"fq", "fq_codel", "fq_pie", "cake"}
 // or the max build that trades some safety margin for throughput.
 type Profile string
 
+// The published kernel flavours. Standard is the default; Max trades safety margin for
+// throughput.
 const (
 	Standard Profile = "standard"
 	Max      Profile = "max"
@@ -178,8 +180,6 @@ func VersionGE(current, required string) bool {
 	return compareVersions(current, required) >= 0
 }
 
-// NewestVersion returns the highest kernel version among release tags, and the
-// architectures that version was published for.
 // NewestVersionFor returns the highest kernel version published for one
 // architecture, or for every architecture when arch is empty. The architecture
 // matters on the install path: a version published for arm64 alone is newer than

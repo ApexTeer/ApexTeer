@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -399,5 +400,64 @@ func TestNetflixRegion(t *testing.T) {
 				t.Errorf("netflixRegion(%q) = %q, want %q", tc.body, got, tc.want)
 			}
 		})
+	}
+}
+
+// gateClient holds every request until release is closed, and counts the calls that got
+// through. A test uses it to tell how many probes actually started: without the count, a
+// run that stopped early and a run that never started look the same.
+type gateClient struct {
+	release chan struct{}
+	started chan struct{}
+	once    sync.Once
+	calls   atomic.Int64
+}
+
+func (c *gateClient) Do(req *http.Request) (*http.Response, error) {
+	c.calls.Add(1)
+	c.once.Do(func() { close(c.started) })
+	<-c.release
+	return &http.Response{
+		StatusCode: http.StatusForbidden,
+		Status:     "403 Forbidden",
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("")),
+		Request:    req,
+	}, nil
+}
+
+// TestCheckStopsQueuedProbesWhenCancelled covers the wait for a concurrency slot. A probe
+// queued behind the limit used to take its turn on a context that was already cancelled,
+// so leaving the 服务解锁状态 page kept the run going to the end instead of ending it.
+//
+// The shape makes it deterministic rather than timing dependent: the one probe that holds
+// the slot is parked inside its request, so no queued probe can acquire the slot until
+// after the context has been cancelled.
+func TestCheckStopsQueuedProbesWhenCancelled(t *testing.T) {
+	probes := Catalogue()
+	if len(probes) < 2 {
+		t.Fatalf("the catalogue holds %d services; this test needs more than one", len(probes))
+	}
+	client := &gateClient{release: make(chan struct{}), started: make(chan struct{})}
+	d := New(Options{Client: client, Concurrency: 1, Timeout: 5 * time.Second})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		d.Check(ctx)
+		close(done)
+	}()
+
+	<-client.started // one probe is in flight, the rest are queued
+	cancel()
+	close(client.release)
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Check did not return after the context was cancelled")
+	}
+	if got := client.calls.Load(); got >= int64(len(probes)) {
+		t.Fatalf("%d requests for %d probes: the queued probes ran on a cancelled context", got, len(probes))
 	}
 }

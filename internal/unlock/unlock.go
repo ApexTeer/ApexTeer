@@ -214,7 +214,16 @@ func (d *Detector) Check(ctx context.Context, ids ...string) []Result {
 		wg.Add(1)
 		go func(i int, p probe) {
 			defer wg.Done()
-			sem <- struct{}{}
+			// Waiting for a slot is itself a reason to stop: a probe queued behind the
+			// concurrency limit used to take its turn on a context that had already
+			// been cancelled, so leaving the 服务解锁状态 page kept the run going to the
+			// end instead of ending it.
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results[i] = p.result(StatusFailed, "", ReasonUnknown, ctx.Err().Error())
+				return
+			}
 			defer func() { <-sem }()
 			results[i] = d.run(ctx, p)
 			if d.progress != nil {

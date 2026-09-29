@@ -287,7 +287,7 @@ func TestLoopWithoutApplierSkipsRestart(t *testing.T) {
 // stay empty. The panel still deploys a working node in that build.
 func TestLoopSkipsSamplingWithoutCounters(t *testing.T) {
 	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
-	_, path, _ := account(t, "alice", func(u *user.User) {})
+	_, path, _ := account(t, "alice", func(_ *user.User) {})
 	dialed := 0
 	lines := []string{}
 	loop := New(Options{

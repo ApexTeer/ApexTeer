@@ -6,14 +6,12 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// A skin is one complete look: a palette, the geometry the layout uses, and the
-// grouping of the root navigation. The panel ships four, chosen with --skin, so
-// the shapes of the interface stay the same while the look can be swapped
-// without touching a screen.
-//
-// Corners selects the card corner glyphs.
+// Corners selects the card corner glyphs: rounded for a soft frame, square for a
+// technical one.
 type Corners int
 
+// The two corner treatments. Rounded is the zero value, so a skin that says nothing
+// about corners gets the softer frame.
 const (
 	CornersRounded Corners = iota
 	CornersSquare
@@ -48,8 +46,10 @@ type Metrics struct {
 	StripSep string
 }
 
-// Skin is one selectable look. Palettes come in pairs because a terminal
-// background is not known until startup.
+// Skin is one selectable look: a palette, the geometry the layout uses, and the grouping
+// of the root navigation. The panel ships four, chosen with --skin, so the shapes of the
+// interface stay the same while the look can be swapped without touching a screen.
+// Palettes come in pairs because the terminal's background is not known until startup.
 type Skin struct {
 	ID    string
 	Name  string

@@ -182,7 +182,7 @@ func editSNI() actionFunc {
 func regenRealityKeys() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("param_privkey"), func(ctx context.Context, r *taskReporter) error {
+		return a.startTask(lang.T("param_privkey"), func(_ context.Context, r *taskReporter) error {
 			priv, pub := secret.RealityKeypair()
 			if priv == "" || pub == "" {
 				return errors.New(lang.T("param_key_fail"))

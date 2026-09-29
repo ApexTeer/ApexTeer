@@ -121,7 +121,7 @@ func (a *App) bbrVersionsNodes() []*node {
 		return []*node{{
 			id:    "bbr-versions-failed",
 			label: tk("bbr_versions_failed"),
-			desc:  func(l i18n.Lang) string { return err.Error() },
+			desc:  func(_ i18n.Lang) string { return err.Error() },
 		}}
 	case len(a.bbrVersions) == 0:
 		return []*node{{id: "bbr-versions-empty", label: tk("bbr_versions_empty"), desc: tk("desc_bbr_versions_empty")}}
@@ -137,7 +137,7 @@ func (a *App) bbrVersionsNodes() []*node {
 		rel := rel
 		nodes = append(nodes, &node{
 			id:    "bbr-version-" + rel.Tag,
-			label: func(l i18n.Lang) string { return rel.Version },
+			label: func(_ i18n.Lang) string { return rel.Version },
 			desc:  func(l i18n.Lang) string { return a.releaseDesc(l, rel, newest[rel.Profile]) },
 			icon:  releaseIcon(rel.Profile),
 			action: func(a *App) tea.Cmd {

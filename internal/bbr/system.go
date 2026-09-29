@@ -61,7 +61,7 @@ func (s Status) Enabled() bool { return s.Congestion == "bbr" }
 // Supported reports whether the published kernels cover this architecture.
 func (s Status) Supported() bool { return s.Arch != "" }
 
-// Available reports whether the running kernel offers BBR at all. The module can
+// AvailableBBR reports whether the running kernel offers BBR at all. The module can
 // be loadable without being loaded, so the available list is the honest answer.
 func (s Status) AvailableBBR() bool {
 	return strings.Contains(s.Available, "bbr") || s.Enabled()
@@ -562,5 +562,5 @@ func httpGet(ctx context.Context, url string) ([]byte, error) {
 // fetchFile streams a URL to disk through the shared downloader, reporting the bytes
 // when the caller wants readings.
 func fetchFile(ctx context.Context, url, dest string, progress download.Progress) error {
-	return download.DownloadWithProgress(ctx, url, dest, downloadTimeout, progress)
+	return download.WithProgress(ctx, url, dest, downloadTimeout, progress)
 }

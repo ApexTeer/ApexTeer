@@ -1,6 +1,16 @@
+# Everything tracked here is text - the repository has no batch or PowerShell files - and
+# .editorconfig asks for LF everywhere already. This is that same rule enforced at
+# checkout, and it is what makes the pre-commit gate usable on Windows: with
+# core.autocrlf=true (the Git for Windows default) a checkout writes CRLF, and
+# `gofmt -l` - which `make check` fails on - then reports every Go file as unformatted.
+# The gate cannot pass on such a machine at all, and none of it has anything to do with
+# the code. `text=auto` keeps genuine binaries binary, since git sniffs those.
+* text=auto eol=lf
+
 # Shell entry points are written to be executed on Linux, and install.sh is downloaded
 # and run as-is: a carriage return in its hashbang or inside a heredoc breaks it, which is
-# exactly what happens to a Windows checkout with core.autocrlf=true. Keep them LF.
+# exactly what happens to a Windows checkout with core.autocrlf=true. Keep them LF, and
+# spell out `text` so the content sniffing above cannot decide otherwise.
 *.sh text eol=lf
 
 # The build tag list is read by install.sh and by the release workflow; a trailing CR

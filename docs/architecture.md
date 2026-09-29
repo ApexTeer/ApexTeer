@@ -46,7 +46,7 @@ editing.
 | Path | Owner | Purpose |
 | :--- | :--- | :--- |
 | `/etc/sing-box/easysb.conf` | `internal/state` | persisted node state, legacy-compatible KV |
-| `/etc/sing-box/config.json` | `internal/config` | rendered server config |
+| `/etc/sing-box/config.json` | `internal/config` | rendered server config; carries the same credentials as the account store, so it is `0600` too |
 | `/etc/sing-box/cert/` | `internal/cert` | the self-signed placeholder pair, used until a real certificate is issued |
 | `/etc/sing-box/easysb-users.json` | `internal/user` | accounts: credentials, quotas, expiry and counters (`0600`) |
 | `/etc/systemd/system/easysb.service` or `/etc/init.d/easysb` | `internal/service` | subscription service unit (`easysb --serve`) |
@@ -106,6 +106,7 @@ route serves it as `/favicon.svg`, so the root listing stays the sources alone.
 | `internal/tui` | bubbletea model, full-screen dashboard, menu tree, forms, panels, progress |
 | `internal/state` | read/write `easysb.conf`; protocol keys, default ports, default parameters |
 | `internal/config` | render the sing-box server configuration from state |
+| `internal/deploy` | the deploy path both the panel and the subscription service go through: render, write `config.json` (`0600`), have the carried engine accept it, restart the core, record which accounts are live |
 | `internal/sbcore` | the core compiled in: `Run` (the node, `easysb core run`), `Check` (config acceptance by the real engine), `Version`, and the `with_v2ray_api` capability as a tagged file pair |
 | `internal/download` | the one HTTP-to-file path left: the panel's own release and the BBR kernel packages, with progress readings |
 | `internal/cert` | ACME issuance in process through lego (HTTP-01 standalone): the account, issue/renew/remove certificates, expiry decisions, the renewal timer unit, the self-signed fallback |
@@ -134,6 +135,7 @@ route serves it as `/favicon.svg`, so the root listing stays the sources alone.
 | `internal/i18n` | `C` / `E` bilingual string table |
 | `internal/icons` | single-column Unicode symbol palette, `EASYSB_ICONS=ascii` falls back to ASCII |
 | `internal/theme` | dark / light color palettes and frame/column layout helpers |
+| `internal/ui` | the pieces every screen draws with: the table renderer (display-width columns, so a Chinese cell stays aligned) and the shared kit |
 
 ## The fixed layout
 

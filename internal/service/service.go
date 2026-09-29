@@ -22,6 +22,8 @@ const ProjectHome = "https://github.com/MinimaxFlora/EasySB"
 // Manager identifies the init system in use.
 type Manager string
 
+// The init systems the panel can drive. Unknown means neither was found, which the
+// callers treat as "leave the host alone" rather than as an error.
 const (
 	Systemd Manager = "systemd"
 	OpenRC  Manager = "openrc"

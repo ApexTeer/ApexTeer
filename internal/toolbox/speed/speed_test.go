@@ -387,27 +387,48 @@ func (d *delayedRunner) measure(_ context.Context, srv server) (sample, error) {
 }
 
 func TestNearbyStopsWhenBudgetSpent(t *testing.T) {
-	// Four nodes at 100 ms each against a 300 ms budget: the fourth cannot start.
+	// The run checks its budget before starting each node, so a node's turn comes at
+	// (nodes asked) x delay. These numbers put every check far from the deadline: the
+	// first starts at 0 ms against a 300 ms budget, and the second would start at
+	// 500 ms, 200 ms past it.
+	//
+	// Do not tighten this. Four nodes at 100 ms against a 300 ms budget - the shape this
+	// test used to have - puts the last check exactly on the deadline, so the node count
+	// came down to whether three 100 ms sleeps summed to just under or just over 300 ms.
+	// It failed about one run in five and passed under load, which is the opposite of
+	// what the comment claimed and enough to fail the release gate at random.
+	const (
+		delay  = 500 * time.Millisecond
+		budget = 300 * time.Millisecond
+	)
 	list := make([]server, 0, 4)
 	for i := 1; i <= 4; i++ {
 		list = append(list, server{id: strconv.Itoa(i), name: "慢节点", distance: float64(i)})
 	}
-	r := &delayedRunner{stubRunner: stubRunner{list: list}, delay: 100 * time.Millisecond}
-	res, err := nearby(context.Background(), toolbox.Options{Timeout: 300 * time.Millisecond}, r)
+	r := &delayedRunner{stubRunner: stubRunner{list: list}, delay: delay}
+	started := time.Now()
+	res, err := nearby(context.Background(), toolbox.Options{Timeout: budget}, r)
 	if err != nil {
 		t.Fatalf("nearby() returned an error: %v", err)
 	}
-	// The assertion is deliberately loose about how many nodes made it: a loaded machine
-	// can stop one node earlier, and what is being pinned here is that the run stops,
-	// says why, and still reports the readings it took.
 	if !containsNote(res.Notes, "已用完本次总时限") {
 		t.Errorf("notes %v do not name the spent budget", res.Notes)
 	}
 	if !strings.HasSuffix(res.Summary, "（超时）") {
 		t.Errorf("summary = %q, want a timeout marker", res.Summary)
 	}
-	if len(res.Rows) == 0 || len(r.asked) >= len(list) {
-		t.Errorf("run reported %d rows after asking %v", len(res.Rows), r.asked)
+	// Exactly the first node ran: the run stopped at the budget rather than working
+	// through the list, and the reading it did take is still reported.
+	if len(r.asked) != 1 {
+		t.Errorf("asked %v, want only the first node", r.asked)
+	}
+	if len(res.Rows) == 0 {
+		t.Error("the one node that was measured produced no row")
+	}
+	// A guard against the run ignoring its budget altogether: one delay is all this is
+	// allowed to cost.
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Errorf("the run took %s, so it did not stop at the budget", elapsed)
 	}
 }
 

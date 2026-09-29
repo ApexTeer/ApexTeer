@@ -130,7 +130,7 @@ func Apply(ctx context.Context, current string, log func(string), progress downl
 	tmp := exe + ".new"
 
 	log("GET " + url)
-	if err := download.DownloadWithProgress(ctx, url, archive, 5*time.Minute, progress); err != nil {
+	if err := download.WithProgress(ctx, url, archive, 5*time.Minute, progress); err != nil {
 		return false, remote, err
 	}
 	defer os.Remove(archive)

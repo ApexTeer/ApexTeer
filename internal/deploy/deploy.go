@@ -8,6 +8,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -60,21 +61,41 @@ func ServerConfig(cfg state.Config, accounts []user.User) ([]byte, error) {
 	return config.Build(params)
 }
 
+// The document lands at these paths. They are variables so that a test can render a
+// deployment into a temporary directory: what such a test is about is the document the
+// core accepts and the mode it lands with, and neither belongs in /etc on a build host.
+var (
+	configDir  = sysinfo.WorkDir
+	configPath = sysinfo.ConfigJSON
+)
+
 // WriteServerConfig renders the configuration and writes it to
-// /etc/sing-box/config.json.
+// /etc/sing-box/config.json. The document carries every account's credentials — the
+// uuid and password of each enabled protocol — so it is 0600, the same rule the account
+// store follows. Only the core reads it, and the core runs as root.
 func WriteServerConfig(cfg state.Config, accounts []user.User) ([]byte, error) {
 	data, err := ServerConfig(cfg, accounts)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(sysinfo.WorkDir, 0o755); err != nil {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(sysinfo.ConfigJSON, data, 0o644); err != nil {
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		return nil, err
+	}
+	// WriteFile leaves the mode of a file that already exists alone, so a config.json
+	// written by an earlier version stays world-readable until its mode is set here.
+	if err := os.Chmod(configPath, 0o600); err != nil {
 		return nil, err
 	}
 	return data, nil
 }
+
+// checkConfig is the acceptance test a deployment runs before restarting the node. It
+// is a variable so that a test can drive the rejection path without having to render a
+// document the engine refuses, which would otherwise depend on the build tags.
+var checkConfig = sbcore.Check
 
 // Apply writes the configuration for the given accounts, validates it and
 // restarts the core. A node that was never deployed is left alone: there is no
@@ -91,8 +112,12 @@ func Apply(ctx context.Context, cfg state.Config, accounts []user.User) error {
 	if _, err := WriteServerConfig(cfg, accounts); err != nil {
 		return err
 	}
-	if err := sbcore.Check(ctx, sysinfo.ConfigJSON); err != nil {
-		return ErrRejected
+	if err := checkConfig(ctx, configPath); err != nil {
+		// The core's message names the field it refused, and the only place a
+		// rejection is reported is a log line. Returning the sentinel alone left an
+		// operator with "the core rejected the generated configuration" and nothing
+		// to act on.
+		return fmt.Errorf("%w: %w", ErrRejected, err)
 	}
 	return service.Do(ctx, "restart")
 }

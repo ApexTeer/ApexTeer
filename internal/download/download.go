@@ -60,13 +60,13 @@ func (c *countingBody) emit() {
 
 // Download streams a URL to dest, with the budget a panel release needs.
 func Download(ctx context.Context, url, dest string) error {
-	return DownloadWithProgress(ctx, url, dest, 5*time.Minute, nil)
+	return WithProgress(ctx, url, dest, 5*time.Minute, nil)
 }
 
-// DownloadWithProgress is the whole download path: it streams url to dest and reports
+// WithProgress is the whole download path: it streams url to dest and reports
 // the bytes as they arrive to progress. A nil progress means the caller only wants the
 // file, which is what the non-interactive entry points do.
-func DownloadWithProgress(ctx context.Context, url, dest string, timeout time.Duration, progress Progress) error {
+func WithProgress(ctx context.Context, url, dest string, timeout time.Duration, progress Progress) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -87,13 +87,21 @@ func DownloadWithProgress(ctx context.Context, url, dest string, timeout time.Du
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	body := &countingBody{body: resp.Body, report: progress, label: path.Base(url), total: resp.ContentLength}
 	if _, err := io.Copy(f, body); err != nil {
+		f.Close()
 		return err
 	}
 	// The last tick may have been up to downloadTick before the end, so the finished
 	// download reports its final size rather than a percentage short of 100.
 	body.emit()
-	return f.Sync()
+	// Sync alone is not enough to call the file written: a filesystem is free to report
+	// a deferred write error only when the descriptor is closed (a full disk on an
+	// overlay or a network mount, for one), and this is the path that replaces the
+	// running binary. A truncated download has to fail here rather than be installed.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }

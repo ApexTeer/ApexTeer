@@ -78,18 +78,18 @@ func (f Fact) label() string {
 	return shortText(f.ISP, f.Org, maxBackboneLen)
 }
 
-// shortText returns the first non-empty string, trimmed to max runes so a long
+// shortText returns the first non-empty string, trimmed to limit runes so a long
 // provider name cannot stretch a table column.
-func shortText(first, second string, max int) string {
+func shortText(first, second string, limit int) string {
 	s := first
 	if s == "" {
 		s = second
 	}
 	r := []rune(s)
-	if len(r) <= max {
+	if len(r) <= limit {
 		return s
 	}
-	return string(r[:max-1]) + "…"
+	return string(r[:limit-1]) + "…"
 }
 
 // descriptor names the system the way a note can print it: the number and its

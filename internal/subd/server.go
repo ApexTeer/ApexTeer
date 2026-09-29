@@ -70,7 +70,7 @@ func (o Options) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	o.logf(fmt.Sprintf("subscription endpoint %s (tls=%v)", listener.Addr(), certFile != ""))
+	o.logf(fmt.Sprintf("subscription endpoint %s (tls=%v) · EasySB %s", listener.Addr(), certFile != "", o.version()))
 
 	server := &http.Server{
 		Handler:           o.handler(),
@@ -100,6 +100,10 @@ func (o Options) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 	case err := <-serveErr:
+		// Serving failed on its own. Returning here used to leave the listener bound
+		// and the accounting loop running, so a service that came up and then failed
+		// still held the port against the restart that would have recovered it.
+		_ = server.Close()
 		return err
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -280,6 +284,16 @@ func (o Options) now() time.Time {
 		return o.Now()
 	}
 	return time.Now()
+}
+
+// version words the panel version for the startup line. The field is what main.go
+// fills in from the embedded VERSION file; a test that leaves it out still gets a
+// line that reads as a line rather than trailing off.
+func (o Options) version() string {
+	if o.Version == "" {
+		return "unknown"
+	}
+	return o.Version
 }
 
 func (o Options) logf(line string) {

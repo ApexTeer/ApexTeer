@@ -21,6 +21,8 @@ import (
 // Kind is the semantic tone of a value: how much attention it deserves.
 type Kind int
 
+// The tones a value can be drawn in, from the plainest to the most insistent. Plain is
+// the zero value, so a value whose tone nobody chose is drawn without emphasis.
 const (
 	KindPlain Kind = iota
 	KindOK

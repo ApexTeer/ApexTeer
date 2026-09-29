@@ -1,3 +1,7 @@
+// Package stats reads the core's per-account counters over its V2Ray gRPC service and
+// turns them into the usage the panel shows and the quota it enforces. The counters live
+// in the running core and reset when it restarts, so everything here works in deltas
+// against the previous sample rather than in absolute values.
 package stats
 
 import (

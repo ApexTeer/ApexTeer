@@ -15,8 +15,12 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 - **Older runs overwriting newer assets.** The workflow uses a `concurrency`
   group with `cancel-in-progress` so a stale build cannot publish over a fresher
   one.
-- **`make_latest: false`.** The Go release is intentionally not marked latest;
-  do not flip this without deciding how it interacts with core releases.
+- **The release is marked latest (`make_latest: true`).** This note used to claim
+  the opposite, and the workflow had already been changed, so the two disagreed
+  and only the file was wrong. The repository publishes one thing: v5 compiles
+  the core into the panel, so there is no separate core release to yield the flag
+  to. Turning it back off is a decision about what a visitor sees as the latest
+  release, not a detail - which is what the old wording was trying to say.
 - **Publish the sources with rsync, and never wrap rsync in `sshpass`.** The tree
   is 755 MB across 400-odd files. FTP-Deploy-Action waits a round trip per write
   (~25 KB/s here), and pushing one tar with `scp` sustains only 350-850 KB/s and

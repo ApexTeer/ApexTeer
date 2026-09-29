@@ -1,3 +1,6 @@
+// Package sysinfo reports what the panel knows about the host it runs on - addresses,
+// CPU, load, memory, swap, disk and uptime - and holds the runtime paths every other
+// package writes to, so that /etc/sing-box is spelled out once.
 package sysinfo
 
 import (
@@ -15,6 +18,8 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/sbcore"
 )
 
+// The paths the deployment lives at and the units it installs. WorkDir is the one
+// directory the rest are built from.
 const (
 	WorkDir     = "/etc/sing-box"
 	ConfigJSON  = WorkDir + "/config.json"
@@ -34,17 +39,17 @@ const (
 	// SubLogFile collects the subscription service log.
 	SubLogFile = WorkDir + "/easysb-sub.log"
 
-	// The subscription service is its own unit so the panel can restart it
-	// without touching the core.
+	// SubServiceName is the subscription service's unit name. It is a unit of its own so
+	// that the panel can restart it without touching the core.
 	SubServiceName = "easysb"
 	SubSystemdUnit = "/etc/systemd/system/easysb.service"
 	SubOpenRCUnit  = "/etc/init.d/easysb"
 
-	// PanelPaths are where this project's installer puts the panel binary, most
-	// preferred first. Anything that has to name the panel in a unit, a timer or a
-	// launcher uses these rather than os.Executable(): a panel run from a scratch copy
-	// (a test build, an unpacked tree) must not redirect the installed service to that
-	// copy, because deleting the copy would then take the service down with it.
+	// PanelPath is the preferred location of the panel binary: where install.sh puts it.
+	// Anything that has to name the panel in a unit, a timer or a launcher takes its
+	// candidates from PanelPaths rather than os.Executable(): a panel run from a scratch
+	// copy (a test build, an unpacked tree) must not redirect the installed service to
+	// that copy, because deleting the copy would then take the service down with it.
 	PanelPath = "/usr/local/bin/easysb"
 )
 
@@ -54,6 +59,9 @@ const (
 // the running process happens to live.
 var PanelPaths = []string{PanelPath, "/usr/local/bin/sb", "/usr/bin/easysb", "/usr/bin/sb"}
 
+// Status is one snapshot of the host for the dashboard: what the deployment is, how the
+// services are doing, and the machine underneath them. A field the host would not answer
+// stays at its zero value, so a blank cell means unknown rather than zero.
 type Status struct {
 	ScriptVersion string
 	// CoreVersion is the sing-box release compiled into this panel, and
@@ -96,6 +104,8 @@ type Status struct {
 	Uptime time.Duration
 }
 
+// PortInfo is one protocol's listener as the node state describes it: the port it is on
+// and whether the protocol is switched on.
 type PortInfo struct {
 	Protocol string
 	Port     string
@@ -110,6 +120,9 @@ var protocolOrder = []struct{ key, label string }{
 	{"vmess_ws_tls", "VMess-WS-TLS"},
 }
 
+// Collect reads the whole snapshot: the state file, the two services' state, and the
+// device readings. Everything it returns is read rather than remembered, so a page
+// refreshed after a change shows the change.
 func Collect(scriptVersion string) Status {
 	st := Status{
 		ScriptVersion: scriptVersion,

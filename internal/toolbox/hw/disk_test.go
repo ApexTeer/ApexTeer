@@ -73,7 +73,7 @@ func TestDisks(t *testing.T) {
 			name: "full fixture",
 			fs:   fullDiskFS(),
 			cmd:  newFakeCmd(),
-			check: func(t *testing.T, res toolbox.Result, cmd *fakeCmd) {
+			check: func(t *testing.T, res toolbox.Result, _ *fakeCmd) {
 				// Filled in below by the smartctl case; here only the layout matters.
 				if len(res.Rows) != 4 {
 					t.Fatalf("got %d rows, want 4 (%v)", len(res.Rows), res.Rows)
