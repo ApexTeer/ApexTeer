@@ -17,8 +17,11 @@
 #  用法 / Usage:
 #    SITE_DOMAIN=sb.kejizero.xyz FTP_PASSWORD=... bash provision.sh
 #
-#  需要 root；FTP_PASSWORD 必填，工作流的 FTP 步骤用同一个口令。
-#  Run as root. FTP_PASSWORD is required and must match the workflow's FTP secret.
+#  需要 root；FTP_PASSWORD 必填，用于建立那个手工上传用的 FTP 账号。发布工作流已改走 SSH
+#  （见 .github/workflows/easysb-go-release.yml），不再用这个账号。
+#  Run as root. FTP_PASSWORD is required for that manual-upload FTP account. The release
+#  workflow ships over SSH now (see .github/workflows/easysb-go-release.yml) and no longer
+#  uses it.
 # ==============================================================================
 
 set -euo pipefail
@@ -139,12 +142,12 @@ make_webroot() {
   ok "$WEBROOT/{linux,pacman,bin,.easysb}"
 
   # 源从前是扁平的 apt/ 与 rpm/<架构>/，公钥、easysb.repo 也散在根上。换成分发行版的
-  # linux/ 之后这些路径没人再写，但 FTP 同步只增不改，不在这里收走就会一直留着，读者看到
-  # 两套互相矛盾的源。与新布局同名的文件不动。
+  # linux/ 之后这些路径没人再写。发布时的整棵替换也会收走它们，这里再收一遍是为了让只跑
+  # 过置备、还没发布过的站点也是干净的。与新布局同名的文件不动。
   # The sources used to be a flat apt/ and rpm/<arch>/, with the key and easysb.repo loose at
-  # the root. Nothing writes those paths after the move to the per-distribution linux/, but
-  # the FTP sync only adds files, so they would linger and readers would see two conflicting
-  # sources. Anything that shares a name with the new layout is left alone.
+  # the root. Nothing writes those paths after the move to the per-distribution linux/. The
+  # release swap retires them too; removing them here keeps a freshly provisioned box, which
+  # has not been released to yet, clean as well. Names the new layout uses are left alone.
   local stale
   for stale in apt rpm easysb.repo RPM-GPG-KEY-easysb; do
     if [ -e "$WEBROOT/$stale" ]; then
@@ -154,20 +157,18 @@ make_webroot() {
   done
 
   # 站点首页曾经是这份静态文件。file_server 只要见到 index.html 就直接发它，放着不管
-  # 的话模板永远轮不到渲染；而 FTP 同步只增不改，也不会替我们收走它，所以在这里删掉。
+  # 的话模板永远轮不到渲染，所以在置备时删掉。
   # The home page used to be this static file. file_server serves index.html whenever it
-  # exists, which would shadow the template forever, and the FTP sync only adds files, so
-  # it is removed here.
+  # exists, which would shadow the template forever, so provisioning removes it.
   if [ -e "$WEBROOT/index.html" ]; then
     rm -f "$WEBROOT/index.html"
     warn "删除已被模板取代的首页 / removed the index.html the template replaced"
   fi
 
   # 图标以前直接放在站点根，会作为一行列在首页里。现在它随模板一起住进 .easysb/，根上那份
-  # 旧文件得在这里收走；FTP 同步只增不改，不会替我们删。
+  # 旧文件得在这里收走。
   # The icon used to sit at the site root, where it showed up as a row on the home page. It
-  # now lives in .easysb/ next to the template, so the stale copy at the root goes away here;
-  # the FTP sync only adds files and would never remove it.
+  # now lives in .easysb/ next to the template, so the stale copy at the root goes away here.
   if [ -e "$WEBROOT/favicon.svg" ]; then
     rm -f "$WEBROOT/favicon.svg"
     warn "删除站点根上多余的图标 / removed the stray icon at the site root"
