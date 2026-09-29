@@ -37,13 +37,22 @@
   where `<arch>` is that ecosystem's own spelling. `dist/easysb-linux-<asset>` is
   an intermediate and is never published by itself.
 - The package sources live on the release server, not on a second release tag, so
-  `install.sh --method repo` has one fixed address (`https://sb.kejizero.xyz`)
-  to point at. Its four subtrees are `apt/`, `rpm/<arch>/`, `pacman/<arch>/` and
-  `bin/`; `make repo` builds them and the workflow syncs them there. The three
-  index subtrees are signed with one key when `GPG_KEY_ID` is set, and each
-  publishes that key inside its own tree: `apt/easysb.gpg`, `rpm/RPM-GPG-KEY-easysb`
-  and `pacman/easysb.asc`. `install.sh --method repo` writes the strict entry only
-  when it finds that key on the server, and the permissive form otherwise.
+  the one-command `install.sh` has one fixed address (`https://sb.kejizero.xyz`)
+  to point at. The root carries `install.sh` itself, so the one command (`curl -fsSL
+  https://sb.kejizero.xyz/install.sh | sudo bash`) needs no second address. The
+  subtrees are `linux/<distro>/` for apt and rpm, `pacman/<arch>/` and
+  `bin/`; `make repo` builds them and the workflow syncs them there. The layout is
+  Docker's official one, so a distribution is a directory and the packages sit
+  under it: `linux/<distro>/dists/<suite>/pool/stable/<arch>/` for apt and
+  `linux/<distro>/<release>/<basearch>/stable/` for rpm, with one
+  `linux/<distro>/easysb.repo` and one armored `linux/<distro>/gpg` per
+  distribution. The rpm repo file carries `baseurl`, `gpgcheck` and `gpgkey`
+  together, so registering the rpm source is one fetch per dnf generation: dnf5's
+  `config-manager addrepo --from-repofile` and dnf4's `config-manager --add-repo`
+  (which `dnf-plugins-core` provides). Every tree is signed with one key when
+  `GPG_KEY_ID` is set, and `pacman/easysb.asc` is the pacman side. `install.sh`
+  writes the strict entry only when it finds that key on the server, and the
+  permissive form otherwise.
 
 ## Commits
 
@@ -74,11 +83,15 @@
   release, tagged and named `v<VERSION>`, carrying a tarball per architecture and the
   three package formats.
 - The same binaries are wrapped into `.deb` (`make deb`), `.rpm` (`make rpm`) and
-  pacman (`make pacman`) packages by fpm, all from one staged tree, and laid out as
-  apt / rpm / pacman / bin sources by `make repo` (`apt-ftparchive`, `createrepo_c`,
-  `repo-add`). The per-ecosystem arch names live in the Makefile's `DEBARCH_*` /
-  `RPMARCH_*` / `PACMANARCH_*`, and the packaged units come from `easysb --print-unit`;
-  do not hand-write a unit under `packaging/`. The release workflow syncs `dist/repo`
+  pacman (`make pacman`) packages by fpm, all from one staged tree. `packages.sh`
+  builds the per-distribution variants the sources need (`make repo-packages`, with
+  the distribution in the version string: `5.0.0-1~debian.12~bookworm`,
+  `5.0.0-1.el9`) and `index.sh` lays them out and indexes them (`make repo-index`,
+  via `apt-ftparchive`, `createrepo_c` and `repo-add`); `make repo` is both. The
+  per-ecosystem arch names live in the Makefile's `DEBARCH_MAP` / `RPMARCH_MAP` /
+  `PACMANARCH_*`, always keyed on an asset name so one table serves packaging, layout
+  and indexing; the packaged units come from `easysb --print-unit`; do not hand-write
+  a unit under `packaging/`. The release workflow syncs `dist/repo`
   to the release server with FTP-Deploy-Action; `packaging/server/` holds the one-shot
   provisioning script, the Caddy browse template the landing page is rendered from, and
   the favicon. The template and the favicon travel as `dist/repo/.easysb/browse.html`

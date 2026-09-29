@@ -1245,73 +1245,26 @@ main {
 					units come with them. The package deliberately does not start either unit, because a
 					fresh install has no node configuration yet: run <code>sb</code>, configure the node,
 					and the panel enables and starts the service.</p>
-				<p>The four directories above are one source each: <code>/apt</code> a flat apt archive,
-					<code>/rpm/$basearch</code> an rpm-md repository, <code>/pacman/$arch</code> a pacman
-					database, and <code>/bin</code> the release tarballs. All three sources are signed with
-					one key, served inside each tree as <code>apt/easysb.gpg</code>,
-					<code>rpm/RPM-GPG-KEY-easysb</code> and <code>pacman/easysb.asc</code>. Pick your
-					distribution below.</p>
+				<p>The directories above are the sources: <code>/linux</code> carries one signed apt archive
+					and one rpm-md repository per distribution, laid out the way Docker's official sources
+					are &mdash; apt under <code>linux/&lt;distro&gt;/dists/&lt;suite&gt;</code>, rpm under
+					<code>linux/&lt;distro&gt;/&lt;release&gt;/&lt;basearch&gt;</code>. Each distribution's
+					public key is <code>linux/&lt;distro&gt;/gpg</code>, and the <code>easysb.repo</code>
+					beside it registers the rpm source on either dnf generation. <code>/pacman/$arch</code>
+					is the pacman database with its key at <code>pacman/easysb.asc</code>, and
+					<code>/bin</code> holds the release tarballs.</p>
 
-				<h3>Debian &middot; Ubuntu</h3>
+				<h3>One command</h3>
+				<p>The script detects the distribution and architecture, adds the matching signed
+					source and installs through the OS package manager &mdash; Debian 12 / 13, Ubuntu
+					22.04 / 24.04, Fedora 41 / 42, RHEL, CentOS, Rocky and Arch alike. A system with no
+					source of its own (Alpine, openSUSE) falls back to the release tarball.</p>
 				<div class="cmd">
 					{{template "copy"}}
-					<pre>sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://sb.kejizero.xyz/apt/easysb.gpg | sudo tee /etc/apt/keyrings/easysb.gpg &gt;/dev/null
-
-sudo tee /etc/apt/sources.list.d/easysb.sources &gt;/dev/null &lt;&lt;'EOF'
-Types: deb
-URIs: https://sb.kejizero.xyz/apt
-Suites: ./
-Signed-By: /etc/apt/keyrings/easysb.gpg
-EOF
-
-sudo apt-get update
-sudo apt-get install easysb</pre>
+					<pre>curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash</pre>
 				</div>
 
-				<h3>Fedora &middot; RHEL &middot; openSUSE</h3>
-				<div class="cmd">
-					{{template "copy"}}
-					<pre>sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-
-sudo tee /etc/yum.repos.d/easysb.repo &gt;/dev/null &lt;&lt;'EOF'
-[easysb]
-name=EasySB
-baseurl=https://sb.kejizero.xyz/rpm/$basearch
-enabled=1
-type=rpm-md
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
-EOF
-
-# Fedora / RHEL
-sudo dnf install easysb
-
-# openSUSE
-sudo zypper install easysb</pre>
-				</div>
-
-				<h3>Arch Linux</h3>
-				<div class="cmd">
-					{{template "copy"}}
-					<pre>curl -fsSL https://sb.kejizero.xyz/pacman/easysb.asc -o /tmp/easysb.asc
-sudo pacman-key --add /tmp/easysb.asc
-
-# locally trust the key that just went in
-sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/easysb.asc | awk -F: '/^fpr:/{print $10; exit}')"
-
-sudo tee -a /etc/pacman.conf &gt;/dev/null &lt;&lt;'EOF'
-
-[easysb]
-SigLevel = Required DatabaseRequired
-Server = https://sb.kejizero.xyz/pacman/$arch
-EOF
-
-sudo pacman -Sy &amp;&amp; sudo pacman -S easysb</pre>
-				</div>
-
-				<h3>Anything else</h3>
+				<h3>Or a package file</h3>
 				<p>Download the <code>.deb</code>, <code>.rpm</code>, <code>.pkg.tar.zst</code> or the
 					<code>easysb-&lt;version&gt;-linux-&lt;arch&gt;.tar.gz</code> from
 					<a href="https://github.com/MinimaxFlora/EasySB/releases">the release page</a>, or let

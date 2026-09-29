@@ -3,11 +3,11 @@ name: Build EasySB Go release
 # 源码：根目录 Go module（main.go、internal/**）
 # 产物：以 tag `v<VERSION>` 发布的一套资产 —— 每个架构一个发布压缩包
 #       easysb-<版本>-linux-<架构>.tar.gz，三种安装包 easysb_<版本>_linux_<架构>.<扩展名>
-# 软件源：同一套包再组成 apt / rpm / pacman / bin 四份源，用 FTP-Deploy-Action
+# 软件源：再按发行版打一套包，摆成 linux / pacman / bin 三份源，用 FTP-Deploy-Action
 #         同步到发布服务器，install.sh --method repo 就是从那里装。
 # Assets: one release tagged `v<VERSION>` carrying a tarball per architecture and the
-# three package formats. The same files are also laid out as apt / rpm / pacman / bin
-# sources and synced to the release server with FTP-Deploy-Action.
+# three package formats. A second set of per-distribution packages is laid out as
+# linux / pacman / bin sources and synced to the release server with FTP-Deploy-Action.
 
 on:
   push:
@@ -151,6 +151,17 @@ jobs:
       - name: 打包三种格式
         run: make packages-asset ASSET=${{ matrix.asset }} REUSE_DIST=1 COMMIT=${GITHUB_SHA}
 
+      # 软件源按发行版各出一份包：版本串里带着发行版（5.0.0-1~debian.12~bookworm、
+      # 5.0.0-1.el9），换发行版时包管理器才会跟着升级。这与上面那套通用包是两回事：
+      # 通用包给 Release 页手动下载，这一套只进软件源。两者出自同一棵暂存树。
+      # The sources carry one package per distribution release, with the distribution in the
+      # version string (5.0.0-1~debian.12~bookworm, 5.0.0-1.el9), which is what makes an
+      # upgrade of the distribution also upgrade the package. These are separate from the
+      # generic packages above: those are for manual download from the Release page, these
+      # only feed the repository. Both come from the same staging tree.
+      - name: 打包分发行版的软件源包
+        run: make repo-packages-asset ASSET=${{ matrix.asset }} NO_BUILD=1 REUSE_DIST=1
+
       - name: 上传安装包
         uses: actions/upload-artifact@v7
         with:
@@ -159,6 +170,7 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.pkg.tar.zst
+            dist/repopkgs/*
           if-no-files-found: error
 
   # 一个 release 装下全部资产：tag 与 release 名都是 v<版本>，与 sing-box 一致。
@@ -194,16 +206,10 @@ jobs:
             - 内核 / Core: sing-box 已编译进面板（来源 https://github.com/SagerNet/sing-box），无需单独安装
               the sing-box core is compiled into the panel, nothing to install separately
 
-            一键安装 / One-click:
+            一键安装 / One-click（自动识别发行版，配好签名软件源并安装，同 Docker）:
 
              ```bash
-            bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
-            ```
-
-            软件源安装 / From the package source:
-
-             ```bash
-            bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh) --method repo
+            curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
             ```
 
             手动安装 / Manual: 下载本页对应架构的 `.deb` / `.rpm` / `.pkg.tar.zst`，或
@@ -239,12 +245,15 @@ jobs:
             gh release delete-asset "$version" "$name" --yes
           done < <(gh release view "$version" --json assets --jq '.assets[].name')
 
-  # 把同一套包组装成四份软件源并同步到发布服务器：apt 是扁平的 deb 源，rpm 与 pacman
-  # 按架构分目录，bin 放发布压缩包。GitHub Release 只能当静态下载，服务的固定地址来自
-  # 这台服务器，install.sh 里写的就是它。
-  # Lays the same files out as four sources and syncs them to the release server: a flat
-  # apt archive, per-architecture rpm and pacman trees, and bin for the tarballs. GitHub
-  # Releases can only serve files; the stable address install.sh uses comes from here.
+  # 把按发行版打好的包组装成软件源并同步到发布服务器：apt 与 rpm 都按发行版分目录，摆成
+  # Docker 官方源的形状，pacman 按架构分，bin 放发布压缩包。GitHub Release 只能当静态下载，
+  # 服务的固定地址来自这台服务器，install.sh 里写的就是它。包的构建在上面的 packages 作业，
+  # 这里只摆目录、生成索引并签名。
+  # Lays the per-distribution packages out as sources and syncs them to the release server:
+  # apt and rpm each split by distribution, in Docker's official shape, pacman
+  # per-architecture, and bin for the tarballs. GitHub Releases can only serve files; the
+  # stable address install.sh uses comes from here. The packages are built in the packages
+  # job above; this job only lays out the trees, indexes and signs them.
   #
   # 先跑一次 “Provision the release server” 工作流把服务器准备好，这里才传得上去。
   # Run the "Provision the release server" workflow once before this can upload.
@@ -299,7 +308,7 @@ jobs:
           fi
 
       - name: 组装软件源
-        run: make repo GPG_KEY_ID="${GPG_KEY_ID:-}" GPG_PASSPHRASE_FILE="${GPG_PASSPHRASE_FILE:-}"
+        run: make repo-index GPG_KEY_ID="${GPG_KEY_ID:-}" GPG_PASSPHRASE_FILE="${GPG_PASSPHRASE_FILE:-}"
 
       # FTP 账号只能写站点根目录，所以 server-dir 是相对的家目录起点 ./。
       # The FTP account is confined to the site root, so server-dir is the home-relative ./.
@@ -319,6 +328,13 @@ jobs:
           local-dir: ./dist/repo/
           server-dir: ./
           log-level: standard
+          # 先把站点根清空再上传：树从扁平的 apt/ 与 rpm/<架构>/ 换成分发行版的 linux/，
+          # 同步又只增不改，不这么做旧路径会与新的并存。站点根只有这套源，清空是安全的。
+          # Wipe the site root before uploading: the tree moved from a flat apt/ and
+          # rpm/<arch>/ to the per-distribution linux/, and the sync only ever adds, so old
+          # paths would sit beside the new ones. The root holds nothing but this source, so
+          # the wipe is safe.
+          dangerous-clean-slate: true
           exclude: |
             **/.git*
             **/.git*/**
