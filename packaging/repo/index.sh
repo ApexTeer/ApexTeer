@@ -193,7 +193,17 @@ rpm_index() {
       pkg="$dir/Packages/${PKG_NAME}-${VERSION}-${suffix}.${rpmarch}.rpm"
       cp -f "${REPO_PKGS}/${PKG_NAME}-${VERSION}-${suffix}.${rpmarch}.rpm" "$pkg"
       if have_key; then
-        rpm --addsign --define "_gpg_name $GPG_KEY_ID" --define "__gpg $gpg_wrap" "$pkg"
+        # rpm 的签名库在 GPG_TTY 未设置、stdin 又不是终端时，会自己去推导终端并失败，于是
+        # 每次都打一条 «Could not set GPG_TTY to stdin: Inappropriate ioctl for device»。
+        # CI 的 stdin 永远是管道，这条警告必然出现却毫无影响：口令走 --passphrase-file，
+        # gpg 处于 --batch，根本不会提示。随便给 GPG_TTY 一个值就能跳过那段推导。
+        # rpm's signing library derives the terminal itself when GPG_TTY is unset and stdin is
+        # not a tty, fails, and warns «Could not set GPG_TTY to stdin: Inappropriate ioctl for
+        # device» every time. CI's stdin is always a pipe, so the warning is guaranteed and
+        # harmless: the passphrase comes from --passphrase-file and gpg runs --batch, so it
+        # never prompts. Any value for GPG_TTY skips that derivation.
+        GPG_TTY=/dev/null rpm --addsign \
+          --define "_gpg_name $GPG_KEY_ID" --define "__gpg $gpg_wrap" "$pkg"
       fi
       # createrepo_c 必须在签名之后跑，否则索引里的校验和与签过名的包对不上。
       # createrepo_c has to run after signing, or the checksums in the index no longer
