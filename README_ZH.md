@@ -191,9 +191,11 @@ sudo apt-get update
 sudo apt-get install easysb
 ```
 
-`install.sh --method repo` 写的就是上面这两个文件，并接着执行安装。若索引某次以未签名方式发布，改用 `Trusted: yes` 代替 `Signed-By:` 一行即可。
+`install.sh --method repo` 写的就是上面这两个文件，并接着执行安装。
 
-要发布已签名的索引，把一份 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY`，口令配置成 `GPG_PASSPHRASE`。发布工作流会导入密钥、用它签名 `Release`，并发布 `InRelease`、`Release.gpg` 与公钥 `easysb.gpg`。口令是通过文件读入的，不会出现在进程列表里。没有该 secret 时索引保持未签名，使用 `Trusted: yes` 写法。
+三份源共用一把密钥签名。把 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY`，口令配置成 `GPG_PASSPHRASE`，发布工作流会导入密钥并签完全部产物：apt 的 `Release`（`InRelease` 与 `Release.gpg`）、每个 `.rpm`、rpm-md 的 `repomd.xml`、每个 pacman 包以及 pacman 数据库。口令通过文件读入，不会出现在进程列表里。公钥按各源习惯的名字随源发布：apt 用的是 `Signed-By` 需要的二进制 keyring `apt/easysb.gpg`，rpm 与 pacman 用的是 armored 的 `rpm/RPM-GPG-KEY-easysb` 与 `pacman/easysb.asc`。
+
+没有该 secret 时发布出去的源不带签名，三种写法各有宽松形式：`Trusted: yes` 代替 `Signed-By:`，`gpgcheck=0` 与 `repo_gpgcheck=0` 且不带 `gpgkey`，以及 `SigLevel = Optional TrustAll`。`install.sh --method repo` 会按服务器上实际发布的情况选对应写法。
 
 ---
 
@@ -205,24 +207,40 @@ sudo apt-get install easysb
 
 ```bash
 # Fedora / RHEL / openSUSE
+sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
 sudo tee /etc/yum.repos.d/easysb.repo >/dev/null <<'EOF'
 [easysb]
 name=EasySB
 baseurl=https://sb.kejizero.xyz/rpm/$basearch
 enabled=1
 type=rpm-md
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
 EOF
 sudo dnf install easysb
 
 # Arch
+curl -fsSL https://sb.kejizero.xyz/pacman/easysb.asc -o /tmp/easysb.asc
+sudo pacman-key --add /tmp/easysb.asc
+
+# 在本地信任刚导入的这把密钥
+sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/easysb.asc | awk -F: '/^fpr:/{print $10; exit}')"
+
 sudo tee -a /etc/pacman.conf >/dev/null <<'EOF'
 
 [easysb]
-SigLevel = Optional TrustAll
+SigLevel = Required DatabaseRequired
 Server = https://sb.kejizero.xyz/pacman/$arch
 EOF
 sudo pacman -Sy && sudo pacman -S easysb
 ```
+
+`rpm --import` 会把公钥写进 rpm 数据库，dnf 与 zypper 校验时用的就是它。
+`gpgcheck` 校验每个包，`repo_gpgcheck` 用 `repomd.xml.asc` 校验 `repomd.xml`，
+所以未签名或被改过的文件会被拒收。pacman 则用同一把密钥校验数据库
+（`DatabaseRequired`）与每个包（`Required`），这把密钥需要在本地信任一次。
+两条写法与两次密钥导入都由 `install.sh --method repo` 完成。
 
 也可以继续用 release 页上的单文件方式安装：
 
@@ -267,7 +285,7 @@ apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero
 
 | Secret | 用于 | 说明 |
 | :--- | :--- | :--- |
-| `GPG_PRIVATE_KEY` | 发布 | armored 签名私钥，可选 |
+| `GPG_PRIVATE_KEY` | 发布 | apt / rpm / pacman 三份源共用的 armored 签名私钥，可选 |
 | `GPG_PASSPHRASE` | 发布 | 该私钥的口令，仅在带口令时需要 |
 | `FTP_PASSWORD` | 发布 | 服务器上传账号的口令 |
 | `SERVER_SSH_PASSWORD` | 置备 | 服务器 root 口令，只在一次性置备时用到 |

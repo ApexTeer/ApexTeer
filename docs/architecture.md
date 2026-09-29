@@ -72,7 +72,7 @@ staged tree (`make pkg-stage`), which one architecture's job drives end to end w
 | `sing-box.service` | `easysb --print-unit node --unit-exec /usr/bin/easysb`, the same `internal/service.UnitBody` the panel writes at runtime |
 | `easysb.service` | `easysb --print-unit sub --unit-exec /usr/bin/easysb`, the same `internal/subd.UnitBody` |
 | Package architecture | `DEBARCH_*`, `RPMARCH_*` and `PACMANARCH_*` in the `Makefile` (armv7 → `armhf` / `armv7hl` / `armv7h`; rpm spells 386 `i686`; Arch has no i386 or s390x, so no pacman package is made for them) |
-| Source trees | `make repo` lays the same files out as four sources: `make apt-index` runs `apt-ftparchive` over `dist/*.deb` and signs when `GPG_KEY_ID` is set, `make rpm-index` runs `createrepo_c` per rpm architecture, `make pacman-index` runs `repo-add` per pacman architecture, and `bin/` takes the tarballs |
+| Source trees | `make repo` lays the same files out as four sources: `make apt-index` runs `apt-ftparchive` over `dist/*.deb`, `make rpm-index` runs `createrepo_c` per rpm architecture, `make pacman-index` runs `repo-add` per pacman architecture, and `bin/` takes the tarballs. With `GPG_KEY_ID` set each index is signed with that one key and publishes its public key in the form its client expects: `Release` / `InRelease` plus the binary keyring `apt/easysb.gpg`, `repomd.xml.asc` per architecture plus `rpm/RPM-GPG-KEY-easysb` and a signature on every `.rpm`, and `pacman/easysb.asc` plus a `.sig` for every package and for `easysb.db` |
 
 `dist/easysb-linux-<asset>` is only an intermediate: `pkg-stage` copies it into the
 staged tree and `tarball-asset` wraps it, and neither the release nor the sources ever

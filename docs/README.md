@@ -24,6 +24,6 @@ full-screen bubbletea TUI. Persistent state lives in
 `/etc/sing-box/easysb.conf`, accounts live in
 `/etc/sing-box/easysb-users.json`, readable config samples live under
 `templates/`, and releases are published by cross-compiling in GitHub Actions
-under the tag `v<VERSION>`. The same binaries are wrapped into `.deb` files and an
-apt repository (`make deb` / `make apt-index`), published on the fixed `debian`
-tag.
+under the tag `v<VERSION>`. The same binaries are wrapped into `.deb`, `.rpm` and
+pacman packages and laid out as apt, rpm and pacman sources by `make repo`, all
+signed with one key and served from the fixed address `https://sb.kejizero.xyz`.

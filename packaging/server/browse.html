@@ -1247,7 +1247,10 @@ main {
 					and the panel enables and starts the service.</p>
 				<p>The four directories above are one source each: <code>/apt</code> a flat apt archive,
 					<code>/rpm/$basearch</code> an rpm-md repository, <code>/pacman/$arch</code> a pacman
-					database, and <code>/bin</code> the release tarballs. Pick your distribution below.</p>
+					database, and <code>/bin</code> the release tarballs. All three sources are signed with
+					one key, served inside each tree as <code>apt/easysb.gpg</code>,
+					<code>rpm/RPM-GPG-KEY-easysb</code> and <code>pacman/easysb.asc</code>. Pick your
+					distribution below.</p>
 
 				<h3>Debian &middot; Ubuntu</h3>
 				<div class="cmd">
@@ -1269,12 +1272,17 @@ sudo apt-get install easysb</pre>
 				<h3>Fedora &middot; RHEL &middot; openSUSE</h3>
 				<div class="cmd">
 					{{template "copy"}}
-					<pre>sudo tee /etc/yum.repos.d/easysb.repo &gt;/dev/null &lt;&lt;'EOF'
+					<pre>sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
+
+sudo tee /etc/yum.repos.d/easysb.repo &gt;/dev/null &lt;&lt;'EOF'
 [easysb]
 name=EasySB
 baseurl=https://sb.kejizero.xyz/rpm/$basearch
 enabled=1
 type=rpm-md
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
 EOF
 
 # Fedora / RHEL
@@ -1287,10 +1295,16 @@ sudo zypper install easysb</pre>
 				<h3>Arch Linux</h3>
 				<div class="cmd">
 					{{template "copy"}}
-					<pre>sudo tee -a /etc/pacman.conf &gt;/dev/null &lt;&lt;'EOF'
+					<pre>curl -fsSL https://sb.kejizero.xyz/pacman/easysb.asc -o /tmp/easysb.asc
+sudo pacman-key --add /tmp/easysb.asc
+
+# locally trust the key that just went in
+sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/easysb.asc | awk -F: '/^fpr:/{print $10; exit}')"
+
+sudo tee -a /etc/pacman.conf &gt;/dev/null &lt;&lt;'EOF'
 
 [easysb]
-SigLevel = Optional TrustAll
+SigLevel = Required DatabaseRequired
 Server = https://sb.kejizero.xyz/pacman/$arch
 EOF
 

@@ -18,10 +18,11 @@
 - **三种格式同源**：`.deb` / `.rpm` / pacman 都由 `make pkg-stage` 生成同一棵暂存树，再按架构由 `make packages-asset` 一次产出三包；二进制、systemd 单元与安装路径只有一处定义，三个包内容一致。发布工作流的打包作业因此按架构产出全部格式，Release 资产同时带上三种安装包。
 - **四份软件源与发布服务器**：`make repo` 把同一批文件摊成四种客户端要的形态——apt 是扁平的 deb 源（`make apt-index` 跑 `apt-ftparchive` 并签名）、rpm 按架构成 rpm-md 目录（`createrepo_c`）、pacman 按架构成数据库（`repo-add`）、`bin/` 放发布压缩包。发布工作流用 FTP-Deploy-Action 以 FTPS 把这些同步到 `sb.kejizero.xyz`，安装脚本里写的就是这个固定地址。`packaging/server/` 放站点首页与一次性置备脚本：装 caddy、写站点配置、建站点目录、装 vsftpd 并建一个只能写站点根的账号，由 “Provision the release server” 工作流驱动。
 - **`install.sh` 三种方式分开**：一键 / 软件源 / 手动安装包各有各的路径。源安装的 apt 写法用 `/etc/apt/keyrings` 加 `.sources`（`Signed-By`），rpm 区分 dnf5 的 `config-manager addrepo --from-repofile` 与 dnf4 直接读仓库文件，pacman 写 `pacman.conf` 段落；手动安装认得 `.deb` / `.rpm` / `.pkg.tar.zst` / `.tar.gz`。
-- **签名密钥带口令**：发布用 `GPG_PRIVATE_KEY` 与 `GPG_PASSPHRASE` 两个 secret，签名时口令从 0600 临时文件读入，不进进程列表；公钥以 `easysb.gpg` 与索引同目录提供。
+- **三份源统一签名**：发布用 `GPG_PRIVATE_KEY` 与 `GPG_PASSPHRASE` 两个 secret，签名时口令从 0600 临时文件读入，不进进程列表。apt 签 `Release` / `InRelease`，rpm 用 `rpm --addsign` 签每个包并用 armored detached 签名签每个架构的 `repomd.xml`，pacman 签每个包与 `easysb.db`；公钥按各客户端的要求随源发布为 `apt/easysb.gpg`（二进制 keyring）、`rpm/RPM-GPG-KEY-easysb` 与 `pacman/easysb.asc`（armored）。
 
 ### 修复
 
+- **rpm / pacman 源不再因未签名而被拒**：README 与站点页原先给出的 rpm 条目既没有公钥也没关掉校验，而 dnf5 对新仓库默认 `gpgcheck=1`，安装停在 `Package ... is not signed` / `GPG check FAILED`；pacman 段落则在未签名的情况下声明 `Required`。现在三份源一律签名：rpm 条目写 `gpgcheck=1`、`repo_gpgcheck=1` 与 `gpgkey=`，pacman 段落写 `SigLevel = Required DatabaseRequired` 并由 `install.sh` 导入并本地信任公钥；只有服务器上确实取不到公钥时才退回 `gpgcheck=0` / `Optional TrustAll` 并打印提示。
 - **自签占位证书不再被当成已签发**：`Paths` 为了让内核在首次签发前有证书可服务，会解析自签占位对，但 `dueForRenewal` 曾把它的十年有效期当作真实证书，导致第一次签发 `Issue` 直接返回成功、其实什么都没签。现在自签占位一律视为到期，`Issue` / `Renew` 会真正走 ACME。
 - **订阅服务的 TLS 判定与打印的 URL 一致**：监听端改用 `cert.Usable`（与 `subscribe.Endpoint`、面板告警同一个判断），自签占位存在时改为明文 HTTP，不再出现「用自签证书提供 TLS、却打印 `http://` 地址」的不可用订阅。
 - **流量记账基线只在落盘后推进**：采样基线原先在 `Apply` / `Save` 之前前进，任何一次失败都会让那一轮增量在下一轮被减掉、永久丢失；现在只有 `Save` 成功后才推进。

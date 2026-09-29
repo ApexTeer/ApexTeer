@@ -39,7 +39,11 @@
 - The package sources live on the release server, not on a second release tag, so
   `install.sh --method repo` has one fixed address (`https://sb.kejizero.xyz`)
   to point at. Its four subtrees are `apt/`, `rpm/<arch>/`, `pacman/<arch>/` and
-  `bin/`; `make repo` builds them and the workflow syncs them there.
+  `bin/`; `make repo` builds them and the workflow syncs them there. The three
+  index subtrees are signed with one key when `GPG_KEY_ID` is set, and each
+  publishes that key inside its own tree: `apt/easysb.gpg`, `rpm/RPM-GPG-KEY-easysb`
+  and `pacman/easysb.asc`. `install.sh --method repo` writes the strict entry only
+  when it finds that key on the server, and the permissive form otherwise.
 
 ## Commits
 
@@ -80,10 +84,11 @@
   the favicon. The template and the favicon travel as `dist/repo/.easysb/browse.html`
   and `dist/repo/.easysb/favicon.svg`, so `make repo` is the only place that decides
   where they land.
-- The apt index is signed with a passphrase-protected key: the secrets are
-  `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, and signing reads the passphrase from a
-  0600 file so it never reaches a process list. Run the "Provision the release
-  server" workflow once; `FTP_PASSWORD` and `SERVER_SSH_PASSWORD` are what it needs.
+- The apt index, the rpm-md trees and the pacman database are signed with one
+  passphrase-protected key: the secrets are `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`,
+  and signing reads the passphrase from a 0600 file so it never reaches a process
+  list. Run the "Provision the release server" workflow once; `FTP_PASSWORD` and
+  `SERVER_SSH_PASSWORD` are what it needs.
   The server's address and the account the provisioning run logs in as are secrets as
   well (`SERVER_HOST`, `SERVER_USER`), so neither is written into the repository and
   moving to another host is a settings change, not a commit.

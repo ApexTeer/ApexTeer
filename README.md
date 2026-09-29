@@ -189,9 +189,11 @@ sudo apt-get update
 sudo apt-get install easysb
 ```
 
-`install.sh --method repo` writes exactly those two files for you and runs the install. If the index is ever published unsigned, the entry to use is `Trusted: yes` in place of `Signed-By:`.
+`install.sh --method repo` writes exactly those two files for you and runs the install.
 
-To publish a signed index, add an armored private key as the repository secret `GPG_PRIVATE_KEY` and its passphrase as `GPG_PASSPHRASE`. The release workflow imports the key, signs `Release` with it and publishes `InRelease`, `Release.gpg` and the public key as `easysb.gpg`. The passphrase is read from a file, so it never reaches a process list. Without the secret the index is published unsigned, and the `Trusted: yes` form is the one to use.
+All three sources are signed with one key. Add the armored private key as the repository secret `GPG_PRIVATE_KEY` and its passphrase as `GPG_PASSPHRASE`; the release workflow imports it and signs every artifact: apt's `Release` (`InRelease` and `Release.gpg`), each `.rpm`, the rpm-md `repomd.xml`, each pacman package and the pacman database. The passphrase is read from a file, so it never reaches a process list. The public key travels with each source under the name that source expects: `apt/easysb.gpg` as the binary keyring apt's `Signed-By` needs, and `rpm/RPM-GPG-KEY-easysb` and `pacman/easysb.asc` armored.
+
+A release run without the secret publishes unsigned sources, and each entry then has a permissive form: `Trusted: yes` in place of `Signed-By:`, `gpgcheck=0` and `repo_gpgcheck=0` with no `gpgkey`, and `SigLevel = Optional TrustAll`. `install.sh --method repo` picks whichever form matches what the server actually published.
 
 ---
 
@@ -203,24 +205,42 @@ Both also come from the release server as real repositories, an rpm-md tree and 
 
 ```bash
 # Fedora / RHEL / openSUSE
+sudo rpm --import https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
 sudo tee /etc/yum.repos.d/easysb.repo >/dev/null <<'EOF'
 [easysb]
 name=EasySB
 baseurl=https://sb.kejizero.xyz/rpm/$basearch
 enabled=1
 type=rpm-md
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://sb.kejizero.xyz/rpm/RPM-GPG-KEY-easysb
 EOF
 sudo dnf install easysb
 
 # Arch
+curl -fsSL https://sb.kejizero.xyz/pacman/easysb.asc -o /tmp/easysb.asc
+sudo pacman-key --add /tmp/easysb.asc
+
+# locally trust the key that just went in
+sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/easysb.asc | awk -F: '/^fpr:/{print $10; exit}')"
+
 sudo tee -a /etc/pacman.conf >/dev/null <<'EOF'
 
 [easysb]
-SigLevel = Optional TrustAll
+SigLevel = Required DatabaseRequired
 Server = https://sb.kejizero.xyz/pacman/$arch
 EOF
 sudo pacman -Sy && sudo pacman -S easysb
 ```
+
+The `rpm --import` puts the key in the rpm database, which is what dnf and zypper
+both verify against. `gpgcheck` verifies every package and `repo_gpgcheck`
+verifies `repomd.xml` against its `repomd.xml.asc`, so the entry refuses an
+unsigned or altered file. pacman verifies the database (`DatabaseRequired`) and
+each package (`Required`) against the same key, which has to be locally trusted
+once. `install.sh --method repo` writes both entries and does both key imports
+for you.
 
 Single files are still on the release page if you prefer to install by hand:
 
@@ -265,7 +285,7 @@ The setup and the release runs need six repository secrets:
 
 | Secret | Used by | What it is |
 | :--- | :--- | :--- |
-| `GPG_PRIVATE_KEY` | release | the armored signing key, optional |
+| `GPG_PRIVATE_KEY` | release | the armored key apt, rpm and pacman are all signed with, optional |
 | `GPG_PASSPHRASE` | release | that key's passphrase, only when it has one |
 | `FTP_PASSWORD` | release | the password of the server's upload account |
 | `SERVER_SSH_PASSWORD` | provision | the server's root password, only for the one-time setup |
