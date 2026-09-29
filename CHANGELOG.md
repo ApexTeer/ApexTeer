@@ -33,6 +33,15 @@
 - **表单的字段提示重新显示**：`formModel.hint` 一直被赋值却从不渲染，账号配额 / 到期时间等输入框的「示例 50GB」「示例 2026-12-31 或 30d」提示因此丢失，现已在按键提示行前显示。
 - **表单页面不再破坏固定版式**：`formScreen` 原先自绘整屏面板，丢掉状态条、把卡片从窗口首行拉到末行，任何输入框一打开面板就变形；该页面又无法用 `--render` 渲染，所以没有测试发现它。现在表单与运行 / 结果页同框——状态条、占正文两框位置的单张卡片、下方按键框——`--screen form` 可渲染，`make screens` 与 TUI 测试一并覆盖表单、运行、结果三个页面。
 - **方向键只移动光标，不再执行目录项**：`menuColumns` 只按「主菜单 / 子菜单」判断列数，而子菜单在条目多到一行放不下时会回退成双列（`entryRows`），于是服务管理、节点参数、SNI、账号详情这些双列页面被当成单列——`→` 变成回车，会在服务管理里启动 / 重启服务、在账号详情里删除账号；`←` 变成返回。现在 `menuColumns` 与渲染同源（`itemCount() > boxRows(layout.menu)`），`←`/`→` 只换列，单列页面不做任何事；`Enter` 只进入与确认，`Esc` 只返回。系统信息页原先也让 `→` 漏到全局处理，会在看不见的菜单里进入一层，现在该页接管全部方向键。
+- **配置文件的凭据不再人人可读**：渲染出的 `/etc/sing-box/config.json` 是完整的 `users` 数组——每个协议、每个账号的 `uuid` 与 `password`——却按 `0644` 落盘，默认 umask 下同机任何普通用户都能读到全部可用凭据；账号库 `easysb-users.json` 一直是 `0600`，同一份密钥的另一种形态没有理由更宽松。现在写入即 `0600`，并额外 chmod 一次：`WriteFile` 不改已存在文件的权限，已经部署过的机器要靠这一步才收得回来。
+- **防火墙开机单元的启用失败不再被吞掉**：`firewall.UnitAction` 拿到了 `systemctl` 的输出，却用 `_ = out` 丢掉并无条件 `return nil`，于是面板里三处 `if err != nil` 与卸载里的一处都是死代码：单元启用不了（缺单元、SELinux 拒绝、`/etc` 只读）时界面照样报成功，而端口跳跃规则在下次重启后就没了。现在错误带输出一起返回，命令走 `runUnitAction` 这个测试接缝，失败路径也有测试。
+- **订阅服务监听失败时释放端口**：`Run` 在 serve 出错时直接返回，不关 listener 也不停记账循环，于是「起来过一次又失败」的进程仍占着端口，systemd 重启它的那一次反而绑不上；现在先 `server.Close()` 再返回。启动日志同时补上 `Options.Version`——该字段一直声称会出现在日志里，却是唯一没人读的字段。
+- **取消任务后不再启动排队中的探测**：`unlock.Check` 等待并发槽位时不看 context，离开「服务解锁状态」页面后，排在后面的探测仍会在已取消的 context 上逐个跑完；现在等待槽位也 select `ctx.Done()`。测试把占用槽位的那个探测卡在请求里，顺序因此是确定的：没有这个修复时，17 个服务的目录会发出 21 次请求。
+- **部署失败时保留内核给出的原因**：`deploy.Apply` 只返回 `ErrRejected`，把引擎「哪个字段不合法」的信息丢掉了，而唯一的消费方是一行日志，运维看到的只有「内核拒绝了生成的配置」；现在哨兵错误包住原因，`errors.Is` 照常可用。
+- **`sbcore.Check` / `Run` 使用调用方的 context**：两者都拿 `context.Background()` 另建 context，调用方的取消到不了引擎——部署里最慢的一步（真实引擎构建并关闭配置）因此无法中断，停止节点时取消也到不了监听器。`engineContext` 现在接收父 context。
+- **下载结束时的关闭错误不再被吞**：`DownloadWithProgress` 用 `defer f.Close()` 丢掉关闭错误、最后只 `return f.Sync()`，而有些文件系统只在 `close(2)` 才报延迟写入失败；这条路径正是自更新替换运行中二进制的那条，半个文件会被当成写完。
+- **状态文件改用唯一临时名**：`state.Save` 原先写可预测的 `easysb.conf.tmp` 再改名，固定路径可以被预先摆好的符号链接利用，两个写入者共用一个临时名也会交错出截断内容；现在与账号库一致地用 `os.CreateTemp`。
+- **带预算的测速测试不再卡在边界**：`TestNearbyStopsWhenBudgetSpent` 用 4 个节点各 100 ms 对 300 ms 预算，而预算是在每个节点开始前检查的，于是第 4 个节点的时刻正好落在 deadline 上——节点数取决于三次 sleep 之和落在 300 ms 的哪一侧，空闲机器上 20 次跑出 4 次失败（负载下反而不失败，因为负载把它推过边界）。参数现在留出 200 ms 余量，断言也改成说清测试意图。
 
 ### 移除
 
@@ -50,6 +59,12 @@
   解析出的版本派生。
 - `install.sh` 的源码构建兜底 `DEFAULT_TAGS` 与 `release/TAGS` 对齐为 `with_quic,with_utls,with_v2ray_api`（离开源码树、读不到 `release/TAGS` 时的唯一兜底）。
 - 清理死代码：TUI 不可达的 `q` 分支、未使用的 `menuDescColumn` / `menuRowParts`、`progressModel.afterLinks` 字段，以及主题里已随左侧导航移除的 `Metrics.Gutter` / `Metrics.NavWidth`。
+- **CI 执行完整提交前关卡**：工作流过去只跑 `make test`，`gofmt` 与 `go vet`——`AGENTS.md` 与 `docs/conventions.md` 称为「提交前关卡」里的另外两项——只在开发者的机器上执行过，谁忘了都没有人拦；现在跑 `make check`，并单独跑一次 `make test-race`（竞态检测要查的是记账循环与订阅服务这类并发代码，也太慢，不塞进关卡）。
+- **pull request 也有门禁，且不会发布**：此前只有 `push: master` 触发，合并进 master 后才第一次构建，接着就发布 Release 并同步到发布服务器；现在 pull request 走同一套工作流（检查、交叉编译、打包都值得在合并前过一遍），而 `release` 与 `deploy` 带 `if: github.event_name != 'pull_request'`，分支上不可能发布。
+- **固定 Actions 版本并收窄令牌**：所有 `uses:` 从可变的 major tag 改为具体 commit，版本号留在行尾注释里供 dependabot 继续升级；`permissions` 默认降为 `contents: read`，只有上传资产并清理旧资产的 `release` 自己声明 `contents: write`。原来 `deploy`（持有服务器口令与 GPG 私钥）与发布作业共用同一个宽权限令牌，而两者合起来足以发布被签名的包——正是 `install.sh` 会信任的那批产物。
+- **`make` 在 `VERSION` / `release/TAGS` 读不到时直接报错**：`VERSION` 原本带 `2>/dev/null` 且没有兜底，文件缺失会静默产出 `easysb__linux_amd64.deb` 这类畸形资产名；`release/TAGS` 为空则会静默丢掉 `with_v2ray_api` 等能力位，两者都是发布之后才会发现的问题。`vet` 同时改为发布标签与无标签各跑一遍，此前 `stats_on.go`、`disk_linux.go` 这些带标签的另一半从未被 vet 过。
+- **整棵树固定 LF**：`.gitattributes` 原先只固定 `*.sh` 与 `release/TAGS`，`core.autocrlf=true`（Git for Windows 默认）的检出会把 CRLF 写进每个 Go 文件，于是 `make check` 的 `gofmt -l` 在那种机器上把 158 个 Go 文件全部报成未格式化，而代码本身没动过。`.editorconfig` 早已声明全树 LF，现在 git 与它一致。
+- 文档订正：`docs/pitfalls.md` 里「`make_latest: false`」与工作流实际的 `true` 矛盾（工作流早已改过，只有文档停在过去）；`docs/architecture.md` 的包清单补上一直漏掉的 `internal/deploy` 与 `internal/ui`，`config.json` 的 `0600` 写进运行时路径表。
 
 ## [5.0.0] - 2026-09-26
 
