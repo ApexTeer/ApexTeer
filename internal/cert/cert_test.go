@@ -524,8 +524,8 @@ func TestOthersAndStrayAddress(t *testing.T) {
 	}
 
 	// The CA's own wording, as it survives into the error lego returns.
-	real := errors.New(`issue: dev.example.com: Invalid status. Verification error details: During secondary validation: 103.185.248.26: Fetching http://dev.example.com/.well-known/acme-challenge/abc: Connection refused`)
-	if got := StrayAddress(real); got != "103.185.248.26" {
+	caError := errors.New(`issue: dev.example.com: Invalid status. Verification error details: During secondary validation: 103.185.248.26: Fetching http://dev.example.com/.well-known/acme-challenge/abc: Connection refused`)
+	if got := StrayAddress(caError); got != "103.185.248.26" {
 		t.Fatalf("StrayAddress = %q, want 103.185.248.26", got)
 	}
 	if got := StrayAddress(errors.New("issue: something else went wrong")); got != "" {

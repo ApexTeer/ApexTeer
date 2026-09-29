@@ -394,7 +394,7 @@ func renewOne(ctx context.Context, acct *account, domain string) error {
 //
 // ctx is in the signature for symmetry with the calls that do reach the CA;
 // nothing here is remote, so it is not used.
-func Remove(ctx context.Context, domain string) error {
+func Remove(_ context.Context, domain string) error {
 	domain, err := cleanDomain(domain)
 	if err != nil {
 		return err

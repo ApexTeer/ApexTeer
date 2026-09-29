@@ -532,10 +532,9 @@ func TestBoardSettingsChooseWhatTheBoardShows(t *testing.T) {
 		t.Fatalf("select all left the hardware group at %d/%d", on, total)
 	}
 	a.setBoardAll(false)
-	if !a.boardSelected(tools.BoardDefault()[0]) {
-		// Nothing is selected, so a default entry must be off as well.
-	} else {
-		t.Fatalf("clear all should have turned every entry off")
+	// Nothing is selected, so a default entry has to be off as well.
+	if a.boardSelected(tools.BoardDefault()[0]) {
+		t.Fatal("clear all should have turned every entry off")
 	}
 }
 
@@ -569,7 +568,7 @@ func TestNumberedMenuAndDigitSelection(t *testing.T) {
 func TestFormSubmit(t *testing.T) {
 	a := newTestApp(t)
 	var got string
-	a.openForm("UUID", "enter value", "abc", "", func(a *App, v string) (tea.Cmd, error) {
+	a.openForm("UUID", "enter value", "abc", "", func(_ *App, v string) (tea.Cmd, error) {
 		got = v
 		return nil, nil
 	})
@@ -591,7 +590,7 @@ func TestFormSubmit(t *testing.T) {
 
 func TestFormValidationKeepsOpen(t *testing.T) {
 	a := newTestApp(t)
-	a.openForm("title", "prompt", "", "", func(a *App, v string) (tea.Cmd, error) {
+	a.openForm("title", "prompt", "", "", func(_ *App, _ string) (tea.Cmd, error) {
 		return nil, errors.New("bad value")
 	})
 

@@ -80,12 +80,12 @@ func (a *App) layoutFor(w, h int) layout {
 	// can say "…还有 N 行" and still be useful — and the entries box only shrinks once the
 	// board is already at its floor.
 	tail := a.tailRows(h)
-	if max := h - gap - minBoardRows - minMenuRows; tail > max {
-		tail = maxInt(1, max)
+	if limit := h - gap - minBoardRows - minMenuRows; tail > limit {
+		tail = maxInt(1, limit)
 	}
 	menu := a.menuSlotRows(w)
-	if max := h - gap - tail - minBoardRows; menu > max {
-		menu = maxInt(minMenuRows, max)
+	if limit := h - gap - tail - minBoardRows; menu > limit {
+		menu = maxInt(minMenuRows, limit)
 	}
 	// The board never grows past the welcome card it was measured from: a taller terminal
 	// leaves the empty rows at the bottom rather than stretching the card, which is the look

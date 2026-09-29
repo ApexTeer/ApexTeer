@@ -28,7 +28,7 @@ func TestSystemInfo(t *testing.T) {
 			name: "full fixture",
 			fs:   fullSystemFS(),
 			cmd:  fullSystemCmd(),
-			check: func(t *testing.T, res toolbox.Result, cmd *fakeCmd) {
+			check: func(t *testing.T, res toolbox.Result, _ *fakeCmd) {
 				want := map[string]string{
 					labelHostname:  "vps01",
 					labelDistro:    "Ubuntu 24.04.1 LTS",

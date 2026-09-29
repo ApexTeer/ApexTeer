@@ -18,7 +18,7 @@ import (
 // whole file rather than a tick short of it.
 func TestDownloadReportsProgress(t *testing.T) {
 	body := bytes.Repeat([]byte("x"), 1<<20)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		if _, err := w.Write(body); err != nil {
 			t.Errorf("write: %v", err)
@@ -31,7 +31,7 @@ func TestDownloadReportsProgress(t *testing.T) {
 	var readings []int64
 	var label string
 	var total int64
-	err := DownloadWithProgress(context.Background(), srv.URL+"/easysb-linux-amd64", dest, time.Minute,
+	err := WithProgress(context.Background(), srv.URL+"/easysb-linux-amd64", dest, time.Minute,
 		func(l string, done, size int64) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -39,7 +39,7 @@ func TestDownloadReportsProgress(t *testing.T) {
 			label, total = l, size
 		})
 	if err != nil {
-		t.Fatalf("DownloadWithProgress: %v", err)
+		t.Fatalf("WithProgress: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -67,7 +67,7 @@ func TestDownloadReportsProgress(t *testing.T) {
 // TestDownloadRefusesAnErrorStatus keeps a failure page from being installed as if it
 // were the file: the caller only ever sees a complete body.
 func TestDownloadRefusesAnErrorStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "gone", http.StatusNotFound)
 	}))
 	defer srv.Close()
@@ -83,7 +83,7 @@ func TestDownloadRefusesAnErrorStatus(t *testing.T) {
 // means installing a half-written binary over the running one.
 func TestDownloadRefusesATruncatedBody(t *testing.T) {
 	body := bytes.Repeat([]byte("x"), 64<<10)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body[:len(body)/4])

@@ -326,7 +326,7 @@ func toolWordKind(value string) ui.Kind {
 
 // toolboxBody is the section's 看板: the last outcome of every tool that has run, and a
 // count of the ones that have not. It never runs a tool itself.
-func (a *App) toolboxBody(w int, limit int) []string {
+func (a *App) toolboxBody(w int, _ int) []string {
 	s := a.style()
 	lang := a.lang
 	inner := ui.InnerWidth(s, w)

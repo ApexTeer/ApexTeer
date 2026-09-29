@@ -342,16 +342,6 @@ func notesContain(res toolbox.Result, want string) bool {
 	return false
 }
 
-// noteWith returns the first note carrying the substring, for a failure message.
-func noteWith(res toolbox.Result, want string) string {
-	for _, n := range res.Notes {
-		if strings.Contains(n, want) {
-			return n
-		}
-	}
-	return ""
-}
-
 // checkShape asserts the table contract: the header count matches every row, no cell is
 // empty, and the summary is one line.
 func checkShape(t *testing.T, res toolbox.Result) {

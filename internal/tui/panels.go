@@ -12,10 +12,6 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
-// keyColumn is the display width reserved for a key before its value, keeping
-// the two columns of a two-column row aligned.
-const keyColumn = 13
-
 // hintRows is the height of the pinned hint box, or zero when the terminal is
 // too short to spare the rows. Every screen shares this so the box keeps one
 // position and size.
