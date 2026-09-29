@@ -28,6 +28,18 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   the run dies immediately with `sshpass: -e option given but "SSHPASS"
   environment variable is not set` and `connection unexpectedly closed (0 bytes
   received so far)`. Run `rsync` directly and let `RSYNC_RSH` own the password.
+- **Build rpm format 4, or the packages look unsigned on RHEL-family hosts.**
+  rpm 6 sets `%_rpmformat 6`, so `rpmbuild` on Ubuntu 26.04 emits format 6
+  packages, and `rpm --addsign` then writes only an OpenPGP v6 signature
+  (`RPMSIGTAG_OPENPGP`). rpm at or below 4.20 - RHEL/CentOS/Rocky 9 and 10,
+  Fedora 41 and 42 - ignores that tag, so `dnf` fails with `Package ... is not
+  signed` / `Error: GPG check FAILED` even though the package was signed and the
+  index signature verifies. `packages.sh` therefore passes
+  `--rpmbuild-define "_rpmformat 4"` to fpm; rpm 6 then writes the signature into
+  the legacy RSA/DSA tag. A local rpm 4.18 cannot tell the two apart (it does not
+  know `_rpmformat` and always builds format 4), so this only reproduces on the
+  newer runner: check a published package with `rpm -qp --qf
+  '%{RPMFORMAT}\n'`, which prints `6` before the fix and nothing after it.
 
 ## Version and identity
 
