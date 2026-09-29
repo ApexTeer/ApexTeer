@@ -110,6 +110,12 @@ func Default() Config {
 // stateFile is where the node state is read and written. It is a variable so that a
 // test can round-trip a state file in a temporary directory: what such a test is about
 // is the document and the file left behind, and neither belongs in /etc on a build host.
+//
+// It is the only seam here on purpose. Save creates the directory this file lives in
+// rather than a directory named separately, because a second variable is a second thing
+// a test can forget to redirect - and on a machine where the drive root is writable,
+// MkdirAll of the real /etc/sing-box succeeds quietly instead of failing, so the test
+// passes while writing nowhere near where it thinks it is.
 var stateFile = sysinfo.StateFile
 
 // Load reads the state file, applying defaults for any missing value.
@@ -228,8 +234,14 @@ func (c Config) SubPort() int {
 
 // Save writes the state back to disk with 0600 permissions.
 func (c Config) Save() error {
-	if err := os.MkdirAll(sysinfo.WorkDir, 0o755); err != nil {
-		return err
+	// The directory comes from stateFile, not from sysinfo.WorkDir: this is the line that
+	// used to reach /etc during a test. On the CI runner it failed with "mkdir
+	// /etc/sing-box: permission denied"; on a Windows checkout the same call succeeded and
+	// created D:\etc\sing-box, so the test looked green while the seam leaked.
+	if dir := filepath.Dir(stateFile); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 	}
 	enabledKey := map[string]string{
 		ProtoAnyTLS:       "IS_ANYTLS",
