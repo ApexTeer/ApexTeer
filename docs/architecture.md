@@ -46,7 +46,7 @@ editing.
 | Path | Owner | Purpose |
 | :--- | :--- | :--- |
 | `/etc/sing-box/easysb.conf` | `internal/state` | persisted node state, legacy-compatible KV |
-| `/etc/sing-box/config.json` | `internal/config` | rendered server config |
+| `/etc/sing-box/config.json` | `internal/config` | rendered server config; carries the same credentials as the account store, so it is `0600` too |
 | `/etc/sing-box/cert/` | `internal/cert` | the self-signed placeholder pair, used until a real certificate is issued |
 | `/etc/sing-box/easysb-users.json` | `internal/user` | accounts: credentials, quotas, expiry and counters (`0600`) |
 | `/etc/systemd/system/easysb.service` or `/etc/init.d/easysb` | `internal/service` | subscription service unit (`easysb --serve`) |

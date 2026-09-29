@@ -60,17 +60,32 @@ func ServerConfig(cfg state.Config, accounts []user.User) ([]byte, error) {
 	return config.Build(params)
 }
 
+// The document lands at these paths. They are variables so that a test can render a
+// deployment into a temporary directory: what such a test is about is the document the
+// core accepts and the mode it lands with, and neither belongs in /etc on a build host.
+var (
+	configDir  = sysinfo.WorkDir
+	configPath = sysinfo.ConfigJSON
+)
+
 // WriteServerConfig renders the configuration and writes it to
-// /etc/sing-box/config.json.
+// /etc/sing-box/config.json. The document carries every account's credentials — the
+// uuid and password of each enabled protocol — so it is 0600, the same rule the account
+// store follows. Only the core reads it, and the core runs as root.
 func WriteServerConfig(cfg state.Config, accounts []user.User) ([]byte, error) {
 	data, err := ServerConfig(cfg, accounts)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(sysinfo.WorkDir, 0o755); err != nil {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(sysinfo.ConfigJSON, data, 0o644); err != nil {
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		return nil, err
+	}
+	// WriteFile leaves the mode of a file that already exists alone, so a config.json
+	// written by an earlier version stays world-readable until its mode is set here.
+	if err := os.Chmod(configPath, 0o600); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -91,7 +106,7 @@ func Apply(ctx context.Context, cfg state.Config, accounts []user.User) error {
 	if _, err := WriteServerConfig(cfg, accounts); err != nil {
 		return err
 	}
-	if err := sbcore.Check(ctx, sysinfo.ConfigJSON); err != nil {
+	if err := sbcore.Check(ctx, configPath); err != nil {
 		return ErrRejected
 	}
 	return service.Do(ctx, "restart")

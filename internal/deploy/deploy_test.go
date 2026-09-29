@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,15 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
+
+// writeInto points the deployment's config paths at a temporary directory for one test.
+func writeInto(t *testing.T, dir string) {
+	t.Helper()
+	originalDir, originalPath := configDir, configPath
+	t.Cleanup(func() { configDir, configPath = originalDir, originalPath })
+	configDir = dir
+	configPath = filepath.Join(dir, "config.json")
+}
 
 // testAccount returns one account that selected every protocol, with credentials.
 func testAccount(t *testing.T) user.User {
@@ -132,5 +142,57 @@ func TestServerConfigRefusesRealityWithoutKeypair(t *testing.T) {
 	cfg.RealityPriv, cfg.RealityPub = "", ""
 	if _, err := ServerConfig(cfg, nil); !errors.Is(err, ErrNoRealityKey) {
 		t.Fatalf("ServerConfig without a keypair = %v, want %v", err, ErrNoRealityKey)
+	}
+}
+
+// TestWriteServerConfigKeepsCredentialsRootOnly covers the one file the panel writes
+// that carries every account's credentials: the uuid and password of each enabled
+// protocol. The account store is 0600 and this document is the same secret in another
+// shape, so a group or world readable mode here hands every local user of the host a set
+// of working credentials.
+func TestWriteServerConfigKeepsCredentialsRootOnly(t *testing.T) {
+	const domain = "example.com"
+	installTestCertificate(t, t.TempDir(), domain)
+
+	dir := t.TempDir()
+	writeInto(t, dir)
+
+	cfg := state.Default()
+	cfg.Domain = domain
+	cfg.Enabled = taggedProtocols()
+
+	document, err := WriteServerConfig(cfg, []user.User{testAccount(t)})
+	if err != nil {
+		t.Fatalf("WriteServerConfig: %v", err)
+	}
+	path := filepath.Join(dir, "config.json")
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the written config: %v", err)
+	}
+	if string(written) != string(document) {
+		t.Fatal("the file on disk is not the document that was returned")
+	}
+
+	// WriteFile leaves the mode of a file that already exists alone, so a config.json
+	// that an earlier version left at 0644 has to be brought back rather than skipped.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("widen the mode: %v", err)
+	}
+	if _, err := WriteServerConfig(cfg, []user.User{testAccount(t)}); err != nil {
+		t.Fatalf("WriteServerConfig over an existing file: %v", err)
+	}
+
+	if runtime.GOOS == "windows" {
+		// Windows has no Unix permission bits, so only the write path is asserted here.
+		// The mode assertion is what Linux CI runs.
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat the written config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("config.json mode = %04o, want 0600: it carries every account's credentials", got)
 	}
 }
