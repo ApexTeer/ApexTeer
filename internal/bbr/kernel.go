@@ -90,8 +90,14 @@ func Install(ctx context.Context, log func(string), progress download.Progress, 
 	}
 	log("release " + tag)
 
-	dir := filepath.Join(WorkDir, tag)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// A directory of our own, named by MkdirTemp rather than by this package. The
+	// packages that land here are checked with dpkg-deb and then handed to dpkg -i, and a
+	// fixed path under /tmp is one an unprivileged user can have prepared beforehand -
+	// as a directory they own, or as a symlink - to replace a package between the check
+	// and the install, or to have the check pass on a file the install does not use.
+	// 0700 under the sticky bit of /tmp leaves nobody else able to reach in.
+	dir, err := os.MkdirTemp("/tmp", "easysb-bbr-")
+	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)

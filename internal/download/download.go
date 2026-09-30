@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"time"
 )
 
@@ -83,13 +84,24 @@ func WithProgress(ctx context.Context, url, dest string, timeout time.Duration, 
 		return fmt.Errorf("download %s: %s", url, resp.Status)
 	}
 
-	f, err := os.Create(dest)
+	// Stream into a file of our own beside dest and rename it into place once every byte
+	// is there. os.Create would write through whatever is at dest - following a symlink
+	// that had been left there, or truncating a file that belongs to something else - and
+	// both of this function's callers hand the result to something that trusts it as
+	// root: the kernel packages go to dpkg, the release tarball replaces the running
+	// binary. A name the caller cannot predict, created exclusively, is what makes the
+	// file the download's own; the rename is also what makes a failed download leave the
+	// destination untouched instead of half written.
+	dir := filepath.Dir(dest)
+	f, err := os.CreateTemp(dir, filepath.Base(dest)+".part-*")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	body := &countingBody{body: resp.Body, report: progress, label: path.Base(url), total: resp.ContentLength}
 	if _, err := io.Copy(f, body); err != nil {
 		f.Close()
+		os.Remove(tmp)
 		return err
 	}
 	// The last tick may have been up to downloadTick before the end, so the finished
@@ -101,7 +113,16 @@ func WithProgress(ctx context.Context, url, dest string, timeout time.Duration, 
 	// running binary. A truncated download has to fail here rather than be installed.
 	if err := f.Sync(); err != nil {
 		f.Close()
+		os.Remove(tmp)
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
