@@ -404,13 +404,23 @@ func serviceState(verb string) string {
 }
 
 func readState() map[string]string {
-	result := map[string]string{}
-	f, err := os.Open(StateFile)
+	return ReadKeyValues(StateFile)
+}
+
+// ReadKeyValues parses the `KEY="value"` configuration file the legacy shell tool
+// wrote and /etc/sing-box/easysb.conf still uses. A line longer than the scanner's
+// default limit is accepted rather than silently truncating the rest of the file,
+// and a value written through %q round-trips because it is unquoted with the
+// matching rule.
+func ReadKeyValues(path string) map[string]string {
+	values := map[string]string{}
+	f, err := os.Open(path)
 	if err != nil {
-		return result
+		return values
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -421,13 +431,25 @@ func readState() map[string]string {
 			continue
 		}
 		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(val)
-		val = strings.Trim(val, `"'`)
-		if key != "" {
-			result[key] = val
+		if key == "" {
+			continue
+		}
+		values[key] = unquoteValue(val)
+	}
+	return values
+}
+
+// unquoteValue reads one value the way the shell that wrote it would: a
+// double-quoted value is a Go-escaped literal (the writer uses %q), so it is
+// unquoted with strconv.Unquote; a single-quoted or bare value is taken literally.
+func unquoteValue(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		if unquoted, err := strconv.Unquote(v); err == nil {
+			return unquoted
 		}
 	}
-	return result
+	return strings.Trim(v, `"'`)
 }
 
 func readInbounds() map[string]string {
@@ -454,7 +476,7 @@ func readInbounds() map[string]string {
 		if key == "" {
 			continue
 		}
-		result[key] = itoa(in.ListenPort)
+		result[key] = strconv.Itoa(in.ListenPort)
 	}
 	return result
 }
@@ -474,28 +496,6 @@ func normalizeType(t string) string {
 	default:
 		return ""
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
 }
 
 func run(timeout time.Duration, name string, args ...string) (string, error) {

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/MinimaxFlora/EasySB/internal/filelock"
 )
 
 // BoardEnv names the environment variable that moves the stored board. It exists for the
@@ -55,6 +57,21 @@ func LoadBoard(path string) Board {
 		board[id] = record
 	}
 	return board
+}
+
+// UpdateBoard runs fn over the stored board while holding the board's lock, then
+// saves the result. The panel and `--tool` both read-modify-write this file, often
+// on the same host, so the whole cycle runs under one lock: a run recorded by one
+// process is seen by the other instead of being overwritten by a copy read before it.
+func UpdateBoard(path string, fn func(Board)) error {
+	lock, err := filelock.Acquire(path)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	board := LoadBoard(path)
+	fn(board)
+	return SaveBoard(path, board)
 }
 
 // SaveBoard writes the board atomically: a temporary file beside it, then a rename, so a

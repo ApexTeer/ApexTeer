@@ -5,12 +5,16 @@
 package subscribe
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/state"
@@ -93,18 +97,12 @@ func ActiveTags(cfg state.Config, u user.User) []string {
 		if !cfg.Enabled[key] || !u.Selects(key) {
 			continue
 		}
-		if !credentialReady(u.Credential(key)) {
+		if !u.CredentialReady(key) {
 			continue
 		}
 		out = append(out, tag)
 	}
 	return out
-}
-
-// credentialReady reports whether every field a protocol authenticates with is
-// present.
-func credentialReady(cred user.Credentials) bool {
-	return cred.UUID != "" || cred.Password != ""
 }
 
 // ContentType returns the MIME type of a format's document.
@@ -167,7 +165,10 @@ func baseURL(cfg state.Config) string {
 	if cert.Usable(cfg.Domain) {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s:%d", scheme, host, cfg.SubPort())
+	// JoinHostPort brackets an IPv6 literal, which cfg.Host() can return when
+	// SERVER_IP is one: host:port would leave the address and the port as a single
+	// unparseable field.
+	return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(host, strconv.Itoa(cfg.SubPort())))
 }
 
 // DeepLink wraps a subscription URL into the sing-box import deep link.
@@ -240,8 +241,8 @@ func anytlsLink(cfg state.Config, username string, cred user.Credentials, host s
 	port := portOf(cfg, state.ProtoAnyTLS)
 	// The trailing slash before the query is required by the AnyTLS URI spec;
 	// omitting it makes clients reject the link.
-	return fmt.Sprintf("anytls://%s@%s:%s/?%s#%s",
-		url.User(cred.Password).String(), host, port, q.Encode(),
+	return fmt.Sprintf("anytls://%s@%s/?%s#%s",
+		url.User(cred.Password).String(), net.JoinHostPort(host, port), q.Encode(),
 		fragment(NodeName(username, tagFor[state.ProtoAnyTLS])))
 }
 
@@ -257,8 +258,8 @@ func hysteria2Link(cfg state.Config, username string, cred user.Credentials, hos
 		q.Set("mport", strings.ReplaceAll(cfg.HopRange, ":", "-"))
 	}
 	port := portOf(cfg, state.ProtoHysteria2)
-	return fmt.Sprintf("hysteria2://%s@%s:%s/?%s#%s",
-		url.User(cred.Password).String(), host, port, q.Encode(),
+	return fmt.Sprintf("hysteria2://%s@%s/?%s#%s",
+		url.User(cred.Password).String(), net.JoinHostPort(host, port), q.Encode(),
 		fragment(NodeName(username, tagFor[state.ProtoHysteria2])))
 }
 
@@ -273,8 +274,8 @@ func tuicLink(cfg state.Config, username string, cred user.Credentials, host str
 	q.Set("sni", host)
 	q.Set("insecure", "0")
 	port := portOf(cfg, state.ProtoTUIC)
-	return fmt.Sprintf("tuic://%s@%s:%s?%s#%s",
-		url.UserPassword(cred.UUID, cred.Password).String(), host, port, q.Encode(),
+	return fmt.Sprintf("tuic://%s@%s?%s#%s",
+		url.UserPassword(cred.UUID, cred.Password).String(), net.JoinHostPort(host, port), q.Encode(),
 		fragment(NodeName(username, tagFor[state.ProtoTUIC])))
 }
 
@@ -296,8 +297,8 @@ func vlessLink(cfg state.Config, username string, cred user.Credentials, host st
 	q.Set("pbk", cfg.RealityPub)
 	q.Set("sid", cfg.RealitySID)
 	port := portOf(cfg, state.ProtoVLESSReality)
-	return fmt.Sprintf("vless://%s@%s:%s?%s#%s",
-		url.User(cred.UUID).String(), host, port, q.Encode(),
+	return fmt.Sprintf("vless://%s@%s?%s#%s",
+		url.User(cred.UUID).String(), net.JoinHostPort(host, port), q.Encode(),
 		fragment(NodeName(username, tagFor[state.ProtoVLESSReality])))
 }
 
@@ -343,7 +344,11 @@ func QRCode(payload string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("qrencode not installed")
 	}
-	out, err := exec.Command(path, "-t", "UTF8", payload).CombinedOutput()
+	// The renderer runs under a timeout so a qrencode that hangs cannot hold the
+	// task goroutine open past the cancellation of the run that started it.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "-t", "UTF8", payload).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("qrencode: %w", err)
 	}

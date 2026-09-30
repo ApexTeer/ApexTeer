@@ -150,15 +150,17 @@ func (a *App) saveBoard() {
 	if a.boardPath == "" {
 		return
 	}
-	board := make(toolbox.Board, len(a.toolResults))
-	for id, outcome := range a.toolResults {
-		record := toolbox.Record{ID: id, When: outcome.when, Result: outcome.result}
-		if outcome.err != nil {
-			record.Error = outcome.err.Error()
+	// The board is merged into the stored one under its lock rather than written
+	// whole, so a run `--tool` recorded while the panel was open is kept.
+	_ = toolbox.UpdateBoard(a.boardPath, func(board toolbox.Board) {
+		for id, outcome := range a.toolResults {
+			record := toolbox.Record{ID: id, When: outcome.when, Result: outcome.result}
+			if outcome.err != nil {
+				record.Error = outcome.err.Error()
+			}
+			board[id] = record
 		}
-		board[id] = record
-	}
-	_ = toolbox.SaveBoard(a.boardPath, board)
+	})
 }
 
 // remember stores the interface choices so the next run starts where this one
@@ -536,6 +538,14 @@ func (a *App) selected() *node {
 func (a *App) setToast(msg string, warn bool) {
 	a.toast = msg
 	a.toastErr = warn
+}
+
+// taskToast is a message a finished task wants shown in the status bar. A task runs
+// on its own goroutine and never touches the interface, so it hands the message back
+// through the reporter and the render goroutine sets it.
+type taskToast struct {
+	msg  string
+	warn bool
 }
 
 func (a *App) enter() tea.Cmd {

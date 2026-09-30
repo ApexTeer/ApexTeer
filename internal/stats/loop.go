@@ -103,17 +103,19 @@ func (l *Loop) Tick(ctx context.Context) error {
 		}
 		return nil
 	}
-	store, err := user.Load(l.opts.AccountsPath)
+	// The account names are read without the lock: sampling the core is the slow
+	// part of the cycle and only needs the names, not the file held open.
+	peek, err := user.Load(l.opts.AccountsPath)
 	if err != nil {
 		return err
 	}
-	if store.Len() == 0 {
+	if peek.Len() == 0 {
 		l.sample, l.sampled = nil, false
 		return nil
 	}
 
-	names := make([]string, 0, store.Len())
-	for _, u := range store.Users() {
+	names := make([]string, 0, peek.Len())
+	for _, u := range peek.Users() {
 		names = append(names, u.Token)
 	}
 	counters, err := l.counters(ctx, names)
@@ -122,6 +124,13 @@ func (l *Loop) Tick(ctx context.Context) error {
 	}
 	deltas := diffCounters(l.sample, counters, l.sampled)
 
+	// The deltas are added under the account lock, on a store reloaded from disk: the
+	// panel may have changed an account while the counters were being read, and
+	// writing back the copy that predates that change would lose it.
+	store, lock, err := user.Locked(l.opts.AccountsPath)
+	if err != nil {
+		return err
+	}
 	changed := false
 	store.Mutate(func(u *user.User) {
 		if d, ok := deltas[u.Token]; ok {
@@ -138,6 +147,7 @@ func (l *Loop) Tick(ctx context.Context) error {
 	// applier only keeps the counters correct, which is what tests exercise.
 	if l.opts.Apply != nil && transitions(store, now) {
 		if err := l.opts.Apply(ctx, l.opts.Node(), store.Routable(now)); err != nil {
+			lock.Unlock()
 			return err
 		}
 		store.MarkApplied(now)
@@ -145,9 +155,11 @@ func (l *Loop) Tick(ctx context.Context) error {
 	}
 	if changed {
 		if err := store.Save(); err != nil {
+			lock.Unlock()
 			return err
 		}
 	}
+	lock.Unlock()
 	// The baseline moves only after the deltas it produced are on disk. The store
 	// is reloaded from the file at the top of every cycle, so advancing the sample
 	// before a failed Apply or Save would subtract those bytes from the next diff

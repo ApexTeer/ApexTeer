@@ -139,13 +139,13 @@ func BoardPath() string {
 // turned into an interruption.
 func Record(id string, result toolbox.Result, runErr error) error {
 	path := BoardPath()
-	board := toolbox.LoadBoard(path)
 	record := toolbox.Record{ID: id, When: time.Now(), Result: result}
 	if runErr != nil {
 		record.Error = runErr.Error()
 	}
-	board[id] = record
-	return toolbox.SaveBoard(path, board)
+	return toolbox.UpdateBoard(path, func(board toolbox.Board) {
+		board[id] = record
+	})
 }
 
 // Verdict words one of the verdict tokens this package defines. The registry owns the

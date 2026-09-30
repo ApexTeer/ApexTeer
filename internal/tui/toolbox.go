@@ -141,7 +141,13 @@ func (a *App) adoptTaskResult() {
 	if a.task == nil {
 		return
 	}
-	outcome, ok := a.task.taskResult().(toolOutcome)
+	result := a.task.taskResult()
+	if toast, ok := result.(taskToast); ok {
+		// A task that only has something to say does not open a report.
+		a.setToast(toast.msg, toast.warn)
+		return
+	}
+	outcome, ok := result.(toolOutcome)
 	if !ok {
 		return
 	}

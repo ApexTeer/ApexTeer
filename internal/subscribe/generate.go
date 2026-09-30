@@ -139,6 +139,12 @@ func stripJSONC(in []byte) []byte {
 		cut := len(line)
 		for i := 0; i < len(line); i++ {
 			c := line[i]
+			if quoted && c == '\\' && i+1 < len(line) {
+				// Skip the character the escape quotes, so \" does not toggle the
+				// string state and a // that follows it is still stripped.
+				i++
+				continue
+			}
 			if c == '"' {
 				quoted = !quoted
 				continue

@@ -362,7 +362,7 @@ func (a *App) updateBody(w int) []string {
 	inner := ui.InnerWidth(s, w)
 	coreText, coreKind := a.coreSummary()
 	left := [][2]string{
-		a.kv("status_version", a.scriptVersion, ui.KindOK),
+		a.kv("ov_version", a.scriptVersion, ui.KindOK),
 	}
 	right := [][2]string{
 		a.kv("status_core", coreText, coreKind),
@@ -378,7 +378,7 @@ func (a *App) selfBody(w int) []string {
 	service, svcKind := a.serviceState()
 	nodeText, nodeKind := a.nodeState()
 	left := [][2]string{
-		a.kv("status_version", a.scriptVersion, ui.KindOK),
+		a.kv("ov_version", a.scriptVersion, ui.KindOK),
 		a.kv("status_service", service, svcKind),
 	}
 	right := [][2]string{

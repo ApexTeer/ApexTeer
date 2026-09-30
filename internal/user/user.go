@@ -130,6 +130,30 @@ func (u User) Credential(key string) Credentials {
 	return u.Credentials[key]
 }
 
+// CredentialReady reports whether every secret field a protocol authenticates with
+// is present, which is the same set Select fills in. A document is only rendered for
+// a protocol that answers true, so a client is never handed a node the core refuses
+// for a missing field.
+func (u User) CredentialReady(key string) bool {
+	if !Known(key) {
+		return false
+	}
+	cred := u.Credentials[key]
+	for _, field := range credentialFields[key] {
+		switch field {
+		case "uuid":
+			if cred.UUID == "" {
+				return false
+			}
+		case "password":
+			if cred.Password == "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // EnsureCredentials fills in missing fields for every selected protocol and
 // drops entries for protocols this build no longer knows.
 func (u *User) EnsureCredentials() {

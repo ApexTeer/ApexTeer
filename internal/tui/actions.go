@@ -21,6 +21,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/subd"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 func serviceAction(verb string) actionFunc {
@@ -77,10 +78,14 @@ func runDeploy(ctx context.Context, r *taskReporter, lang i18n.Lang) error {
 		return errors.New(lang.T("node_all_disabled"))
 	}
 
-	store, err := loadUsers()
+	// The lock is held for the whole deploy: the accounts the core is rendered from
+	// are the accounts recorded as applied at the end, so a change committed in
+	// between cannot leave the file and the running core disagreeing.
+	store, lock, err := user.Locked(sysinfo.UsersFile)
 	if err != nil {
 		return err
 	}
+	defer lock.Unlock()
 	if store.Len() == 0 {
 		// A node without accounts is legal and starts, but nobody can
 		// connect, so the operator is told rather than blocked.
@@ -131,15 +136,17 @@ func runDeploy(ctx context.Context, r *taskReporter, lang i18n.Lang) error {
 	// The configuration is rendered for the accounts that are usable
 	// right now, so a deploy also revokes whatever expired meanwhile.
 	now := time.Now()
-	if _, err := deploy.WriteServerConfig(cfg, store.Routable(now)); err != nil {
+	// The core is shown the document before it replaces the live one, so a
+	// deployment that fails validation leaves the running node's configuration in
+	// place rather than writing one the core will not load.
+	if _, err := deploy.ApplyConfig(ctx, cfg, store.Routable(now)); err != nil {
+		r.Log(err.Error())
+		if errors.Is(err, deploy.ErrRejected) {
+			return errors.New(lang.T("node_config_fail"))
+		}
 		return err
 	}
 	r.Log("write " + sysinfo.ConfigJSON)
-
-	if err := sbcore.Check(ctx, sysinfo.ConfigJSON); err != nil {
-		r.Log(err.Error())
-		return errors.New(lang.T("node_config_fail"))
-	}
 	r.Log(lang.T("node_config_ok"))
 
 	cfg.NodeDeployed = true

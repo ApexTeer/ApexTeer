@@ -3,6 +3,7 @@ package toolbox
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -56,6 +57,47 @@ func TestBoardRoundTrip(t *testing.T) {
 	// A failed run keeps its reason: the board says 检测失败 and the report can say why.
 	if got["backtrace"].Error != "需要 root" {
 		t.Errorf("backtrace error = %q", got["backtrace"].Error)
+	}
+}
+
+// TestUpdateBoardMergesConcurrentWriters is the board's version of the lost update:
+// the panel and `--tool` add different records, and each write has to keep what the
+// other committed rather than replace the whole file with its own copy.
+func TestUpdateBoardMergesConcurrentWriters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "easysb-toolbox.json")
+	if err := SaveBoard(path, sampleBoard()); err != nil {
+		t.Fatalf("SaveBoard: %v", err)
+	}
+
+	before := len(LoadBoard(path))
+	ids := []string{"speed", "disk", "ping", "unlock-ai"}
+	var wg sync.WaitGroup
+	errs := make(chan error, len(ids))
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := UpdateBoard(path, func(board Board) {
+				board[id] = Record{ID: id, When: time.Now()}
+			}); err != nil {
+				errs <- err
+			}
+		}(id)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("UpdateBoard: %v", err)
+	}
+
+	got := LoadBoard(path)
+	if want := before + len(ids); len(got) != want {
+		t.Fatalf("records = %d, want %d: a concurrent write was lost", len(got), want)
+	}
+	for _, id := range ids {
+		if got[id].ID != id {
+			t.Errorf("record %q missing after concurrent updates", id)
+		}
 	}
 }
 

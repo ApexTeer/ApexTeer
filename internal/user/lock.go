@@ -1,0 +1,20 @@
+package user
+
+import "github.com/MinimaxFlora/EasySB/internal/filelock"
+
+// Locked takes the account lock and returns the store as it is on disk right now.
+// The caller changes the store, calls Save and releases the lock. Loading under the
+// lock is what makes the cycle safe: a copy read before another writer committed
+// would otherwise be written back over that change.
+func Locked(path string) (*Store, *filelock.Lock, error) {
+	lock, err := filelock.Acquire(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	store, err := Load(path)
+	if err != nil {
+		lock.Unlock()
+		return nil, nil, err
+	}
+	return store, lock, nil
+}

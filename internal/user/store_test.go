@@ -1,9 +1,11 @@
 package user
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -262,5 +264,54 @@ func TestMutateAndSavePersistEveryAccount(t *testing.T) {
 		if u.UsedBytes != 30 || !u.Applied {
 			t.Fatalf("%s = used %d applied %v, want 30/true", u.Name, u.UsedBytes, u.Applied)
 		}
+	}
+}
+
+// TestLockedKeepsConcurrentWriters makes the lost-update case real: every writer
+// loads the file, adds its own account and saves. Under the lock each writer loads
+// what the previous one committed, so all of them survive; the same cycle without
+// the lock has each writer start from the copy it read and write back over the rest.
+func TestLockedKeepsConcurrentWriters(t *testing.T) {
+	path := storePath(t)
+	base, lock, err := Locked(path)
+	if err != nil {
+		t.Fatalf("Locked: %v", err)
+	}
+	if err := base.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	lock.Unlock()
+
+	const writers = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			store, lock, err := Locked(path)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer lock.Unlock()
+			name := fmt.Sprintf("user-%d", i)
+			if err := store.Add(New(name, []string{state.ProtoAnyTLS}, testNow)); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("writer: %v", err)
+	}
+
+	final, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if final.Len() != writers {
+		t.Fatalf("accounts = %d, want %d: a concurrent write was lost", final.Len(), writers)
 	}
 }

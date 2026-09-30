@@ -7,8 +7,12 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"runtime"
@@ -134,6 +138,25 @@ func Apply(ctx context.Context, current string, log func(string), progress downl
 		return false, remote, err
 	}
 	defer os.Remove(archive)
+	// The tarball replaces the running binary as root, so it is checked against the
+	// sha256 GitHub publishes for the release asset before it is unpacked. That digest
+	// is read over TLS from the releases API, which makes a tarball that arrived from
+	// anywhere other than the release itself fail here. An older release that carries
+	// no digest only loses the extra check.
+	if name, ok := AssetFileName(target, runtime.GOARCH); ok {
+		digest, err := AssetDigest(ctx, target, name)
+		switch {
+		case err != nil:
+			log("cannot read release digest: " + err.Error())
+		case digest == "":
+			log("release carries no sha256 digest")
+		default:
+			if err := verifyDigest(archive, digest); err != nil {
+				return false, remote, err
+			}
+			log("verified " + digest)
+		}
+	}
 	if err := extractBinary(archive, tmp); err != nil {
 		os.Remove(tmp)
 		return false, remote, err
@@ -150,6 +173,68 @@ func Apply(ctx context.Context, current string, log func(string), progress downl
 		return false, remote, err
 	}
 	return true, remote, nil
+}
+
+// releaseAsset is the part of a releases-API asset a check needs: the name to find
+// the right one and the sha256 digest GitHub computed for it.
+type releaseAsset struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
+}
+
+// releaseInfo is the part of the release document that carries the assets.
+type releaseInfo struct {
+	Assets []releaseAsset `json:"assets"`
+}
+
+// AssetDigest reads the sha256 digest GitHub publishes for a release asset, in the
+// "sha256:<hex>" form the releases API reports. It returns an empty digest and no
+// error when the answer holds none - an older release predates the field, or GitHub
+// withheld it - so the caller can still update with the download check alone.
+func AssetDigest(ctx context.Context, version, name string) (string, error) {
+	url := "https://api.github.com/repos/" + Repo + "/releases/tags/" + ReleaseTag(version)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "EasySB")
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("release metadata: %s", resp.Status)
+	}
+	var doc releaseInfo
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return "", err
+	}
+	for _, a := range doc.Assets {
+		if a.Name == name {
+			return a.Digest, nil
+		}
+	}
+	return "", nil
+}
+
+// verifyDigest compares the sha256 of a downloaded file against a "sha256:<hex>"
+// digest the releases API published.
+func verifyDigest(file, digest string) error {
+	want, ok := strings.CutPrefix(digest, "sha256:")
+	if !ok {
+		return fmt.Errorf("unsupported digest %q", digest)
+	}
+	got, err := hashFile(file)
+	if err != nil {
+		return err
+	}
+	sum := hex.EncodeToString(got[:])
+	if !strings.EqualFold(sum, want) {
+		return fmt.Errorf("sha256 mismatch: got %s want %s", sum, want)
+	}
+	return nil
 }
 
 // extractBinary writes the easysb member of a release archive to dest. The archive

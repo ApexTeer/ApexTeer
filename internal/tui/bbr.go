@@ -282,7 +282,9 @@ func bbrInstallAction(profile bbr.Profile, version string) actionFunc {
 			// now, and once on the menu this task hands back to.
 			r.Log(lang.T("bbr_reboot_needed"))
 			r.Log(lang.T("bbr_reboot_hint"))
-			a.setToast(lang.T("bbr_reboot_needed"), true)
+			// The toast is set on the render goroutine once the task ends, so the
+			// task never writes the interface itself.
+			r.SetResult(taskToast{msg: lang.T("bbr_reboot_needed"), warn: true})
 			return nil
 		})
 	}

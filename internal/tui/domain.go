@@ -142,11 +142,7 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 		}
 
 		if cfg.NodeDeployed {
-			accounts, err := loadUsers()
-			if err != nil {
-				return err
-			}
-			if err := deploy.ApplyStore(ctx, cfg, accounts); err != nil {
+			if err := deploy.ApplyStore(ctx, cfg, sysinfo.UsersFile); err != nil {
 				return err
 			}
 			r.Log(lang.T("domain_applied"))
@@ -317,11 +313,7 @@ func switchCert(a *App, domain string) tea.Cmd {
 		return nil
 	}
 	return a.startTask(lang.T("domain_switch"), func(ctx context.Context, r *taskReporter) error {
-		accounts, err := loadUsers()
-		if err != nil {
-			return err
-		}
-		if err := deploy.ApplyStore(ctx, cfg, accounts); err != nil {
+		if err := deploy.ApplyStore(ctx, cfg, sysinfo.UsersFile); err != nil {
 			return err
 		}
 		r.Log(lang.T("domain_switched") + ": " + domain)

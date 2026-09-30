@@ -12,7 +12,6 @@
 package state
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -121,24 +120,9 @@ var stateFile = sysinfo.StateFile
 // Load reads the state file, applying defaults for any missing value.
 func Load() Config {
 	c := Default()
-	f, err := os.Open(stateFile)
-	if err != nil {
-		return c
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		val = strings.Trim(strings.TrimSpace(val), `"'`)
+	// The file is parsed by the one parser the host facts are read with too, so a
+	// value that carries a quote or a backslash round-trips the same way in both.
+	for key, val := range sysinfo.ReadKeyValues(stateFile) {
 		c.raw[key] = val
 	}
 	c.applyRaw()

@@ -57,30 +57,39 @@ func accountByToken(token string) (user.User, bool) {
 func accountsChange(lang i18n.Lang, change func(*user.Store, time.Time) error) taskFunc {
 	return func(ctx context.Context, r *taskReporter) error {
 		now := time.Now()
-		store, err := loadUsers()
+		// The change is a read-modify-write of a file the accounting service writes
+		// too, so it runs under the account lock: a change made here is seen by that
+		// service instead of being overwritten by a cycle that read the file before it.
+		store, lock, err := user.Locked(sysinfo.UsersFile)
 		if err != nil {
 			return err
 		}
 		if err := change(store, now); err != nil {
+			lock.Unlock()
 			return err
 		}
 		if err := store.Save(); err != nil {
+			lock.Unlock()
 			return err
 		}
-		return applyAccounts(ctx, lang, store, r.Log)
+		// The lock is released before the core is touched: ApplyStore takes it again
+		// to record what it applied, and holding it across the restart would only make
+		// the accounting service wait.
+		lock.Unlock()
+		return applyAccounts(ctx, lang, r.Log)
 	}
 }
 
 // applyAccounts pushes the account list to the core. A node that was never
 // deployed has no certificate and no service yet, so the change is only stored
 // and the operator is told.
-func applyAccounts(ctx context.Context, lang i18n.Lang, store *user.Store, log func(string)) error {
+func applyAccounts(ctx context.Context, lang i18n.Lang, log func(string)) error {
 	cfg := state.Load()
 	if !cfg.NodeDeployed {
 		log(lang.T("users_need_deploy"))
 		return nil
 	}
-	if err := deploy.ApplyStore(ctx, cfg, store); err != nil {
+	if err := deploy.ApplyStore(ctx, cfg, sysinfo.UsersFile); err != nil {
 		return err
 	}
 	log(lang.T("users_applied"))

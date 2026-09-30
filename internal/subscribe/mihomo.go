@@ -156,7 +156,13 @@ func yamlInt(b *strings.Builder, key string, value int) {
 // yamlString double-quotes a scalar and escapes it so node names and
 // credentials can never break the document.
 func yamlString(s string) string {
+	// The backslash is escaped first, so the escapes added below are not escaped
+	// again. A newline, carriage return or tab would otherwise end the scalar and
+	// split the document.
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\t", "\\t")
 	return "\"" + s + "\""
 }

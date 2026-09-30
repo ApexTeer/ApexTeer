@@ -44,6 +44,17 @@
 - **带预算的测速测试不再卡在边界**：`TestNearbyStopsWhenBudgetSpent` 用 4 个节点各 100 ms 对 300 ms 预算，而预算是在每个节点开始前检查的，于是第 4 个节点的时刻正好落在 deadline 上——节点数取决于三次 sleep 之和落在 300 ms 的哪一侧，空闲机器上 20 次跑出 4 次失败（负载下反而不失败，因为负载把它推过边界）。参数现在留出 200 ms 余量，断言也改成说清测试意图。
 - **下载落盘不再写到别处，BBR 内核包的工作目录变为私有**：`internal/download` 原先用 `os.Create(dest)` 直接写目标路径，它会跟随目标位置上的符号链接、也会截断别人的文件——而这条路径写的正是自更新的发布压缩包（随后替换运行中的二进制）和交给 `dpkg -i` 以 root 安装的内核包。现在字节先写进同目录下一个不可预测的临时文件（`os.CreateTemp`，内部即 `O_EXCL`），全部落盘后才 `rename` 就位。顺带一个失败的下载**不再在目标位置留下半截文件**，而是什么都不留（此前截断的响应会在目标处留下一个只有看大小才知道不完整的文件）。`internal/bbr` 同时改用 `os.MkdirTemp("/tmp", …)` 在工作时创建 `0700` 的私有目录，不再使用固定的 `/tmp/easysb-bbr`：那个路径可以被提前摆成别人拥有的目录或指向别处的符号链接，从而在 `dpkg-deb` 校验与 `dpkg -i` 之间把包换掉。`/tmp` 的 sticky 位保证没有别人能把这层目录改名挪走。
 
+- **账号文件的并发修改不再丢更新**：`easysb-users.json` 由面板与订阅服务的记账循环两个进程各自「读—改—写」，双方虽已用唯一临时名加原子改名，先读的那一份仍会把后写的整段盖回去——记账循环在采样计数期间持有旧副本，面板这段时间新建的账号会被它写没，那一轮的增量也随之丢失。现在两者都经 `internal/filelock` 在同一把跨进程 advisory lock 下先重读、再改、再写：面板改账号、记账循环加流量、以及记录「已应用」都在锁内完成，谁的提交都不会被另一个进程的旧副本覆盖。锁在 Linux / macOS 走 `flock`，Windows 走 `LockFileEx`，`internal/user.Locked` 是唯一入口。
+- **BBR 安装任务不再与界面竞态写状态栏**：任务在自有协程里直接调 `setToast` 写 `App.toast`，渲染协程却在 `View` 里读同一对字段，`-race` 可复现；现在任务把提示经 `SetResult` 交回，由渲染协程在任务结束时设置（`taskToast`），任务本身不再触碰界面。
+- **自更新先校验再替换运行中的二进制**：此前发布压缩包直接解包并改名覆盖正在运行的 `easysb`，除了 TLS 没有任何完整性校验；现在先向 GitHub Releases API 取该资产的 `sha256:` 摘要并与下载文件比对，不一致即拒绝安装（旧版本发布不带摘要时跳过这一步，仅少一层校验）。
+- **部署校验失败不再留下内核拒载的配置**：`config.json` 原先先写到运行位置、再交给内核校验，被拒时现场那份可用配置已被换成内核无法加载的版本；现在先写到同目录的临时文件、内核接受后才改名就位，校验失败时运行中节点的配置原样不动。
+- **订阅与分享链接里的 IPv6 主机加方括号**：`SERVER_IP` 是 IPv6 字面量时，各处的 `host:port` 会拼成一个无法解析的字段；现在统一经 `net.JoinHostPort`，订阅地址与 anytls / hysteria2 / tuic / vless 分享链接都能正确解析 IPv6。
+- **按协议逐个核对账号凭据是否齐全**：订阅渲染原先只看「`uuid` 或 `password` 有一个」，TUIC 这种两者都要的协议缺一个也照样出节点，客户端拿到的是内核会拒的配置；现在 `user.CredentialReady` 按 `credentialFields` 逐字段核对，缺字段的协议不出现在文档里。
+- **看板并发写不再互相覆盖**：面板与 `--tool` 都把结果并进同一份 `easysb-toolbox.json`，此前各自读整份、写整份；现在 `toolbox.UpdateBoard` 在同一把锁下重读并合并，两边记录的运行都保留。
+- **状态文件里带引号的值现在能原样读回**：`state.Save` 用 `%q` 写值，读取端却只 `Trim` 引号、不做反转义，`DOMAIN=a"b` 会被读成 `a\"b`；现在 `sysinfo.ReadKeyValues` 用 `strconv.Unquote` 还原双引号值（单引号与裸值照旧按字面取），扫描缓冲放大到 1 MiB、超长行不再截断其后整个文件，`state` 与 `sysinfo` 共用这一份解析并删掉自制的 `itoa`。
+- **订阅文档解析与 YAML 渲染的小修复**：`stripJSONC` 现在跳过 `\"`，字符串里的转义引号不会再被误判为字符串结束、把其后的 `//` 当注释删掉；mihomo 的 `yamlString` 现在转义换行 / 回车 / 制表符，节点名或凭据里带这些字符不会再截断 YAML；`qrencode` 调用带上 10 秒超时，卡住不再拖住任务协程。
+- **面板版本栏不再显示原始键名**：仪表盘与「系统自身」页把版本一项写成 `status_version`，而该键在词表里并不存在，`Lang.T` 对未知键原样返回键名，于是版本栏直接显示 `status_version`；现改用既有的 `ov_version`（与总览页同一标签）。
+
 ### 移除
 
 - 删除已无用的 sing-box 重编译链路：`.github/workflows/singbox-v2ray-api.yml`（含 `prune` job）、`scripts/build_singbox_v2ray_api.sh`、`scripts/verify_singbox_arches.sh`、`scripts/prune_release_assets.py`、`scripts/plan_check.py`，以及只验证已删除内核管理的 `scripts/vps/verify-kernel-*.sh` / `verify-source-switch.sh`。内核已编译进面板，这些脚本维护的 `singbox-stable` / `singbox-alpha` 通道不再被任何代码消费。

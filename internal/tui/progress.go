@@ -390,7 +390,7 @@ func (p *progressModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd,
 		if p.cancel != nil {
 			p.cancel()
 		}
-		p.appendLog("✗ cancelled")
+		p.appendLog("✗ " + lang.T("cancelled"))
 		return nil, false
 	}
 	var cmd tea.Cmd

@@ -78,18 +78,27 @@ func WriteServerConfig(cfg state.Config, accounts []user.User) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(configPath, data, 0o600); err != nil {
-		return nil, err
-	}
-	// WriteFile leaves the mode of a file that already exists alone, so a config.json
-	// written by an earlier version stays world-readable until its mode is set here.
-	if err := os.Chmod(configPath, 0o600); err != nil {
+	if err := writeConfigFile(data); err != nil {
 		return nil, err
 	}
 	return data, nil
+}
+
+// writeConfigFile installs an already rendered document at configPath. The
+// directory is created first, and the mode is forced on an existing file because
+// WriteFile leaves it alone: a config.json an earlier version left world-readable
+// stays world-readable otherwise, and this file carries every account's credentials.
+func writeConfigFile(data []byte) error {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Chmod(configPath, 0o600); err != nil {
+		return err
+	}
+	return nil
 }
 
 // checkConfig is the acceptance test a deployment runs before restarting the node. It
@@ -109,22 +118,62 @@ func Apply(ctx context.Context, cfg state.Config, accounts []user.User) error {
 	if !cfg.NodeDeployed {
 		return nil
 	}
-	if _, err := WriteServerConfig(cfg, accounts); err != nil {
+	if _, err := ApplyConfig(ctx, cfg, accounts); err != nil {
 		return err
-	}
-	if err := checkConfig(ctx, configPath); err != nil {
-		// The core's message names the field it refused, and the only place a
-		// rejection is reported is a log line. Returning the sentinel alone left an
-		// operator with "the core rejected the generated configuration" and nothing
-		// to act on.
-		return fmt.Errorf("%w: %w", ErrRejected, err)
 	}
 	return service.Do(ctx, "restart")
 }
 
+// ApplyConfig renders the configuration, has the core accept it and only then moves
+// it to the live path. The core is shown a temporary file beside the live one, so a
+// document it refuses leaves the configuration a running node is serving untouched,
+// and the install is a rename within one directory. It returns the accepted document.
+func ApplyConfig(ctx context.Context, cfg state.Config, accounts []user.User) ([]byte, error) {
+	data, err := ServerConfig(cfg, accounts)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return nil, err
+	}
+	tmp, err := os.CreateTemp(configDir, "config.json.check-*")
+	if err != nil {
+		return nil, err
+	}
+	// CreateTemp makes the file 0600, which is the mode the document lands with,
+	// because the rename carries the mode rather than the umask.
+	checkPath := tmp.Name()
+	defer os.Remove(checkPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := checkConfig(ctx, checkPath); err != nil {
+		// The core's message names the field it refused, and the only place a
+		// rejection is reported is a log line. Returning the sentinel alone left an
+		// operator with "the core rejected the generated configuration" and nothing
+		// to act on.
+		return nil, fmt.Errorf("%w: %w", ErrRejected, err)
+	}
+	if err := os.Rename(checkPath, configPath); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 // ApplyStore applies the accounts that may be live right now and records them,
-// which is the single write path for a change made in the panel.
-func ApplyStore(ctx context.Context, cfg state.Config, store *user.Store) error {
+// which is the single write path for a change made in the panel. The store is
+// reloaded under the account lock, so the set that is applied and marked as such is
+// the one on disk now, not a copy a caller read before another writer committed.
+func ApplyStore(ctx context.Context, cfg state.Config, accountsPath string) error {
+	store, lock, err := user.Locked(accountsPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
 	now := time.Now()
 	if err := Apply(ctx, cfg, store.Routable(now)); err != nil {
 		return err
