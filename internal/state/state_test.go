@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
 // saveInto points the state file at a temporary directory for one test.
@@ -100,8 +102,20 @@ func TestSaveRoundTripsAndLeavesNothingBehind(t *testing.T) {
 	c.Enabled[ProtoTUIC] = false
 	c.raw = map[string]string{"UNRECOGNISED_KEY": "keep-me"}
 
+	// The seam has to cover every path Save touches, not only the file it writes, and this
+	// assertion runs on every platform rather than behind the Windows skip below. The first
+	// version of this test redirected stateFile but left Save creating sysinfo.WorkDir: on
+	// the CI runner that failed with "mkdir /etc/sing-box: permission denied", while a
+	// Windows checkout passed, because there the same call quietly creates D:\etc\sing-box
+	// - the drive root is writable, so the test wrote nowhere near where it thought it was.
+	_, beforeErr := os.Stat(sysinfo.WorkDir)
+
 	if err := c.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
+	}
+
+	if _, afterErr := os.Stat(sysinfo.WorkDir); os.IsNotExist(beforeErr) && !os.IsNotExist(afterErr) {
+		t.Fatalf("Save created %s: the test's seam does not cover every path it touches", sysinfo.WorkDir)
 	}
 
 	got := Load()
@@ -134,7 +148,10 @@ func TestSaveRoundTripsAndLeavesNothingBehind(t *testing.T) {
 	}
 
 	if runtime.GOOS == "windows" {
-		return // Windows has no Unix permission bits to assert.
+		// Windows has no Unix permission bits, so this half only ever runs on the CI
+		// runner. Anything skipped by platform is worth treating as unverified until it
+		// has run there once.
+		return
 	}
 	info, err := os.Stat(path)
 	if err != nil {
