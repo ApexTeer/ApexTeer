@@ -17,10 +17,6 @@ import (
 // Repo publishes the prebuilt kernels and the version stamp this package reads.
 const Repo = "MinimaxFlora/Linux-BBR-v3"
 
-// WorkDir holds the packages while they are installed. The image is ~100 MB, so
-// the files are removed again once dpkg has taken them.
-const WorkDir = "/tmp/easysb-bbr"
-
 // KernelBrand marks the packages built by the kernel project, in both the package
 // name (linux-image-7.2.6-minimaxflora-bbrv3-max) and the kernel release.
 const KernelBrand = "minimaxflora-bbrv3"
