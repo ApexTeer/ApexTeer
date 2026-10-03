@@ -6,7 +6,10 @@ package stats
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/sbcore"
@@ -58,6 +61,8 @@ type Loop struct {
 	// announcedNoStats keeps the "no counter source" line from repeating every
 	// interval on a node whose core cannot count.
 	announcedNoStats bool
+	// sampleLoaded records whether the on-disk baseline has been consulted yet.
+	sampleLoaded bool
 }
 
 // New prepares an accounting loop.
@@ -103,6 +108,11 @@ func (l *Loop) Tick(ctx context.Context) error {
 		}
 		return nil
 	}
+	// Restore the baseline a previous run persisted. Without it a restart of the
+	// subscription service swallows everything between the last sample before it
+	// stopped and the first sample after it came back.
+	l.loadSample()
+
 	// The account names are read without the lock: sampling the core is the slow
 	// part of the cycle and only needs the names, not the file held open.
 	peek, err := user.Load(l.opts.AccountsPath)
@@ -111,6 +121,7 @@ func (l *Loop) Tick(ctx context.Context) error {
 	}
 	if peek.Len() == 0 {
 		l.sample, l.sampled = nil, false
+		l.saveSample()
 		return nil
 	}
 
@@ -165,6 +176,7 @@ func (l *Loop) Tick(ctx context.Context) error {
 	// before a failed Apply or Save would subtract those bytes from the next diff
 	// and drop that interval's traffic for good.
 	l.sample, l.sampled = counters, true
+	l.saveSample()
 	return nil
 }
 
@@ -211,11 +223,14 @@ func diffCounters(prev, cur Counters, sampled bool) Counters {
 	for name, c := range cur {
 		p := prev[name]
 		up, down := c.Upload-p.Upload, c.Download-p.Download
+		// A counter that went backwards means the core restarted and its counters
+		// restarted with it. The whole current reading is then traffic nobody has
+		// counted yet, so it is charged rather than clamped away.
 		if up < 0 {
-			up = 0
+			up = c.Upload
 		}
 		if down < 0 {
-			down = 0
+			down = c.Download
 		}
 		if up != 0 || down != 0 {
 			out[name] = Usage{Upload: up, Download: down}
@@ -247,4 +262,72 @@ func (l *Loop) log(line string) {
 	if l.opts.Log != nil {
 		l.opts.Log(line)
 	}
+}
+
+// sampleFile is the on-disk form of the counter baseline.
+type sampleFile struct {
+	Counters map[string]sampleUsage `json:"counters"`
+}
+
+type sampleUsage struct {
+	Upload   int64 `json:"upload"`
+	Download int64 `json:"download"`
+}
+
+// samplePath is where the baseline is persisted. It sits beside the account file
+// so a deployment keeps its two state files together.
+func (l *Loop) samplePath() string {
+	if l.opts.AccountsPath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(l.opts.AccountsPath), "easysb-stats.json")
+}
+
+// loadSample restores the baseline a previous run left behind. It runs once per
+// loop; a missing or unreadable file simply leaves the loop without a baseline,
+// which is what this did before persistence existed.
+func (l *Loop) loadSample() {
+	if l.sampleLoaded {
+		return
+	}
+	l.sampleLoaded = true
+	path := l.samplePath()
+	if path == "" {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var doc sampleFile
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return
+	}
+	if len(doc.Counters) == 0 {
+		return
+	}
+	sample := make(Counters, len(doc.Counters))
+	for name, u := range doc.Counters {
+		sample[name] = Usage{Upload: u.Upload, Download: u.Download}
+	}
+	l.sample, l.sampled = sample, true
+}
+
+// saveSample writes the current baseline so a restart of the subscription
+// service does not discard the traffic accumulated since the last cycle. It is
+// called only after the deltas it produced are safely on disk.
+func (l *Loop) saveSample() {
+	path := l.samplePath()
+	if path == "" {
+		return
+	}
+	doc := sampleFile{Counters: make(map[string]sampleUsage, len(l.sample))}
+	for name, u := range l.sample {
+		doc.Counters[name] = sampleUsage{Upload: u.Upload, Download: u.Download}
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0o600)
 }

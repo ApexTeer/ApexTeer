@@ -35,9 +35,11 @@ func Detect() Manager {
 	if _, err := os.Stat("/run/systemd/system"); err == nil {
 		return Systemd
 	}
-	if _, err := exec.LookPath("systemctl"); err == nil {
-		return Systemd
-	}
+	// A systemctl binary on PATH is not evidence that systemd is the running init:
+	// containers, chroots and WSL ship the client without the daemon, and writing
+	// units plus calling systemctl there fails at every step. Only the running
+	// systemd's own runtime directory counts; everything else falls through to
+	// Unknown, which callers treat as "leave the host alone".
 	if _, err := exec.LookPath("rc-service"); err == nil {
 		return OpenRC
 	}

@@ -6,6 +6,7 @@
 package deploy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -118,10 +119,26 @@ func Apply(ctx context.Context, cfg state.Config, accounts []user.User) error {
 	if !cfg.NodeDeployed {
 		return nil
 	}
+	// The core config carries credentials, not quotas, remarks or expiry, so most
+	// account edits render the very same document. Comparing first keeps such an
+	// edit from restarting the core and dropping every live connection for a change
+	// the core never sees.
+	if live, err := ServerConfig(cfg, accounts); err == nil && service.Active(ctx) && sameAsLive(live) {
+		return nil
+	}
 	if _, err := ApplyConfig(ctx, cfg, accounts); err != nil {
 		return err
 	}
 	return service.Do(ctx, "restart")
+}
+
+// sameAsLive reports whether data is exactly what the live config file holds.
+func sameAsLive(data []byte) bool {
+	current, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(current, data)
 }
 
 // ApplyConfig renders the configuration, has the core accept it and only then moves
@@ -175,6 +192,9 @@ func ApplyStore(ctx context.Context, cfg state.Config, accountsPath string) erro
 	}
 	defer lock.Unlock()
 	now := time.Now()
+	// A file that predates a credential field is repaired here, on a write path,
+	// and the result is saved with the rest of this change.
+	store.Repair()
 	if err := Apply(ctx, cfg, store.Routable(now)); err != nil {
 		return err
 	}

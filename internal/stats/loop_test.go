@@ -117,7 +117,7 @@ func TestLoopAccountsDeltas(t *testing.T) {
 	}
 }
 
-func TestLoopIgnoresCoreRestart(t *testing.T) {
+func TestLoopKeepsUsageAcrossCoreRestart(t *testing.T) {
 	_, path, now := account(t, "alice", func(*user.User) {})
 	source := &fakeSource{readings: Counters{"token-alice": {Upload: 0, Download: 0}}}
 	loop, _ := newLoop(t, path, source, now)
@@ -129,15 +129,43 @@ func TestLoopIgnoresCoreRestart(t *testing.T) {
 		t.Fatalf("charge: %v", err)
 	}
 
-	// A core restart resets its counters; the account keeps what it already used
-	// instead of being credited back.
+	// A core restart resets its counters. The account keeps what it already used,
+	// and the post-restart reading is charged as well: those bytes happened after
+	// the restart and nobody has counted them yet.
 	source.readings = Counters{"token-alice": {Upload: 10, Download: 10}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("after restart: %v", err)
 	}
 	store := reload(t, path)
-	if got := store.Users()[0]; got.UsedBytes != 10000 {
-		t.Fatalf("used = %d, want 10000 and no negative delta", got.UsedBytes)
+	if got := store.Users()[0]; got.UsedBytes != 10020 {
+		t.Fatalf("used = %d, want 10020 (10000 kept + 20 post-restart)", got.UsedBytes)
+	}
+}
+
+// TestLoopKeepsBaselineAcrossServiceRestart covers a restart of the subscription
+// service while the core keeps running: the persisted baseline is what stops the
+// traffic between the last sample and the restart from being swallowed.
+func TestLoopKeepsBaselineAcrossServiceRestart(t *testing.T) {
+	_, path, now := account(t, "alice", func(*user.User) {})
+	source := &fakeSource{readings: Counters{"token-alice": {Upload: 0, Download: 0}}}
+	loop, _ := newLoop(t, path, source, now)
+	if err := loop.Tick(context.Background()); err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	source.readings = Counters{"token-alice": {Upload: 1000, Download: 0}}
+	if err := loop.Tick(context.Background()); err != nil {
+		t.Fatalf("charge: %v", err)
+	}
+
+	// The service restarts, the core does not.
+	restarted, _ := newLoop(t, path, source, now)
+	source.readings = Counters{"token-alice": {Upload: 1500, Download: 0}}
+	if err := restarted.Tick(context.Background()); err != nil {
+		t.Fatalf("after restart: %v", err)
+	}
+	store := reload(t, path)
+	if got := store.Users()[0]; got.UsedBytes != 1500 {
+		t.Fatalf("used = %d, want 1500 (1000 before + 500 after the restart)", got.UsedBytes)
 	}
 }
 
@@ -325,8 +353,10 @@ func TestDiffCounters(t *testing.T) {
 	if got["a"] != (Usage{Upload: 20, Download: 30}) {
 		t.Fatalf("delta for a = %+v", got["a"])
 	}
-	if _, ok := got["b"]; ok {
-		t.Fatalf("a restarted counter must contribute nothing: %+v", got["b"])
+	// A counter that went backwards means the core restarted: that reading is
+	// traffic made since the restart, so it is charged rather than clamped away.
+	if got["b"] != (Usage{Upload: 1, Download: 1}) {
+		t.Fatalf("a restarted counter should be charged its reading: %+v", got["b"])
 	}
 	// An account nobody has seen before is charged its whole reading: that
 	// traffic happened while it was unobserved, and undercounting a quota is the

@@ -168,6 +168,11 @@ func Apply(ctx context.Context, current string, log func(string), progress downl
 		os.Remove(tmp)
 		return false, remote, nil
 	}
+	// Keep the binary being replaced, so a release that will not start can be
+	// rolled back on the host instead of needing another download.
+	if current, err := os.ReadFile(exe); err == nil {
+		_ = os.WriteFile(exe+".bak", current, 0o755)
+	}
 	if err := os.Rename(tmp, exe); err != nil {
 		os.Remove(tmp)
 		return false, remote, err

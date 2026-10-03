@@ -95,12 +95,16 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 		stopped := service.Active(ctx)
 		if stopped {
 			r.Log("$ systemctl stop " + sysinfo.ServiceName)
-			_ = service.Do(ctx, "stop")
+			if err := service.Do(ctx, "stop"); err != nil {
+				r.Log(lang.T("service_restart_failed") + ": " + err.Error())
+			}
 		}
 		running := func() {
 			if stopped && hasServerConfig() {
 				r.Log("$ systemctl start " + sysinfo.ServiceName)
-				_ = service.Do(ctx, "start")
+				if err := service.Do(ctx, "start"); err != nil {
+					r.Log(lang.T("service_restart_failed") + ": " + err.Error())
+				}
 			}
 		}
 

@@ -211,7 +211,7 @@ func TestRoutable(t *testing.T) {
 	}
 }
 
-func TestLoadHealsCounters(t *testing.T) {
+func TestLoadLeavesMissingCredentialsAlone(t *testing.T) {
 	path := storePath(t)
 	body := `{"version":1,"users":[{"name":"alice","token":"tok","enabled":true,
 		"protocols":["anytls"],"quota_bytes":1000,"used_bytes":10,
@@ -230,8 +230,24 @@ func TestLoadHealsCounters(t *testing.T) {
 	if got.UsedBytes != 1000 {
 		t.Fatalf("used_bytes = %d, want 1000 (upload+download)", got.UsedBytes)
 	}
-	if got.Credential(state.ProtoAnyTLS).Password == "" {
-		t.Fatal("a credential-less account must be given one on load")
+	// Load must not invent a credential: every read would then produce a
+	// different one, and the core config and the subscription document would
+	// disagree about a password neither of them persisted.
+	if got.Credential(state.ProtoAnyTLS).Password != "" {
+		t.Fatal("Load must not generate a missing credential")
+	}
+	if got.CredentialsReady() {
+		t.Fatal("an account with no credential is not ready")
+	}
+	if !s.Repair() {
+		t.Fatal("Repair must report the account it healed")
+	}
+	healed, _ := s.Find("alice")
+	if healed.Credential(state.ProtoAnyTLS).Password == "" {
+		t.Fatal("Repair must fill the missing credential")
+	}
+	if !healed.CredentialsReady() {
+		t.Fatal("the repaired account must be ready")
 	}
 	if !got.Applied {
 		t.Fatal("applied flag lost")

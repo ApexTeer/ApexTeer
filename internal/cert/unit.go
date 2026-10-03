@@ -76,7 +76,7 @@ func TimerInstalled() bool {
 // InstallTimer writes the renewal unit and enables it. It is idempotent: issuing
 // a second certificate simply rewrites the same files.
 func InstallTimer(ctx context.Context, log func(string)) error {
-	exe, err := os.Executable()
+	exe, err := service.PanelExecutable()
 	if err != nil {
 		return err
 	}
@@ -104,14 +104,18 @@ func InstallTimer(ctx context.Context, log func(string)) error {
 // RemoveTimer deletes the renewal unit.
 func RemoveTimer(ctx context.Context, log func(string)) error {
 	if service.Detect() == service.OpenRC {
-		runQuiet(ctx, "rc-update", "del", "easysb-acme", "default")
+		if err := runQuiet(ctx, "rc-update", "del", "easysb-acme", "default"); err != nil {
+			return err
+		}
 		if err := os.Remove(openRCPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		return nil
 	}
 	log("$ systemctl disable --now easysb-acme.timer")
-	runQuiet(ctx, "systemctl", "disable", "--now", "easysb-acme.timer")
+	if err := runQuiet(ctx, "systemctl", "disable", "--now", "easysb-acme.timer"); err != nil {
+		return err
+	}
 	for _, p := range []string{systemdTimerPath, systemdServicePath} {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			return err

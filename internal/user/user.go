@@ -6,6 +6,7 @@ package user
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -154,6 +155,22 @@ func (u User) CredentialReady(key string) bool {
 	return true
 }
 
+// CredentialsReady reports whether every selected protocol has the secret fields
+// it authenticates with. An account that is not ready is excluded from both the
+// core config and the client documents, so the two can never disagree about a
+// credential nobody ever generated.
+func (u User) CredentialsReady() bool {
+	if len(u.Protocols) == 0 {
+		return false
+	}
+	for _, key := range u.Protocols {
+		if !u.CredentialReady(key) {
+			return false
+		}
+	}
+	return true
+}
+
 // EnsureCredentials fills in missing fields for every selected protocol and
 // drops entries for protocols this build no longer knows.
 func (u *User) EnsureCredentials() {
@@ -259,9 +276,12 @@ func (u *User) ResetCounters(now time.Time) {
 // ResetIfNewMonth zeroes the counters when the stored period began in an
 // earlier calendar month, and reports whether it did.
 func (u *User) ResetIfNewMonth(now time.Time) bool {
-	now = now.UTC()
-	if !u.LastReset.IsZero() &&
-		u.LastReset.Year() == now.Year() && u.LastReset.Month() == now.Month() {
+	// The period is a calendar month in the host's own timezone. Comparing the
+	// stored instant in UTC put the reset at 08:00 local for a UTC+8 operator,
+	// which is not what "monthly" means to the person reading the quota.
+	local := now.In(time.Local)
+	last := u.LastReset.In(time.Local)
+	if !u.LastReset.IsZero() && last.Year() == local.Year() && last.Month() == local.Month() {
 		return false
 	}
 	u.ResetCounters(now)
@@ -283,6 +303,15 @@ func (u User) Validate() error {
 	}
 	if strings.TrimSpace(u.Token) != u.Token || u.Token == "" {
 		return errors.New("subscription token is required")
+	}
+	// The token is a URL path segment and a stats filter, so it stays lowercase
+	// ASCII: letters, digits and the hyphen, none of which needs escaping in a URL
+	// path or carries meaning in a regexp. Anything else is hand-edited or corrupt.
+	for _, r := range u.Token {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			continue
+		}
+		return fmt.Errorf("subscription token %q must be lowercase ASCII letters, digits or hyphen", u.Token)
 	}
 	if u.QuotaBytes < 0 {
 		return errors.New("quota cannot be negative")

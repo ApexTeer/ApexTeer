@@ -70,10 +70,10 @@ func Apply(ctx context.Context, cfg state.Config, log func(string)) error {
 }
 
 // Remove deletes the port-hopping redirect rules.
+// The rule is deleted whenever it might exist: keying this on the protocol
+// switch left a live redirect behind when the operator turned Hysteria2 off
+// first and then asked to remove the rules, while the panel reported success.
 func Remove(ctx context.Context, cfg state.Config) error {
-	if !cfg.Enabled[state.ProtoHysteria2] {
-		return nil
-	}
 	start, end, err := hopRange(cfg)
 	if err != nil {
 		return err
@@ -125,24 +125,42 @@ func OpenPorts(ctx context.Context, cfg state.Config, log func(string)) {
 		return
 	}
 
+	var failed []string
 	switch {
 	case has("ufw"):
 		for _, p := range tcp {
-			run(ctx, "ufw", "allow", p+"/tcp")
+			if !run(ctx, "ufw", "allow", p+"/tcp") {
+				failed = append(failed, p+"/tcp")
+			}
 		}
 		for _, p := range udp {
-			run(ctx, "ufw", "allow", p+"/udp")
+			if !run(ctx, "ufw", "allow", p+"/udp") {
+				failed = append(failed, p+"/udp")
+			}
 		}
-		log("ufw rules updated")
+		if len(failed) == 0 {
+			log("ufw rules updated")
+		}
 	case has("firewall-cmd"):
 		for _, p := range tcp {
-			run(ctx, "firewall-cmd", "--permanent", "--add-port="+p+"/tcp")
+			if !run(ctx, "firewall-cmd", "--permanent", "--add-port="+p+"/tcp") {
+				failed = append(failed, p+"/tcp")
+			}
 		}
 		for _, p := range udp {
-			run(ctx, "firewall-cmd", "--permanent", "--add-port="+p+"/udp")
+			if !run(ctx, "firewall-cmd", "--permanent", "--add-port="+p+"/udp") {
+				failed = append(failed, p+"/udp")
+			}
 		}
-		run(ctx, "firewall-cmd", "--reload")
-		log("firewalld rules updated")
+		if !run(ctx, "firewall-cmd", "--reload") {
+			failed = append(failed, "--reload")
+		}
+		if len(failed) == 0 {
+			log("firewalld rules updated")
+		}
+	}
+	if len(failed) > 0 {
+		log("firewall: could not open " + strings.Join(failed, ", "))
 	}
 }
 
@@ -222,7 +240,7 @@ func WriteUnit(cfg state.Config) error {
 	if !cfg.Enabled[state.ProtoHysteria2] {
 		return nil
 	}
-	exe, err := os.Executable()
+	exe, err := service.PanelExecutable()
 	if err != nil {
 		return err
 	}

@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/cert"
@@ -48,10 +50,52 @@ type Options struct {
 	// Ready receives the bound address once the listener is up, then closes.
 	// Tests use it to learn the ephemeral port.
 	Ready chan string
+	// cache keeps the parsed account file between requests; Run fills it in.
+	cache *storeCache
+}
+
+// store returns the parsed account file, re-reading it only when the file on
+// disk changed. Every client poll reaches this path, so parsing the whole file
+// per request is wasted work; the mtime is the invalidation signal, which keeps
+// an edit made in the panel visible on the very next request.
+func (o Options) store() (*user.Store, error) {
+	if o.cache == nil {
+		return user.Load(o.AccountsPath)
+	}
+	return o.cache.load(o.AccountsPath)
+}
+
+// storeCache is the mtime-keyed parse cache behind Options.store.
+type storeCache struct {
+	mu    sync.Mutex
+	path  string
+	mod   time.Time
+	size  int64
+	store *user.Store
+}
+
+func (c *storeCache) load(path string) (*user.Store, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		// A missing file is an empty store, which is what user.Load reports.
+		return user.Load(path)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.store != nil && c.path == path && c.mod.Equal(info.ModTime()) && c.size == info.Size() {
+		return c.store, nil
+	}
+	store, err := user.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	c.path, c.mod, c.size, c.store = path, info.ModTime(), info.Size(), store
+	return store, nil
 }
 
 // Run serves the endpoint and accounts traffic until ctx is cancelled.
 func (o Options) Run(ctx context.Context) error {
+	o.cache = &storeCache{}
 	cfg := o.node()
 	addr, certFile, keyFile := o.transport(cfg)
 
@@ -168,7 +212,7 @@ func (o Options) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store, err := user.Load(o.AccountsPath)
+	store, err := o.store()
 	if err != nil {
 		o.logf("accounts: " + err.Error())
 		http.Error(w, "account store unavailable", http.StatusInternalServerError)

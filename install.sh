@@ -193,7 +193,6 @@ detect_system() {
     x86_64|amd64) ARCH='amd64' ;;
     aarch64|arm64) ARCH='arm64' ;;
     armv7l|armv7) ARCH='armv7' ;;
-    armv6l|armv6) ARCH='armv6' ;;
     i386|i486|i586|i686) ARCH='386' ;;
     riscv64) ARCH='riscv64' ;;
     s390x) ARCH='s390x' ;;
@@ -228,10 +227,10 @@ latest_version() {
 # A version is v?digits(.digits)*. The check exists so a polluted value is reported before
 # it becomes a URL, rather than surfacing as a download of something that is not there.
 valid_version() {
-  case "$1" in
-    ''|*[!0-9.]*) return 1 ;;
-  esac
-  return 0
+  # v?digits(.digits)*, checked for real. The shape test that used to live here
+  # accepted '.' and '1..2' and then spent a 404 on the release URL, which is
+  # exactly what the check was supposed to prevent.
+  printf '%s' "$1" | grep -Eq '^[0-9]+(\.[0-9]+)*$'
 }
 
 resolve_version() {
