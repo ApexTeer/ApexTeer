@@ -60,7 +60,7 @@ BIN_NAME='easysb'
 # deploys a working node, it just cannot count). release/TAGS is the single source of
 # truth and the workflow reads the same file; this constant is only the fallback for
 # when this script runs outside the source tree, so it has to match it.
-DEFAULT_TAGS='with_quic,with_utls,with_v2ray_api'
+DEFAULT_TAGS='with_acme,with_clash_api,with_dhcp,with_gvisor,with_quic,with_tailscale,with_utls,with_v2ray_api,with_wireguard'
 
 LANG_MODE='C'
 METHOD='auto'

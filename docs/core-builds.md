@@ -27,16 +27,26 @@ build detail. They live in `release/TAGS` — one line, read by
 `.github/workflows/easysb-go-release.yml` and by `install.sh` when it builds from source:
 
 ```
-with_quic,with_utls,with_v2ray_api
+with_acme,with_clash_api,with_dhcp,with_gvisor,with_quic,with_tailscale,with_utls,with_v2ray_api,with_wireguard
 ```
 
-The panel is a server, and its node configuration is exactly the five inbounds, the
-certificate and the counters, so the tag set names only what those carry: `with_quic`
-for Hysteria2 and TUIC, `with_utls` for the Reality inbound, and `with_v2ray_api` for
-the per-account byte counters. Upstream's `release/DEFAULT_BUILD_TAGS` is deliberately
-not copied verbatim: it pulls in outbound features the panel never emits and, through
-`with_naive_outbound`, the cronet/Chromium libraries that have no build for four of the
-six release architectures (see `docs/pitfalls.md`).
+The panel is a server, but the tag set is not limited to what its own node
+configuration names. Upstream's `release/DEFAULT_BUILD_TAGS` is carried with one
+deliberate exception, so the core inside the panel offers the same capabilities as a
+stock sing-box build:
+
+- `with_quic` for the Hysteria2 and TUIC inbounds and `with_utls` for the Reality
+  inbound: without these the core refuses the whole node configuration.
+- `with_v2ray_api` for the per-account byte counters. It is the one entry upstream's
+  default does not carry, and the panel cannot count traffic without it.
+- `with_acme`, `with_clash_api`, `with_dhcp`, `with_gvisor`, `with_tailscale` and
+  `with_wireguard` for everything else a profile may name: the subscription document
+  carries a TUN inbound and a Clash-compatible API block.
+
+`with_naive_outbound` stays out: it drags in the cronet/Chromium libraries, which have
+no build for 386, armv7, riscv64 or s390x (see `docs/pitfalls.md`). Every tag that is
+carried was verified to build for all six release architectures. The cost is size: the
+amd64 binary grew from about 43 MB to about 87 MB.
 
 **`with_v2ray_api` is the tag that matters.** It is the only way sing-box counts bytes per
 account, which is what the traffic columns of 账号与流量 read. A tag cannot be probed at run
