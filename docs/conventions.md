@@ -19,7 +19,12 @@
 - `README_ZH.md` is the Chinese translation. Keep both in step; a feature is
   not done until both describe it.
 - Code identifiers, comments, commit subjects for non-trivial code, and these
-  docs are English. User-facing UI strings are bilingual through `internal/i18n`.
+  docs are English. User-facing UI strings are bilingual through `internal/i18n`,
+  with one deliberate exception: the toolbox's own report bodies. A tool's row
+  labels, summaries and notes are the tool's own words, because a translation
+  layer between a measurement and its label is somewhere a number ends up under
+  the wrong word. See `docs/toolbox.md` for what the panel words and what the
+  tools word.
 
 ## Versioning
 

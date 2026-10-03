@@ -12,15 +12,16 @@ func TestGenerateMihomo(t *testing.T) {
 	cfg.Enabled[state.ProtoTUIC] = false
 	cfg.Enabled[state.ProtoAnyTLS] = false
 
-	data, err := GenerateMihomo(cfg, testAccount())
+	acct := testAccount()
+	data, err := GenerateMihomo(cfg, acct)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(data)
 	for _, want := range []string{
-		"port: 7890",
-		"external-controller: 0.0.0.0:9090",
-		`secret: "1234567890"`,
+		"mixed-port: 7890",
+		"external-controller: 127.0.0.1:9090",
+		`secret: "` + clashSecret(acct) + `"`,
 		"external-ui: ui",
 		"external-ui-url:",
 		"unified-delay: true",
@@ -57,7 +58,8 @@ func TestGenerateMihomoAnyTLS(t *testing.T) {
 	} {
 		cfg.Enabled[tag] = false
 	}
-	data, err := GenerateMihomo(cfg, testAccount())
+	acct := testAccount()
+	data, err := GenerateMihomo(cfg, acct)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +90,8 @@ func TestGenerateMihomoRequiresHost(t *testing.T) {
 // the document root and make the profile unparseable.
 func TestGenerateMihomoTemplateActionsNotInComments(t *testing.T) {
 	cfg := testConfig()
-	data, err := GenerateMihomo(cfg, testAccount())
+	acct := testAccount()
+	data, err := GenerateMihomo(cfg, acct)
 	if err != nil {
 		t.Fatal(err)
 	}

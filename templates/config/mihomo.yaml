@@ -3,13 +3,13 @@
 # This is sample output of internal/subscribe/mihomo.yaml after rendering; keep
 # it in sync with the embedded template. The live file is generated per node.
 
-port: 7890
-allow-lan: true
+mixed-port: 7890
+allow-lan: false
 mode: rule
 log-level: info
 unified-delay: true
-external-controller: 0.0.0.0:9090
-secret: "1234567890"
+external-controller: 127.0.0.1:9090
+secret: "per-account-generated"   # 由面板按账号派生，不是固定值
 external-ui: ui
 external-ui-url: "https://gh-proxy.com/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip"
 

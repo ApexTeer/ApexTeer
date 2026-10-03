@@ -48,9 +48,19 @@ func Load(path string) (*Store, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	s.users = f.Users
+	seen := make(map[string]bool, len(s.users))
 	for i := range s.users {
 		u := &s.users[i]
-		u.EnsureCredentials()
+		// Load never invents credentials. A reading path that generated them would
+		// hand the subscription service different values than the core config was
+		// rendered with, which shows up as "the subscription imports but cannot
+		// connect". Only a writer repairs, via Store.Repair.
+		// A duplicate token would make ByToken hand one account the other's
+		// credentials, so a file that carries one is refused rather than served.
+		if seen[u.Token] {
+			return nil, fmt.Errorf("parse %s: duplicate subscription token", path)
+		}
+		seen[u.Token] = true
 		// used_bytes is derived from the two counters; a hand-edited file that
 		// lowered it must not hand out free traffic.
 		if total := u.UploadBytes + u.DownloadBytes; u.UsedBytes < total {
@@ -85,11 +95,30 @@ func (s *Store) Users() []User {
 func (s *Store) Routable(now time.Time) []User {
 	var out []User
 	for _, u := range s.Users() {
-		if u.Usable(now) && len(u.Protocols) > 0 {
-			out = append(out, u)
+		// An account whose selected protocols are not all credential-ready is left
+		// out entirely: handing the core a member with an empty uuid or password is
+		// rejected as a whole, and handing the client one is a node that cannot
+		// authenticate.
+		if !u.Usable(now) || len(u.Protocols) == 0 || !u.CredentialsReady() {
+			continue
 		}
+		out = append(out, u)
 	}
 	return out
+}
+
+// Repair fills in the credentials a hand-edited or legacy file is missing and
+// reports whether anything changed. Only writers call it, so the values it
+// generates are the ones persisted, and every later read sees the same pair.
+func (s *Store) Repair() bool {
+	changed := false
+	for i := range s.users {
+		if !s.users[i].CredentialsReady() {
+			changed = true
+		}
+		s.users[i].EnsureCredentials()
+	}
+	return changed
 }
 
 // Find returns the account with a name.

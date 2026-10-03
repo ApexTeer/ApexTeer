@@ -37,6 +37,24 @@ func (a *App) loadAccounts() {
 	a.accounts = store.Users()
 }
 
+// refreshAccountMenus reloads the snapshot and rebuilds the account menus. The
+// submenus are built when the section is entered, so without this a newly
+// created account stayed invisible under the account list until the operator
+// left the section and came back.
+func (a *App) refreshAccountMenus() {
+	a.loadAccounts()
+	onList := a.current().id == "user-list"
+	for i, m := range a.stack {
+		if m.id == "users" {
+			a.stack[i] = a.usersMenu()
+			break
+		}
+	}
+	if onList {
+		a.stack[len(a.stack)-1] = a.userListMenu()
+	}
+}
+
 // loadUsers opens the account file. The panel and the subscription service share
 // it, so every action reloads it instead of caching a store.
 func loadUsers() (*user.Store, error) {
@@ -72,9 +90,10 @@ func accountsChange(lang i18n.Lang, change func(*user.Store, time.Time) error) t
 			lock.Unlock()
 			return err
 		}
-		// The lock is released before the core is touched: ApplyStore takes it again
-		// to record what it applied, and holding it across the restart would only make
-		// the accounting service wait.
+		// The lock is released here so this write path is not the one holding it.
+		// ApplyStore takes it again around reload-apply-record, because the set that is
+		// applied and the set recorded as applied have to be the same one -- which does
+		// mean it is held across the core restart on purpose.
 		lock.Unlock()
 		return applyAccounts(ctx, lang, r.Log)
 	}
@@ -151,6 +170,8 @@ func (a *App) accountLabel(l i18n.Lang, token string) string {
 	used := formatSize(account.UploadBytes + account.DownloadBytes)
 	if account.QuotaBytes > 0 {
 		used += " / " + formatSize(account.QuotaBytes)
+	} else {
+		used += " / " + l.T("user_quota_unlimited")
 	}
 	parts := []string{account.Name, l.T(statusKey(account.Status(time.Now()))), used}
 	return strings.Join(parts, " · ")
@@ -199,9 +220,11 @@ func (a *App) accountPicker(titleKey string, act func(token string) actionFunc) 
 	}
 	if len(nodes) == 0 {
 		nodes = append(nodes, &node{
-			id:     "pick-none",
-			label:  tk("users_empty"),
-			desc:   tk("desc_users_new"),
+			id: "pick-none",
+			// Subscriptions are issued per account, so the empty state has to say why and
+			// what to do, not only that there is nothing here.
+			label:  tk("sub_pick_empty"),
+			desc:   tk("desc_sub_pick_empty"),
 			action: newUserAction(),
 		})
 	}
@@ -244,10 +267,10 @@ func (a *App) userMenu(token string) *menu {
 	}}
 }
 
-func quotaText(account user.User, _ i18n.Lang) string {
+func quotaText(account user.User, l i18n.Lang) string {
 	used := formatSize(account.UploadBytes + account.DownloadBytes)
 	if account.QuotaBytes <= 0 {
-		return used
+		// 0 means unlimited; printing "0 B" here read as "no allowance.`n		return used + " / " + l.T("user_quota_unlimited")
 	}
 	return used + " / " + formatSize(account.QuotaBytes)
 }
@@ -376,22 +399,56 @@ func editUserRemark(token string) actionFunc {
 	}
 }
 
+// editUserQuota prompts for the quota as two fields -- a GB box and an MB box --
+// so the value is exact and the operator never has to spell out a unit.
 func editUserQuota(token string) actionFunc {
 	return func(a *App) tea.Cmd {
-		return accountForm(a, token, "user_quota", "user_quota_prompt", "user_quota_hint", func(account user.User) string {
-			if account.QuotaBytes <= 0 {
-				return "0"
-			}
-			return formatSize(account.QuotaBytes)
-		}, func(u *user.User, value string, _ time.Time) error {
-			size, err := parseSize(value)
-			if err != nil {
-				return err
-			}
-			u.QuotaBytes = size
+		lang := a.lang
+		account, ok := accountByToken(token)
+		if !ok {
+			a.setToast(lang.T("users_missing"), true)
 			return nil
+		}
+		name := account.Name
+		gb, mb := splitSize(account.QuotaBytes)
+		a.openDualForm(lang.T("user_quota"), lang.T("user_quota_prompt"), gb, mb, lang.T("user_quota_hint"), func(a *App, gbText, mbText string) (tea.Cmd, error) {
+			size, err := parseSizeFields(gbText, mbText, lang)
+			if err != nil {
+				return nil, err
+			}
+			change := func(store *user.Store, now time.Time) error {
+				return store.Update(name, func(u *user.User) error {
+					u.QuotaBytes = size
+					return nil
+				})
+			}
+			return a.startTask(lang.T("user_quota"), accountsChange(lang, change)), nil
 		})
+		return nil
 	}
+}
+
+// splitSize renders a byte count as the GB and MB halves the quota prompt edits.
+// The value is binary, so the two fields reconstruct it exactly.
+func splitSize(bytes int64) (string, string) {
+	if bytes <= 0 {
+		return "0", "0"
+	}
+	return strconv.FormatInt(bytes>>30, 10), strconv.FormatInt((bytes>>20)&1023, 10)
+}
+
+// parseSizeFields reads the two boxes of the quota prompt. MB is capped at 1023 so
+// the pair is unambiguous, and 0 GB 0 MB means unlimited, which the prompt states.
+func parseSizeFields(gb, mb string, lang i18n.Lang) (int64, error) {
+	g, err := strconv.ParseInt(strings.TrimSpace(gb), 10, 64)
+	if err != nil || g < 0 || g > 1024 {
+		return 0, errors.New(lang.T("user_quota_invalid"))
+	}
+	m, err := strconv.ParseInt(strings.TrimSpace(mb), 10, 64)
+	if err != nil || m < 0 || m > 1023 {
+		return 0, errors.New(lang.T("user_quota_invalid"))
+	}
+	return g<<30 + m<<20, nil
 }
 
 func editUserExpiry(token string) actionFunc {

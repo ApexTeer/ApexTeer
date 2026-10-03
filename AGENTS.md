@@ -71,7 +71,9 @@ make screens    # render every screen and assert the layout (python3)
   credentials. The core user name is the account token, and the inbound `users`
   arrays and `stats.users` must both come from `user.Store.Routable`, or an
   account is authenticated but never counted.
-- Every user-facing string goes through `internal/i18n` for both `C` and `E`.
+- Every user-facing string goes through `internal/i18n` for both `C` and `E`,
+  except the toolbox's own report bodies: a tool's row labels, summaries and notes
+  are the tool's own words on purpose (see `docs/toolbox.md`).
 - Directories and paths are lowercase ASCII. `templates/` subdirectories are
   lowercase.
 - The runtime subscription templates are embedded from `internal/subscribe/`

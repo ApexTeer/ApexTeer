@@ -25,6 +25,9 @@ func GenerateMihomo(cfg state.Config, u user.User) ([]byte, error) {
 	if len(active) == 0 {
 		return nil, fmt.Errorf("no protocol enabled for %q", u.Name)
 	}
+	if err := checkPorts(cfg, active); err != nil {
+		return nil, err
+	}
 	hop := cfg.HopRange
 	if hop == "" {
 		hop = state.DefaultHopRange
@@ -48,6 +51,7 @@ func GenerateMihomo(cfg state.Config, u user.User) ([]byte, error) {
 	if err := mihomoTpl.Execute(&out, map[string]string{
 		"Proxies": proxies.String(),
 		"Nodes":   nodes.String(),
+		"Secret":  clashSecret(u),
 	}); err != nil {
 		return nil, err
 	}

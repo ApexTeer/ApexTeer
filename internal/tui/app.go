@@ -317,7 +317,7 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 		// exists while a download is in flight, so a rendered frame takes a sample
 		// reading rather than an idle one.
 		p := newProgress(a.lang.T("task_running"), func(context.Context, *taskReporter) error { return nil })
-		for _, line := range previewTaskLog() {
+		for _, line := range previewTaskLog(a.lang) {
 			p.appendLog(line)
 		}
 		p.setDownload(previewDownload(a.scriptVersion))
@@ -337,12 +337,12 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 }
 
 // previewTaskLog is the sample output of a rendered task screen.
-func previewTaskLog() []string {
+func previewTaskLog(l i18n.Lang) []string {
 	return []string{
 		"$ systemctl restart " + sysinfo.ServiceName,
 		"write " + sysinfo.ConfigJSON,
 		"config ok: " + sysinfo.ConfigJSON,
-		"节点已部署：账号与流量、订阅地址已就绪",
+		l.T("preview_deployed"),
 	}
 }
 
@@ -614,6 +614,13 @@ func (a *App) openForm(title, prompt, initial, hint string, submit formSubmit) {
 	a.form = f
 }
 
+// openDualForm shows a two-field prompt: a number, a unit, a number, a unit.
+func (a *App) openDualForm(title, prompt, first, second, hint string, submit dualSubmit) {
+	f := newDualForm(title, prompt, first, second, hint, submit)
+	f.resize(ui.InnerWidth(a.style(), a.frameWidth()))
+	a.form = f
+}
+
 func (a *App) handleFormKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	f := a.form
 	if f == nil {
@@ -627,13 +634,16 @@ func (a *App) handleFormKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "enter":
 		var cmd tea.Cmd
-		if f.submit != nil {
-			var err error
+		var err error
+		switch {
+		case f.dual != nil:
+			cmd, err = f.dual(a, f.input.Value(), f.second.Value())
+		case f.submit != nil:
 			cmd, err = f.submit(a, f.input.Value())
-			if err != nil {
-				f.err = err.Error()
-				return a, nil
-			}
+		}
+		if err != nil {
+			f.err = err.Error()
+			return a, nil
 		}
 		if a.form == f {
 			a.form = nil
@@ -703,7 +713,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// snapshot is refreshed as soon as a task finishes; a section whose
 				// 看板 reads the machine (BBR) takes its reading again too, or the
 				// page would keep showing what it said before the task ran.
-				a.loadAccounts()
+				a.refreshAccountMenus()
 				a.adoptTaskResult()
 				return a, tea.Batch(cmd, collectStatus(a.scriptVersion), a.sectionRefresh())
 			}

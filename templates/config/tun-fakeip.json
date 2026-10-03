@@ -82,6 +82,12 @@
       "auto_route": true,                // 是否自动修改系统路由表以接管所有网络流量
       "strict_route": true,              // 是否启用严格路由规则（防止 DNS / IPv6 泄漏或回环）
       "mtu": 1420                        // 虚拟网卡的最大传输单元（MTU）
+    },
+    {
+      "type": "mixed",                   // 入站类型：混合代理（HTTP + SOCKS5 同一端口）
+      "tag": "mixed-in",                 // 入站标识标签
+      "listen": "127.0.0.1",             // 监听地址（仅本机可用）
+      "listen_port": 7890                // 监听端口
     }
   ],
 
@@ -165,11 +171,11 @@
     },
   // Clash API 兼容控制接口（便于搭配 Yacd / Metacubexd / Zashboard 等 Web UI 管理界面）
     "clash_api": {
-      "external_controller": "0.0.0.0:9090", // REST UI 控制器的监听地址与端口（0.0.0.0 表示允许局域网及外部 IP 访问，9090 为默认端口）
+      "external_controller": "127.0.0.1:9090", // REST UI 控制器的监听地址与端口（0.0.0.0 表示允许局域网及外部 IP 访问，9090 为默认端口）
       "external_ui": "ui",                     // Web UI 静态资源文件在本地的相对/绝对路径（解压后文件存储在该目录下）
       "external_ui_download_url": "https://gh-proxy.com/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip", // Web UI 面板压缩包下载地址（本地缺少 UI 文件时自动下载）
       "external_ui_download_detour": "direct", // 下载 Web UI 界面时使用的出站标签（已由原来的"直连"修正为 outbounds 中对应的 "direct"）
-      "secret": "1234567890",                // Clash API 连接验证密钥/密码（用于前端面板安全登录，建议修改为强密码）
+      "secret": "",                          // 由面板按账号派生，勿在此写死（见 generate.go 的 clashSecret）
       "default_mode": "Rule"                 // 服务启动时的默认分流模式（可选: Rule-规则模式, Global-全局代理, Direct-全局直连）
     }
   },

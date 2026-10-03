@@ -1,7 +1,9 @@
 package subscribe
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -22,6 +24,9 @@ func Generate(cfg state.Config, u user.User) ([]byte, error) {
 	active := ActiveTags(cfg, u)
 	if len(active) == 0 {
 		return nil, fmt.Errorf("no protocol enabled for %q", u.Name)
+	}
+	if err := checkPorts(cfg, active); err != nil {
+		return nil, err
 	}
 
 	root, err := parseOrderedJSON(stripJSONC(templateJSON))
@@ -78,6 +83,13 @@ func Generate(cfg state.Config, u user.User) ([]byte, error) {
 	}
 	outbounds.arr = kept
 
+	// The Clash-compatible API is a management surface, so it stays on loopback and
+	// its secret is derived per account: a fixed secret in the template would hand
+	// every user the same, publicly known password.
+	if api := root.get("experimental").get("clash_api"); api != nil {
+		api.setString("secret", clashSecret(u))
+	}
+
 	return json.MarshalIndent(root, "", "  ")
 }
 
@@ -122,12 +134,39 @@ func setServerName(ob *jsonValue, name string) {
 	}
 }
 
-func portInt(cfg state.Config, key string) int {
-	raw := cfg.Ports[key]
-	if raw == "" {
-		raw = state.DefaultPorts[key]
+// checkPorts refuses a document whose server_port would be invalid. Emitting
+// server_port: 0 instead only reached the user as "cannot connect", with nothing
+// in the panel naming the real cause.
+func checkPorts(cfg state.Config, tags []string) error {
+	for _, tag := range tags {
+		if _, err := portNumber(cfg, keyForTag[tag]); err != nil {
+			return err
+		}
 	}
-	n, _ := strconv.Atoi(raw)
+	return nil
+}
+
+// portNumber resolves one protocol's listen port, falling back to the compiled
+// default when the state file carries nothing.
+func portNumber(cfg state.Config, key string) (int, error) {
+	raw := strings.TrimSpace(cfg.Ports[key])
+	if raw == "" {
+		raw = strings.TrimSpace(state.DefaultPorts[key])
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 65535 {
+		return 0, fmt.Errorf("invalid port %q for %s", raw, key)
+	}
+	return n, nil
+}
+
+// portInt is portOf for the renderers, which validate every port up front with
+// checkPorts before any of these calls run.
+func portInt(cfg state.Config, key string) int {
+	n, err := portNumber(cfg, key)
+	if err != nil {
+		return 0
+	}
 	return n
 }
 
@@ -167,4 +206,12 @@ func contains(list []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// clashSecret derives the client's local management API secret from the account
+// token, so every account gets a different value and none of them is the
+// template's public default.
+func clashSecret(u user.User) string {
+	sum := sha256.Sum256([]byte("easysb-clash-api\x00" + u.Token))
+	return hex.EncodeToString(sum[:16])
 }
