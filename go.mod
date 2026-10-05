@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/go-acme/lego/v5 v5.5.2
-	github.com/sagernet/sing v0.9.6-0.20260922013354-87c33f17688f
+	github.com/sagernet/sing v0.9.6
 	github.com/sagernet/sing-box v1.14.2
 	github.com/showwin/speedtest-go v1.8.3
 	golang.org/x/net v0.59.0
