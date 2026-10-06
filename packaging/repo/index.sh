@@ -1,226 +1,154 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  EasySB 软件源：摆目录树、生成索引并签名 / lay out the trees, index and sign them
+#  EasySB 软件源：摆目录树、生成索引并签名 / lay out the tree, index and sign it
 # ------------------------------------------------------------------------------
-#  目录形状照 Docker 官方源（download.docker.com/linux）来：
+#  这是一棵标准 apt 树，GitHub Pages 原样发布在站点根：
 #
-#    linux/<发行版>/gpg                                        同一把公钥，armored
-#    linux/debian/dists/<套件>/pool/stable/<架构>/*.deb
-#    linux/debian/dists/<套件>/stable/binary-<架构>/Packages
-#    linux/debian/dists/<套件>/Release | InRelease | Release.gpg
-#    linux/<发行版>/easysb.repo                                rpm：登记源只要这一份
-#    linux/<发行版>/<发行版号>/<基架>/stable/Packages/*.rpm
-#    linux/<发行版>/<发行版号>/<基架>/stable/repodata/…
+#    pool/main/e/easysb/easysb_<版本>-1_<架构>.deb    所有套件共用这一份
+#    dists/<套件>/main/binary-<架构>/Packages(.gz)    内含相对站点根的 Filename
+#    dists/<套件>/Release | InRelease | Release.gpg   套件元数据与签名
+#    easysb-archive-keyring.asc                       armored 公钥
+#    install.sh                                       一键安装脚本
 #
-#  The layout follows Docker's official sources (download.docker.com/linux).
+#  A plain apt tree published verbatim at the Pages site root: one shared pool, one
+#  dists/<suite> per release, the armored public key and install.sh at the site root.
 #
-#  包来自 packages.sh 打好的暂存目录（REPO_PKGS），这里只负责摆放、索引与签名，所以
-#  同一份 rpm 可以同时出现在 centos、rhel、rocky 的同名 release 下而不必重打。
-#  The packages come from the staging directory packages.sh fills (REPO_PKGS); this only
-#  lays them out and indexes them, so one rpm can appear under centos, rhel and rocky
-#  for the same release without being rebuilt.
+#  同一个 .deb 服务所有套件，版本串不带发行版：EasySB 只依赖 ca-certificates，不分
+#  发行版打包反而让各个套件引用同一份字节，升级也简单。
+#  One .deb serves every suite; the version string carries no distribution. EasySB only
+#  depends on ca-certificates, so a single package shared by every suite is simpler and
+#  makes upgrades uniform.
 #
-#  用法 / Usage: index.sh apt|rpm
+#  用法 / Usage: 由 Makefile 调用，变量见下。
+#    DIST          .deb 所在目录
+#    REPO_DIR      输出树根
+#    PKG_NAME / VERSION / PKG_DESC
+#    APT_SUITES    空格分隔的套件名
+#    DEBARCH_MAP   每项 asset=debian-arch
+#    GPG_KEY_ID / GPG_PASSPHRASE_FILE   存在时签名
 # ==============================================================================
 
 set -euo pipefail
 
-mode="${1:-}"
-case "$mode" in
-  apt|rpm) ;;
-  *) echo "用法 / usage: index.sh apt|rpm" >&2; exit 1 ;;
-esac
-
+DIST="${DIST:?DIST 未设置 / required}"
 REPO_DIR="${REPO_DIR:?REPO_DIR 未设置 / required}"
-REPO_PKGS="${REPO_PKGS:?REPO_PKGS 未设置 / required}"
+PKG_NAME="${PKG_NAME:?PKG_NAME 未设置 / required}"
+VERSION="${VERSION:?VERSION 未设置 / required}"
+PKG_DESC="${PKG_DESC:-$PKG_NAME}"
+APT_SUITES="${APT_SUITES:?APT_SUITES 未设置 / required}"
+DEBARCH_MAP="${DEBARCH_MAP:?DEBARCH_MAP 未设置 / required}"
 
-map_get() {
-  local map="$1" key="$2" item
-  for item in $map; do
-    case "$item" in
-      "$key"=*) printf '%s' "${item#*=}"; return 0 ;;
-    esac
-  done
-  return 1
-}
+command -v apt-ftparchive >/dev/null 2>&1 || {
+  echo "apt-ftparchive 未安装 / missing: apt-get install -y apt-utils" >&2; exit 1; }
+
+# .deb 的版本串：上游版本加一个本地修订号 / the package version: upstream plus revision.
+debver="${VERSION}-1"
+pool_rel="pool/main/e/${PKG_NAME}"
 
 # 签名参数：CI 无人值守（--batch），口令从 0600 文件读入，不进进程列表。
 # Signing options: --batch for unattended CI, and the passphrase read from a 0600 file so
 # it never reaches a process list.
 sign=()
-if [ -n "${GPG_KEY_ID:-}" ]; then
+have_key() { [ -n "${GPG_KEY_ID:-}" ]; }
+if have_key; then
   sign=(--batch --yes --pinentry-mode loopback)
   if [ -n "${GPG_PASSPHRASE_FILE:-}" ]; then
     sign+=(--passphrase-file "$GPG_PASSPHRASE_FILE")
   fi
 fi
 
-have_key() { [ -n "${GPG_KEY_ID:-}" ]; }
+# 每个资产名换成 Debian 架构名，映射只有 Makefile 的 DEBARCH_* 一处定义。
+# Map each asset name to Debian's architecture name; the mapping lives only in DEBARCH_*.
+archs=()
+for item in $DEBARCH_MAP; do
+  asset="${item%%=*}"
+  debarch="${item#*=}"
+  src="$DIST/${PKG_NAME}_${debver}_${debarch}.deb"
+  [ -s "$src" ] || { echo "缺少包 / missing package: $src" >&2; exit 1; }
+  archs+=("$debarch")
+done
 
-# 公钥一律从密钥环导出成 armored 文件，与 Docker 的 linux/<发行版>/gpg 一致。
-# The public key is exported from the keyring as an armored file, matching Docker's
-# linux/<distro>/gpg.
-export_pubkey() {
-  have_key || return 0
-  local out="$1"
-  mkdir -p "$(dirname "$out")"
-  gpg --batch --yes --armor --export "$GPG_KEY_ID" > "$out"
-}
+# 清掉旧树再重铺：pool 只有这一份，dists 每次按套件重生成。
+# Wipe the old tree and lay it out again: one pool, and dists regenerated per suite.
+rm -rf "$REPO_DIR"
+mkdir -p "$REPO_DIR/$pool_rel"
+for debarch in "${archs[@]}"; do
+  cp -f "$DIST/${PKG_NAME}_${debver}_${debarch}.deb" "$REPO_DIR/$pool_rel/"
+done
 
-# ------------------------------------------------------------------------------
-# apt：每个发行版一棵树，套件目录下 pool 与 binary-<架构> 并列
-# apt: one tree per distribution, pool beside binary-<arch> under the suite
-# ------------------------------------------------------------------------------
-apt_index() {
-  command -v apt-ftparchive >/dev/null 2>&1 || {
-    echo "apt-ftparchive 未安装 / missing: apt-get install -y apt-utils" >&2; exit 1; }
+for suite in $APT_SUITES; do
+  root="$REPO_DIR/dists/$suite"
+  for debarch in "${archs[@]}"; do
+    dir="$root/main/binary-$debarch"
+    mkdir -p "$dir"
 
-  for spec in ${DEB_SUITES:-}; do
-    IFS=/ read -r distro suite version_id assets <<< "$spec"
-    local root="$REPO_DIR/linux/$distro"
-    local -a archs=()
-    local asset debarch pool_rel pkgdir_rel
+    # Filename 字段是相对站点根的路径，所以从一个把 pool 路径原样复刻出来、只放本架构
+    # 包的临时树里生成 Packages。硬链接即可，不复制字节。
+    # The Filename field is relative to the site root, so Packages is generated from a
+    # temporary tree that mirrors the pool path and holds only this architecture's
+    # package. Hard links only; no bytes are copied.
+    #
+    # 临时树必须落在 REPO_DIR 所在的文件系统上：mktemp 默认用 /tmp，而 CI 里 /tmp 与
+    # 工作目录常常是不同挂载，跨设备硬链接会以 "Invalid cross-device link" 失败。
+    # The scratch tree has to live on REPO_DIR's filesystem: plain mktemp uses /tmp, which
+    # on CI is often a different mount from the workspace, and a cross-device hard link
+    # fails with "Invalid cross-device link".
+    tmp="$(mktemp -d "$REPO_DIR/.pkgtmp.XXXXXX")"
+    mkdir -p "$tmp/$pool_rel"
+    for deb in "$REPO_DIR/$pool_rel"/*_"$debarch".deb; do
+      ln "$deb" "$tmp/$pool_rel/"
+    done
+    ( cd "$tmp" && apt-ftparchive packages "$pool_rel" ) > "$dir/Packages"
+    gzip -9 -c "$dir/Packages" > "$dir/Packages.gz"
+    rm -rf "$tmp"
 
-    for asset in ${assets//,/ }; do
-      debarch="$(map_get "$DEBARCH_MAP" "$asset")"
-      archs+=("$debarch")
-      pool_rel="dists/$suite/pool/stable/$debarch"
-      pkgdir_rel="dists/$suite/stable/binary-$debarch"
-      mkdir -p "$root/$pool_rel" "$root/$pkgdir_rel"
-
-      debver="${VERSION}-1~${distro}.${version_id}~${suite}"
-      cp -f "${REPO_PKGS}/${PKG_NAME}_${debver}_${debarch}.deb" "$root/$pool_rel/"
-
-      # Filename 字段是相对发行版树根的路径，所以 Packages 必须在树根下生成；这正是
-      # Docker 索引里 dists/<套件>/pool/... 的来处。
-      # The Filename field is relative to the distribution root, so Packages is generated
-      # from there; that is where Docker's dists/<suite>/pool/... form comes from.
-      ( cd "$root" && apt-ftparchive packages "$pool_rel" ) > "$root/$pkgdir_rel/Packages"
-      gzip -9 -c "$root/$pkgdir_rel/Packages" > "$root/$pkgdir_rel/Packages.gz"
-      cat > "$root/$pkgdir_rel/Release" <<EOF
-Component: stable
-Architecture: $debarch
-Suite: $suite
+    cat > "$dir/Release" <<EOF
+Archive: stable
 Origin: $PKG_NAME
 Label: $PKG_NAME
+Suite: $suite
+Component: main
+Architecture: $debarch
 EOF
-    done
-
-    # Release 不能写进自己的树里再生成：apt-ftparchive 会把已存在的 Release 也算进校验和，
-    # 于是文件引用自己。先落到树外，再挪进去。
-    # Release cannot be written inside its own tree while it is generated: apt-ftparchive
-    # would checksum the file that already exists there and the file would reference
-    # itself. It lands outside the tree first and is moved in afterwards.
-    local tmp; tmp="$(mktemp)"
-    ( cd "$root" && apt-ftparchive \
-        -o "APT::FTPArchive::Release::Origin=$PKG_NAME" \
-        -o "APT::FTPArchive::Release::Label=$PKG_NAME" \
-        -o "APT::FTPArchive::Release::Suite=$suite" \
-        -o "APT::FTPArchive::Release::Architectures=${archs[*]}" \
-        -o "APT::FTPArchive::Release::Components=stable" \
-        -o "APT::FTPArchive::Release::Description=$PKG_DESC" \
-        release "dists/$suite" ) > "$tmp"
-    mv -f "$tmp" "$root/dists/$suite/Release"
-
-    if have_key; then
-      ( cd "$root/dists/$suite" && \
-        gpg "${sign[@]}" --armor --detach-sign -u "$GPG_KEY_ID" -o Release.gpg Release && \
-        gpg "${sign[@]}" --clearsign   -u "$GPG_KEY_ID" -o InRelease Release )
-    fi
-    export_pubkey "$root/gpg"
-    echo "  apt: $distro/$suite (${archs[*]})"
   done
-}
 
-# ------------------------------------------------------------------------------
-# rpm：每个发行版一份 easysb.repo，每个 release / 基架一份 rpm-md 目录
-# rpm: one easysb.repo per distribution and one rpm-md tree per release / base arch
-# ------------------------------------------------------------------------------
-rpm_index() {
-  command -v createrepo_c >/dev/null 2>&1 || {
-    echo "createrepo_c 未安装 / missing: apt-get install -y createrepo-c" >&2; exit 1; }
+  # Release 不能写进它要校验的那棵树里再生成：apt-ftparchive 会把已存在的 Release 也算进
+  # 校验和，于是文件引用自己。先落到 $root 之外（同一文件系统，避免跨设备 mv），再挪进去。
+  # Release cannot be written inside the tree it checksums while it is generated:
+  # apt-ftparchive would checksum the file that already exists there and the file would
+  # reference itself. It lands outside $root first (on the same filesystem, so the move
+  # never crosses devices) and is moved in afterwards.
+  tmp="$(mktemp "$REPO_DIR/.release.XXXXXX")"
+  ( cd "$root" && apt-ftparchive \
+      -o "APT::FTPArchive::Release::Origin=$PKG_NAME" \
+      -o "APT::FTPArchive::Release::Label=$PKG_NAME" \
+      -o "APT::FTPArchive::Release::Suite=$suite" \
+      -o "APT::FTPArchive::Release::Codename=$suite" \
+      -o "APT::FTPArchive::Release::Architectures=${archs[*]}" \
+      -o "APT::FTPArchive::Release::Components=main" \
+      -o "APT::FTPArchive::Release::Description=$PKG_DESC" \
+      release . ) > "$tmp"
+  mv -f "$tmp" "$root/Release"
 
-  # Docker 的 rpm 索引用 zstd 压 repodata；createrepo_c 0.17（Debian 12、Ubuntu 22.04）还
-  # 没把这个类型编进去，遇到它要退回 gz，否则整棵树生成到一半就停。空目录上试一次就知道
-  # 手上这份支持哪种；压缩方式不属于对外的约定，dnf 两种都读。
-  # Docker's rpm index compresses repodata with zstd; createrepo_c 0.17 (Debian 12, Ubuntu
-  # 22.04) has no such type compiled in and would abort mid-tree, so fall back to gz there.
-  # One run against an empty directory tells which types this build knows; the compression
-  # type is not part of the contract and dnf reads either.
-  local repodata_compress='gz' probe
-  probe="$(mktemp -d)"
-  if createrepo_c --quiet --general-compress-type zstd "$probe" >/dev/null 2>&1; then
-    repodata_compress='zstd'
-  fi
-  rm -rf "$probe"
-
-  local gpg_wrap=''
   if have_key; then
-    command -v rpm >/dev/null 2>&1 || {
-      echo "rpm 未安装 / missing: apt-get install -y rpm" >&2; exit 1; }
-    # 口令要读文件，但 rpm 的 __gpg_sign_cmd 不能整条替换：文件名占位符由 rpm 自己注入，
-    # 写法还跟着版本变。只把 %{__gpg} 指到包装脚本，真正要加的参数在那里补。
-    # The passphrase must come from a file, but rpm's __gpg_sign_cmd cannot be replaced
-    # wholesale: rpm injects the file-name placeholders itself and their spelling moves
-    # between versions. Only %{__gpg} points at a wrapper, which adds the options.
-    gpg_wrap="$(mktemp)"
-    printf '#!/bin/sh\n[ "$1" = gpg ] && shift\nexec %s %s "$@"\n' \
-      "$(command -v gpg)" "$(printf '%s ' "${sign[@]}")" > "$gpg_wrap"
-    chmod +x "$gpg_wrap"
+    ( cd "$root" && \
+      gpg "${sign[@]}" --armor --detach-sign -u "$GPG_KEY_ID" -o Release.gpg Release && \
+      gpg "${sign[@]}" --clearsign   -u "$GPG_KEY_ID" -o InRelease Release )
   fi
+  echo "  apt: $suite (${archs[*]})"
+done
 
-  local seen_distros=''
-  for spec in ${RPM_TREES:-}; do
-    IFS=/ read -r distro releasever suffix assets <<< "$spec"
+# 公钥一律从密钥环导出成 armored 文件，install.sh 直接 dearmor 到
+# /usr/share/keyrings/easysb-archive-keyring.gpg。
+# The public key is exported from the keyring as an armored file; install.sh dearmors it
+# straight to /usr/share/keyrings/easysb-archive-keyring.gpg.
+if have_key; then
+  gpg --batch --yes --armor --export "$GPG_KEY_ID" > "$REPO_DIR/easysb-archive-keyring.asc"
+else
+  echo "  未设置 GPG_KEY_ID，索引未签名 / no GPG_KEY_ID, publishing an unsigned index"
+fi
 
-    if ! printf ' %s ' "$seen_distros" | grep -q " $distro "; then
-      seen_distros="$seen_distros $distro"
-      mkdir -p "$REPO_DIR/linux/$distro"
-      {
-        printf '[easysb]\nname=EasySB\n'
-        printf 'baseurl=%s/linux/%s/$releasever/$basearch/stable\n' "$REPO_URL" "$distro"
-        printf 'enabled=1\ngpgcheck=%s\n' "$(have_key && echo 1 || echo 0)"
-        have_key && printf 'gpgkey=%s/linux/%s/gpg\n' "$REPO_URL" "$distro"
-      } > "$REPO_DIR/linux/$distro/easysb.repo"
-      export_pubkey "$REPO_DIR/linux/$distro/gpg"
-    fi
+cp -f install.sh "$REPO_DIR/install.sh"
 
-    local asset rpmarch dir
-    for asset in ${assets//,/ }; do
-      rpmarch="$(map_get "$RPMARCH_MAP" "$asset")"
-      dir="$REPO_DIR/linux/$distro/$releasever/$rpmarch/stable"
-      rm -rf "$dir"; mkdir -p "$dir/Packages"
-      pkg="$dir/Packages/${PKG_NAME}-${VERSION}-${suffix}.${rpmarch}.rpm"
-      cp -f "${REPO_PKGS}/${PKG_NAME}-${VERSION}-${suffix}.${rpmarch}.rpm" "$pkg"
-      if have_key; then
-        # rpm 的签名库在 GPG_TTY 未设置、stdin 又不是终端时，会自己去推导终端并失败，于是
-        # 每次都打一条 «Could not set GPG_TTY to stdin: Inappropriate ioctl for device»。
-        # CI 的 stdin 永远是管道，这条警告必然出现却毫无影响：口令走 --passphrase-file，
-        # gpg 处于 --batch，根本不会提示。随便给 GPG_TTY 一个值就能跳过那段推导。
-        # rpm's signing library derives the terminal itself when GPG_TTY is unset and stdin is
-        # not a tty, fails, and warns «Could not set GPG_TTY to stdin: Inappropriate ioctl for
-        # device» every time. CI's stdin is always a pipe, so the warning is guaranteed and
-        # harmless: the passphrase comes from --passphrase-file and gpg runs --batch, so it
-        # never prompts. Any value for GPG_TTY skips that derivation.
-        GPG_TTY=/dev/null rpm --addsign \
-          --define "_gpg_name $GPG_KEY_ID" --define "__gpg $gpg_wrap" "$pkg"
-      fi
-      # createrepo_c 必须在签名之后跑，否则索引里的校验和与签过名的包对不上。
-      # createrepo_c has to run after signing, or the checksums in the index no longer
-      # match the signed packages.
-      createrepo_c --quiet --no-database --general-compress-type "$repodata_compress" "$dir"
-      if have_key; then
-        gpg "${sign[@]}" --armor --detach-sign -u "$GPG_KEY_ID" \
-          -o "$dir/repodata/repomd.xml.asc" "$dir/repodata/repomd.xml"
-      fi
-    done
-    echo "  rpm: $distro/$releasever/$suffix"
-  done
-  [ -z "$gpg_wrap" ] || rm -f "$gpg_wrap"
-}
-
-mkdir -p "$REPO_DIR"
-case "$mode" in
-  apt) apt_index ;;
-  rpm) rpm_index ;;
-esac
+echo "源目录树 / repository tree:"
+find "$REPO_DIR" -type f | sort | sed 's|^|  |'

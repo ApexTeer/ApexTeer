@@ -137,7 +137,7 @@ func (a *App) bbrVersionsNodes() []*node {
 		rel := rel
 		nodes = append(nodes, &node{
 			id:    "bbr-version-" + rel.Tag,
-			label: func(_ i18n.Lang) string { return rel.Version },
+			label: func(_ i18n.Lang) string { return releaseLabel(rel) },
 			desc:  func(l i18n.Lang) string { return a.releaseDesc(l, rel, newest[rel.Profile]) },
 			icon:  releaseIcon(rel.Profile),
 			action: func(a *App) tea.Cmd {
@@ -146,6 +146,13 @@ func (a *App) bbrVersionsNodes() []*node {
 		})
 	}
 	return nodes
+}
+
+// releaseLabel is the row title: the version, with the max profile marked exactly the
+// way its release tag is. The two builds of one version would otherwise read as the
+// same row, since only the description tells them apart.
+func releaseLabel(rel bbr.Release) string {
+	return rel.Version + rel.Profile.Suffix()
 }
 
 // releaseDesc says what a row is: which profile it is, whether it is the newest of
@@ -182,7 +189,7 @@ func previewReleases() []bbr.Release {
 		{Tag: "x86_64-9.9.9", Version: "9.9.9", Profile: bbr.Standard},
 		{Tag: "x86_64-9.9.9-max", Version: "9.9.9", Profile: bbr.Max},
 		{Tag: "x86_64-9.9.8", Version: "9.9.8", Profile: bbr.Standard},
-		{Tag: "x86_64-9.9.7-max", Version: "9.9.7", Profile: bbr.Max},
+		{Tag: "x86_64-9.9.8-max", Version: "9.9.8", Profile: bbr.Max},
 	}
 }
 

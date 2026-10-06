@@ -24,7 +24,7 @@
 - [Supported Protocols](#supported-protocols)
 - [Quick Start](#quick-start)
 - [Debian / Ubuntu Packages](#debian--ubuntu-packages)
-- [RPM and pacman Packages](#rpm-and-pacman-packages)
+- [Releases](#releases)
 - [Capabilities](#capabilities)
 - [Interactive Menu](#interactive-menu)
 - [Command Line](#command-line)
@@ -61,8 +61,8 @@ EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol de
 ```text
 .
 ├── main.go                       # Go entrypoint (TUI)
-├── install.sh                    # Installer (one command: source + package, or a local file)
-├── packaging/                    # Package lifecycle scripts (deb/, rpm/), the source builder (repo/) and server/
+├── install.sh                    # Installer (one command: add the signed apt source and install)
+├── packaging/                    # Package lifecycle scripts (deb/) and the apt source builder (repo/)
 ├── VERSION                       # Single source of truth for the release tag
 ├── AGENTS.md                     # Guide for AI agents and contributors
 ├── go.mod                        # Go module definition
@@ -101,26 +101,17 @@ Ports are prompted one by one: Enter takes the default, `r` picks a random port,
 
 ## Quick Start
 
-One command, the same shape as Docker's `get.docker.com`: the script detects the
-distribution and architecture, configures this machine's signed package source and
-installs through the OS package manager. The sources are built for Debian 12 and 13,
-Ubuntu 22.04 and 24.04, Fedora 41 and 42, RHEL 9 and 10 (CentOS, Rocky and AlmaLinux
-included) and Arch; a system outside that list (Alpine, openSUSE) falls back to the
-release tarball.
+One command, the same shape as Docker's `get.docker.com`: the script maps the
+machine's `/etc/os-release` to one of the three published suites, installs the
+signing key and the apt source, and installs through apt. The sources cover Debian 12
+and 13 and Ubuntu 24.04, for amd64 and arm64.
 
 ```bash
 curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-The same script carries the other ways in. From a package file you downloaded yourself:
-
-```bash
-curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash -s -- --method package --package ./easysb_5.0.0_linux_amd64.deb
-```
-
-`--method repo` insists on the package source (an error where none exists), `--from-source`
-builds from source, `--binary ./easysb` uses a binary you built, and `--lang E` switches the
-output to English.
+The script also takes `--repo-url URL` to point at a mirror and `--lang E` to switch
+the output to English.
 
 The shortcut then opens the dark dashboard:
 
@@ -138,7 +129,7 @@ sb --language C
 sb --language E
 ```
 
-Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
+Supports Debian 12+ / Ubuntu 24.04+ (systemd); run as root.
 
 ---
 
@@ -163,99 +154,58 @@ The units come from the binary itself (`sb --print-unit node|sub`), which is the
 Download the `.deb` for this host's architecture and install it:
 
 ```bash
-# architectures: amd64, arm64, armhf, i386, riscv64, s390x
-sudo dpkg -i easysb_5.0.0_linux_amd64.deb
-
-# or hand the same file to the installer
-bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
+# architectures: amd64, arm64
+sudo dpkg -i easysb_6.0.0-1_amd64.deb
 ```
 
 ### apt repository
 
-The apt index and the `.deb` files are served from `https://sb.kejizero.xyz/linux/<distribution>`, one tree per distribution (`debian`, `ubuntu`), a fixed address, so one sources entry covers every later version. The setup is Docker's own, character for character: the armored key lands at `/etc/apt/keyrings/easysb.asc`, the entry is one line in `/etc/apt/sources.list.d/easysb.list` carrying `arch`, `signed-by`, the distribution directory and the suite, and apt installs the package.
+The apt index and the `.deb` files are served from `https://sb.kejizero.xyz`, a fixed
+address, so one sources entry covers every later version. The setup is caddy's: the
+armored key is dearmored to `/usr/share/keyrings/easysb-archive-keyring.gpg`, the entry
+is one line in `/etc/apt/sources.list.d/easysb.list` carrying `signed-by`, and apt
+installs the package.
 
 ```bash
 curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-The entry the installer writes is shaped like Docker's `deb [...] $URL/linux/ubuntu noble stable`:
+The entry the installer writes is:
 
 ```text
-deb [arch=amd64 signed-by=/etc/apt/keyrings/easysb.asc] https://sb.kejizero.xyz/linux/debian bookworm stable
+deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://sb.kejizero.xyz bookworm main
 ```
 
-After that `sudo apt upgrade` keeps the panel current. The four suites are `bookworm` (Debian 12), `trixie` (Debian 13), `jammy` (Ubuntu 22.04) and `noble` (Ubuntu 24.04); each `.deb` carries that in its version, `5.0.0-1~debian.12~bookworm` and `5.0.0-1~ubuntu.24.04~noble`, so a distribution upgrade pulls the matching package.
+After that `sudo apt upgrade` keeps the panel current. The three suites are `bookworm`
+(Debian 12), `trixie` (Debian 13) and `noble` (Ubuntu 24.04). One package serves all
+of them: it depends on nothing but `ca-certificates`, so the version string carries no
+distribution (`6.0.0-1`) and upgrading the distribution does not change which package
+apt pulls.
 
-All three sources are signed with one key. Add the armored private key as the repository secret `GPG_PRIVATE_KEY` and its passphrase as `GPG_PASSPHRASE`; the release workflow imports it and signs every artifact: apt's `Release` (`InRelease` and `Release.gpg`), each `.rpm`, the rpm-md `repomd.xml`, each pacman package and the pacman database. The passphrase is read from a file, so it never reaches a process list. Every source publishes the public key the way Docker's official repository does, as an armored file: `linux/debian/gpg`, `linux/ubuntu/gpg`, `linux/<distro>/gpg` on the rpm side and `pacman/easysb.asc`.
-
-A release run without the secret publishes unsigned sources, and each entry then has a permissive form: `trusted=yes` in place of `signed-by=`, `gpgcheck=0` with no `gpgkey`, and `SigLevel = Optional TrustAll`. The installer picks whichever form matches what the server actually published.
+The index is signed with one key. Add the armored private key as the repository secret
+`GPG_PRIVATE_KEY` and its passphrase as `GPG_PASSPHRASE`; the release workflow imports
+it and signs apt's `Release` (`InRelease` and `Release.gpg`). The passphrase is read
+from a file, so it never reaches a process list. The public key is published as
+`easysb-archive-keyring.asc` at the source root. A run without `GPG_PRIVATE_KEY` fails
+rather than publishing an unsigned index.
 
 ---
 
-## RPM and pacman Packages
+## Releases
 
-The same release also carries an `.rpm` for the Fedora and RHEL family, and a pacman package for Arch. Both wrap the identical binary, the identical units and the same staged tree as the `.deb`, so all three formats agree with each other and with the runtime.
+Each release is tagged and named `v<VERSION>` and carries one updatable asset per
+architecture, `easysb_<version>-1_<arch>.deb`:
 
-Both also come from the release server as real repositories, an rpm-md tree and a pacman database. The same one command adds the source for this system and installs through it, so there is nothing to copy by hand:
-
-```bash
-curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
-```
-
-The rpm tree is split the way Docker's is. Each distribution has one directory, `linux/centos`, `linux/rhel`, `linux/rocky` or `linux/fedora`, carrying a single `easysb.repo` and the armored `gpg` key; the packages themselves sit under `linux/<distro>/<release>/<basearch>/stable`, so `linux/centos/9/x86_64/stable` and `linux/fedora/42/aarch64/stable` are the shapes. The `easysb.repo` the installer registers carries the `baseurl`, `gpgcheck` and the `gpgkey` URL together, so the package manager fetches and trusts the signing key by itself on the first install and no separate key import is needed. The two dnf generations register it differently, each chosen by which command exists: dnf5 uses its built-in `config-manager addrepo --from-repofile`, dnf4 uses `config-manager --add-repo` from `dnf-plugins-core`, and a yum-only system uses `yum-config-manager --add-repo`; then `makecache` and the install. Each `.rpm` carries the release in its version, `5.0.0-1.el9` and `5.0.0-1.fc42`, and CentOS, RHEL and Rocky share one `el9` build, so one file serves all three. On the pacman side the installer imports `pacman/easysb.asc`, locally trusts it and writes the `[easysb]` block; pacman then verifies the database (`DatabaseRequired`) and each package (`Required`) against that key.
-
-Single files are still on the release page if you prefer to install by hand:
-
-```bash
-# Fedora / RHEL (dnf installs the dependencies too)
-sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
-
-# Arch
-sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.pkg.tar.zst
-```
-
-Every asset carries the release version and its architecture, in the shape sing-box uses:
-
-| Format | Asset (amd64) |
+| Asset (amd64) | Architecture |
 | :--- | :--- |
-| Release tarball | `easysb-5.0.0-linux-amd64.tar.gz` |
-| Debian | `easysb_5.0.0_linux_amd64.deb` |
-| RPM | `easysb_5.0.0_linux_x86_64.rpm` |
-| pacman | `easysb_5.0.0_linux_x86_64.pkg.tar.zst` |
+| `easysb_6.0.0-1_amd64.deb` | `amd64` |
+| `easysb_6.0.0-1_arm64.deb` | `arm64` |
 
-The architecture names follow each ecosystem's own spelling, not the Go ones:
-
-| Go `GOARCH` | `.deb` (`DEBARCH_*`) | `.rpm` (`RPMARCH_*`) | pacman (`PACMANARCH_*`) |
-| :--- | :--- | :--- | :--- |
-| `amd64` | `amd64` | `x86_64` | `x86_64` |
-| `arm64` | `arm64` | `aarch64` | `aarch64` |
-| `armv7` | `armhf` | `armv7hl` | `armv7h` |
-| `386` | `i386` | `i686` | — (Arch has no i386) |
-| `riscv64` | `riscv64` | `riscv64` | `riscv64` |
-| `s390x` | `s390x` | `s390x` | — (Arch has no s390x) |
-
-Like the `.deb`, these packages install the files and refresh the systemd unit cache, and leave enabling and starting to the panel once a node is configured.
-
-### Release server
-
-The fixed URLs apt, rpm and pacman need are served by one host, `sb.kejizero.xyz`. Prepare it once from the Actions tab: run the **Provision the release server** workflow, which installs caddy for HTTPS, creates the site tree, and installs vsftpd with one account confined to that tree for manual uploads. After that, every release run rsyncs `dist/repo` there over a single SSH connection, sending only what changed, and the sources stay current.
-
-The setup and the release runs need six repository secrets:
-
-| Secret | Used by | What it is |
-| :--- | :--- | :--- |
-| `GPG_PRIVATE_KEY` | release | the armored key apt, rpm and pacman are all signed with, optional |
-| `GPG_PASSPHRASE` | release | that key's passphrase, only when it has one |
-| `FTP_PASSWORD` | release | the password of the server's upload account |
-| `SERVER_SSH_PASSWORD` | provision | the server's root password, only for the one-time setup |
-| `SERVER_HOST` | release + provision | the release server's address, shared by both workflows |
-| `SERVER_USER` | provision | the account the provisioning run logs in as |
-
-The server is prepared once, so `SERVER_SSH_PASSWORD` is only needed for the provisioning run; the release runs use `FTP_PASSWORD` alone.
-
-`SERVER_HOST` and `SERVER_USER` keep that address and login out of the repository, so moving
-to another host is a settings change rather than a commit. Both are required: a missing value
-fails the run instead of falling back to a default host.
+Only the newest release is kept; the workflow prunes the previous one and its tag
+after every publish. The same `.deb` files are laid out as a signed apt tree and
+published by GitHub Pages at `https://sb.kejizero.xyz`, so the one-command installer
+and `apt upgrade` always have a fixed address to work from. Two repository secrets
+drive it: `GPG_PRIVATE_KEY` and, when the key has one, `GPG_PASSPHRASE`.
 
 ---
 
@@ -271,12 +221,12 @@ fails the run instead of falling back to a default host.
 | Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
 | System info | The runtime the panel is running on, and the one place the look changes from inside the interface: `↑`/`↓` + `Enter` or `A`-`D` picks a skin, `T` flips dark/light, `I` swaps Unicode markers for ASCII. Every choice lands on the next frame, and the glyph preview row shows before a card anywhere else does whether the terminal font can draw the markers. The status strip and the hints stay put while the body swaps |
 | Copy links | Subscription and share-link results render as a card grid inside the same fixed panel as the main menu. Subscription cards show the subscription name (sing-box / mihomo / Base64) plus a format note, share-link cards show the protocol name, and neither draws the host or the full URL. Select with `↑`/`↓`/`←`/`→` (or a number key), `Enter` copies the card, `C` copies all, `Q` quits the program, `Esc` returns. A copied card turns green and copy-all reports in the header. Narrow or short windows reflow the grid and truncate content, never overflowing the panel. On log screens `C` copies the log (OSC52) |
-| Certificates | Let's Encrypt issuance in process through lego with the HTTP-01 standalone challenge: issue, list, switch active and remove. The preflight check covers DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and nothing is downloaded to do any of it. Renewal is decided by expiry (30 days before it) and driven by the panel's own systemd timer (or OpenRC script), which also reloads sing-box and the subscription service |
+| Certificates | Let's Encrypt issuance in process through lego with the HTTP-01 standalone challenge: issue, list, switch active and remove. The preflight check covers DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and nothing is downloaded to do any of it. Renewal is decided by expiry (30 days before it) and driven by the panel's own systemd timer, which also reloads sing-box and the subscription service |
 | Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (`templates/config/tun-fakeip.json`, `templates/config/mihomo.yaml` or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and per-protocol share links in the panel |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
 | BBR acceleration | Shows the running kernel, congestion control, queue discipline and installed kernels; enabling BBR loads `tcp_bbr`, writes `net.core.default_qdisc` and `net.ipv4.tcp_congestion_control` and persists them in `/etc/sysctl.d/99-easysb-bbr.conf` and `/etc/modules-load.d/easysb-bbr.conf` so the choice survives a reboot; installs a prebuilt BBRv3 kernel published by [Linux-BBR-v3](https://github.com/MinimaxFlora/Linux-BBR-v3) (standard or Max, x86_64 and arm64, downloaded straight from the release), or lists every published version to pick one from; the kernel and its settings can be removed from the panel again. Versions come from the kernel project itself — its version stamp and release list — so a kernel published there shows up here without a release of this panel |
-| Self-update | Pulls the latest script from this repository and replaces it after validation |
+| Self-update | Checks the published version against the one compiled into the panel and upgrades the `easysb` package through apt, then asks for a restart |
 | Bilingual | Language picked on first screen, consistent Chinese and English throughout |
 
 ---
@@ -297,7 +247,7 @@ Main menu (one card, two columns, ten entries)
 └── Uninstall script     Remove EasySB completely
 ```
 
-Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, accounts `/etc/sing-box/easysb-users.json`, shortcut `/usr/local/bin/sb`.
+Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, accounts `/etc/sing-box/easysb-users.json`, shortcut `/usr/bin/sb`.
 
 ---
 
@@ -311,7 +261,7 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | `--skin jade\|aurora\|ember\|graphite` | Pick the interface skin, also `a`-`d` (default `jade`, env `EASYSB_SKIN`) |
 | `--apply-firewall` | Restore port-hopping rules only, used by the boot unit |
 | `--renew-certs` | Renew every certificate, reloading sing-box and the subscription service only when one was actually renewed (called by the renewal timer) |
-| `--install-renew-timer` | Install the renewal timer (systemd timer / OpenRC); the unit names this binary's own path |
+| `--install-renew-timer` | Install the renewal timer (systemd timer); the unit names this binary's own path |
 | `--remove-renew-timer` | Remove the renewal timer |
 | `--render --width N --height N` | Render the dashboard once and exit (debug; add `--screen system` to draw a subpage) |
 | `--serve` | Run the subscription service and the usage accounting loop (backs `easysb.service`) |
@@ -389,7 +339,6 @@ nft add rule ip nat prerouting udp dport 2080-3000 redirect to :8001
 NAT rules do not survive a reboot, so the script creates a boot restore unit:
 
 - systemd: `easysb-firewall.service` (oneshot, starts before `sing-box.service`).
-- OpenRC: `/etc/init.d/easysb-firewall`.
 
 The unit restores rules via `easysb --apply-firewall`. It is not created when Hysteria2 port hopping is disabled.
 
@@ -448,12 +397,12 @@ numbers come from — including why there is no geekbench or fio — is in
 | Item | Description |
 | :--- | :--- |
 | Source | `github.com/sagernet/sing-box` as a `go.mod` requirement (currently `v1.14.2`); installing the panel installs the core |
-| Node | `ExecStart=<panel> core run -c /etc/sing-box/config.json`, where `<panel>` is `/usr/local/bin/easysb` from `install.sh` or `/usr/bin/easysb` from the `.deb`; `/etc/sing-box/sing-box` no longer exists |
+| Node | `ExecStart=<panel> core run -c /etc/sing-box/config.json`, where `<panel>` is `/usr/bin/easysb` from the `.deb`; `/etc/sing-box/sing-box` no longer exists |
 | Validation | `easysb core check -c <config>` builds the configuration with the same engine that would serve it, which is what the deploy path runs before restarting |
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
-| Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make tarball-asset`, which read `release/TAGS`) and publishes one release, tagged and named `v<VERSION>` |
-| Packages | `make deb`, `make rpm` and `make pacman` wrap the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` and `sb --print-unit`); `packaging/repo/packages.sh` builds the per-distribution variants the sources carry (`make repo-packages`) |
-| Sources | `make repo` builds those packages and lays them out as a Docker-shaped `linux/` tree plus pacman and bin, and the release workflow rsyncs it to the release server over a single SSH connection; `packaging/repo/index.sh` writes the indexes and signs them, and `packaging/server/` holds the one-shot provisioning script and the Caddy browse template the landing page is rendered from, so the site root is the directory listing plus the install commands |
+| Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make packages-asset`, which read `release/TAGS`) and publishes one release, tagged and named `v<VERSION>`, then prunes the previous one |
+| Packages | `make deb` wraps the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`ARCHES` / `DEBARCH_MAP` and `sb --print-unit`); `pkg-stage` UPX-compresses the binary, so the release asset and the source put down the same bytes |
+| Sources | `make repo` lays the `.deb` files out as a plain apt tree (`pool/main/e/easysb/` plus one `dists/<suite>/` per suite); `packaging/repo/index.sh` writes the indexes and signs them, and the release workflow deploys the tree through GitHub Pages at `https://sb.kejizero.xyz` |
 
 ---
 
@@ -468,11 +417,8 @@ make
 make check
 make dist
 
-# Package the .deb / .rpm / pacman files, then build the per-distribution packages and
-# lay out the linux / pacman / bin sources the release server serves
+# Package the .deb files, then lay out the signed apt tree GitHub Pages serves
 make deb
-make rpm
-make pacman
 make repo
 
 # Render the dashboard once without interaction (preview / screenshot / debug)

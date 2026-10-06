@@ -1,5 +1,5 @@
-// Package service installs and controls the sing-box system service, supporting
-// both systemd and OpenRC like the legacy shell implementation.
+// Package service installs and controls the sing-box system service. EasySB targets
+// Debian and Ubuntu, which run systemd, so there is one manager to drive.
 package service
 
 import (
@@ -22,11 +22,10 @@ const ProjectHome = "https://github.com/MinimaxFlora/EasySB"
 // Manager identifies the init system in use.
 type Manager string
 
-// The init systems the panel can drive. Unknown means neither was found, which the
-// callers treat as "leave the host alone" rather than as an error.
+// The init systems the panel can drive. Unknown means systemd is not the running
+// init, which the callers treat as "leave the host alone" rather than as an error.
 const (
 	Systemd Manager = "systemd"
-	OpenRC  Manager = "openrc"
 	Unknown Manager = "unknown"
 )
 
@@ -38,19 +37,16 @@ func Detect() Manager {
 	// A systemctl binary on PATH is not evidence that systemd is the running init:
 	// containers, chroots and WSL ship the client without the daemon, and writing
 	// units plus calling systemctl there fails at every step. Only the running
-	// systemd's own runtime directory counts; everything else falls through to
-	// Unknown, which callers treat as "leave the host alone".
-	if _, err := exec.LookPath("rc-service"); err == nil {
-		return OpenRC
-	}
+	// systemd's own runtime directory counts; everything else is Unknown, which
+	// callers treat as "leave the host alone".
+	//
+	// Debian and Ubuntu run systemd, so there is no second manager to detect here.
 	return Unknown
 }
 
-// UnitPath returns where the service unit should live.
+// UnitPath returns where the service unit should live. Debian and Ubuntu run
+// systemd, so the node unit is a systemd unit.
 func UnitPath() string {
-	if Detect() == OpenRC {
-		return sysinfo.OpenRCUnit
-	}
 	return sysinfo.SystemdUnit
 }
 
@@ -124,15 +120,12 @@ func WriteUnit() error {
 	if err != nil {
 		return err
 	}
-	return writeNodeUnit(UnitPath(), exe, Detect())
+	return writeNodeUnit(UnitPath(), exe)
 }
 
 // writeNodeUnit renders the node unit for one executable and writes it.
-func writeNodeUnit(path, exe string, manager Manager) error {
-	if manager == OpenRC {
-		return os.WriteFile(path, []byte(UnitBody(exe, manager)), 0o755)
-	}
-	if err := os.WriteFile(path, []byte(UnitBody(exe, manager)), 0o644); err != nil {
+func writeNodeUnit(path, exe string) error {
+	if err := os.WriteFile(path, []byte(UnitBody(exe)), 0o644); err != nil {
 		return err
 	}
 	return DaemonReload()
@@ -143,19 +136,7 @@ func writeNodeUnit(path, exe string, manager Manager) error {
 // unit has one definition instead of a package copy that drifts from the runtime one.
 // Keeping the text on its own also lets a test read what the unit will run without
 // writing to a real unit directory.
-func UnitBody(exe string, manager Manager) string {
-	if manager == OpenRC {
-		return fmt.Sprintf(`#!/sbin/openrc-run
-name="sing-box"
-description="sing-box service (EasySB)"
-command="%s"
-command_args="core run -c %s"
-command_background=true
-pidfile="/run/${RC_SVCNAME}.pid"
-output_log="%s"
-error_log="%s"
-`, exe, sysinfo.ConfigJSON, sysinfo.LogFile, sysinfo.LogFile)
-	}
+func UnitBody(exe string) string {
 	return fmt.Sprintf(`[Unit]
 Description=sing-box service (EasySB)
 Documentation=%s
@@ -202,22 +183,7 @@ func DaemonReload() error {
 
 // Do performs a lifecycle action: start, stop, restart, enable or disable.
 func Do(ctx context.Context, action string) error {
-	var name string
-	var args []string
-	if Detect() == OpenRC {
-		name = "rc-service"
-		args = []string{sysinfo.ServiceName, action}
-		if action == "enable" {
-			name, args = "rc-update", []string{"add", sysinfo.ServiceName, "default"}
-		} else if action == "disable" {
-			name, args = "rc-update", []string{"del", sysinfo.ServiceName, "default"}
-		}
-	} else {
-		name = "systemctl"
-		args = []string{action, sysinfo.ServiceName}
-	}
-
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, "systemctl", action, sysinfo.ServiceName)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -228,10 +194,6 @@ func Do(ctx context.Context, action string) error {
 
 // Active reports whether the sing-box service is currently running.
 func Active(ctx context.Context) bool {
-	if Detect() == OpenRC {
-		cmd := exec.CommandContext(ctx, "rc-service", sysinfo.ServiceName, "status")
-		return cmd.Run() == nil
-	}
 	cmd := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", sysinfo.ServiceName)
 	return cmd.Run() == nil
 }

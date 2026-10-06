@@ -6,7 +6,14 @@
 
 ## [Unreleased]
 
+本版把发布范围收敛为 Debian / Ubuntu，发布通道整体改由 GitHub Release 与 GitHub Pages 承载。
+
 ### 新增
+
+- **平台收敛为 Debian / Ubuntu，架构收敛为 amd64 / arm64**：只保留 `.deb` 一种包，`release/TAGS`、`VERSION` 与 `Makefile` 的架构表（`ARCHES` / `DEBARCH_MAP`）同步收敛，删除 rpm / pacman / armhf / i386 / riscv64 / s390x 的全部定义。
+- **软件源改由 GitHub Pages 承载**：`make repo` 把 `.deb` 摊成标准 apt 树（`pool/main/e/easysb/` 一份共享，每个套件一份 `dists/<suite>/main/binary-<arch>/`），`packaging/repo/index.sh` 用 `apt-ftparchive` 生成 `Packages(.gz)`、`Release` 并签名出 `InRelease` / `Release.gpg`，公钥发布为源根的 `easysb-archive-keyring.asc`；发布工作流用 `actions/deploy-pages` 把这棵树发布到自定义域 `https://sb.kejizero.xyz`（`CNAME` + `.nojekyll`）。三个套件 `bookworm` / `trixie` / `noble` 由 Makefile 的 `APT_SUITES` 单点定义。
+- **UPX 压缩进入打包主流程**：`make pkg-stage` 在暂存树里对二进制做 UPX 压缩，release 资产与软件源因此是同一批字节，二者不再可能有差异。
+- **发布只保留最新一版**：发布工作流在 publish 后裁掉上一个 release 及其 tag，只留最新资产，避免旧的 `.deb` 长期可被 apt 取到。
 
 - **Makefile**：常用命令从零散的 `go build` / `go test` / `gofmt` 收进一套目标——`make` 构建（读 `release/TAGS`、盖上提交短哈希）、`make check` 是提交前关卡（`gofmt -l` + `go vet` + 带标签测试）、`make dist` 交叉编译全部发布架构、`make render` / `make screens` 渲染并校验版式，另有 `run` / `test-plain` / `test-race` / `fmt` / `lint` / `install` / `tidy` / `version` / `clean`。`make help` 列出全部目标。标签与版本仍各读 `release/TAGS` / `VERSION`，Makefile 不另抄一份。
 - **发布工作流改为走 Makefile**：架构清单、构建标签、链接参数不再在工作流里另写一份——`make release-matrix` 输出架构矩阵 JSON 供动态矩阵使用，`make dist-asset` 按单一映射（armv7 = `GOARCH=arm` + `GOARM=7`）逐架构交叉编译，`make test` 跑带标签测试。测试从「每个架构各跑一遍」收敛为 `prepare` 作业里跑一次，构建矩阵随后基于同一份清单展开。
@@ -23,6 +30,8 @@
 - **三份源统一签名**：发布用 `GPG_PRIVATE_KEY` 与 `GPG_PASSPHRASE` 两个 secret，签名时口令从 0600 临时文件读入，不进进程列表。apt 签 `Release` / `InRelease`，rpm 用 `rpm --addsign` 签每个包并用 armored detached 签名签每个 rpm-md 目录的 `repomd.xml`，pacman 签每个包与 `easysb.db`；公钥一律随源发布为 armored 文件，apt 与 rpm 都是 `linux/<发行版>/gpg`（与 Docker 的 `linux/<发行版>/gpg` 同名），pacman 一侧是 `pacman/easysb.asc`。
 
 ### 修复
+
+- **BBR 列表不再混淆 standard 与 Max**：同一内核版本会同时发 standard 与 `-max` 两个包，此前列表无法区分；现在两条都带版本号标签（`7.2.9` / `7.2.9-max`），并只列最新两个内核版本，每个版本下 standard 与 Max 并列，`TestReleasesKeepOnlyTheNewestVersions` 覆盖该上限。
 
 - **rpm / pacman 源不再因未签名而被拒**：README 与站点页原先给出的 rpm 条目既没有公钥也没有关掉校验，校验与否于是全听系统默认，未签名的包被拒在 `Package ... is not signed` / `GPG check FAILED`；pacman 段落则在未签名的情况下声明 `Required`。现在三份源一律签名：`make repo` 在每个发行版目录发布 `easysb.repo`，签名时其中写 `gpgcheck=1` 与 `gpgkey=`（指向同目录的 armored 公钥），由包管理器第一次安装时自动取回并信任；未签名时写 `gpgcheck=0` 且不带 `gpgkey`，由源自己声明校验等级。pacman 段落写 `SigLevel = Required DatabaseRequired` 并由 `install.sh` 导入并本地信任公钥，取不到公钥时才退回 `Optional TrustAll` 并打印提示。
 - **rpm 包改回 format 4，RHEL 系才认它的签名**：Ubuntu 26.04 的 rpmbuild 6.1 默认产出 rpm format 6 的包，`rpm --addsign` 只能把签名写进新的 OpenPGP v6 标签（`RPMSIGTAG_OPENPGP`），而 RHEL / CentOS / Rocky 9、10 与 Fedora 41、42 的 rpm ≤ 4.20 不认识这个标签，包在 dnf 眼里仍是「没签名」，安装停在 `Package ... is not signed` / `Error: GPG check FAILED`。现在 `packages.sh` 给 fpm 传 `--rpm-rpmbuild-define "_rpmformat 4"`，rpm 6 退回把签名写进老的 RSA / DSA 标签，整个发行版矩阵都能验；rpm 4.x 不认识 `_rpmformat`，这一条对它没有任何影响。
@@ -57,9 +66,17 @@
 
 ### 移除
 
+- 删除发布服务器与服务器置备链路：`.github/workflows/server-setup.yml`、`packaging/server/`（`provision.sh`、站点首页与 favicon）以及发布工作流里的 `rsync` / FTP / `SERVER_*` 秘密；源由 GitHub Pages 直接发布，不再需要一台常驻主机。
+- 删除 rpm / pacman 打包与源：`packaging/rpm/`、`packaging/repo/packages.sh`（`make repo-packages`）、`make rpm` / `make pacman` 目标，以及工作流里对应的签名与 repomd 步骤。
+
 - 删除已无用的 sing-box 重编译链路：`.github/workflows/singbox-v2ray-api.yml`（含 `prune` job）、`scripts/build_singbox_v2ray_api.sh`、`scripts/verify_singbox_arches.sh`、`scripts/prune_release_assets.py`、`scripts/plan_check.py`，以及只验证已删除内核管理的 `scripts/vps/verify-kernel-*.sh` / `verify-source-switch.sh`。内核已编译进面板，这些脚本维护的 `singbox-stable` / `singbox-alpha` 通道不再被任何代码消费。
 
 ### 变更
+
+- **自更新改走 apt**：`internal/update.Apply` 不再下载 tar.gz 自替换运行中的二进制，而是用 `dpkg-query` 比对已安装版本、经 `apt-get install` 升级 `easysb` 包并流式回显日志；面板「更新版本」入口与预览资产名（`easysb_<版本>-1_<架构>.deb`）随之更新。
+- **`install.sh` 收敛为极简 apt 单路径**：把 `/etc/os-release` 映射到 `bookworm` / `trixie` / `noble` 之一，从 `$REPO_URL/easysb-archive-keyring.asc` 取公钥解甲后落到 `/usr/share/keyrings/easysb-archive-keyring.gpg`，写一行 `deb [signed-by=…] $REPO_URL <套件> main` 到 `/etc/apt/sources.list.d/easysb.list`，再 `apt update && apt install easysb`；删除 `--method` / `--from-source` / `--binary` 与发布压缩包兜底，只留 `--repo-url` 与 `--lang`。
+- **安装路径由 `/usr/local/bin` 改为 `/usr/bin`**：`.deb` 与自更新都落到 `/usr/bin/easysb`（快捷指令 `/usr/bin/sb`），`internal/sysinfo` 的面板路径探测同步收敛。
+- 文档（`README.md` / `README_ZH.md` / `docs/*.md` / `AGENTS.md`）同步改写为 apt + GitHub Pages 的发布模型，删除 rpm / pacman / 发布服务器 / `SERVER_*` 秘密的说明。
 
 - **版本号收敛到唯一来源**：`VERSION` 是唯一写下版本号的地方，现在用 `go:embed`
   在编译期读进二进制。删除 `main.go` 的 `version = "5.0.0"` 默认值，以及发布工作流

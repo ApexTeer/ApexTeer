@@ -13,21 +13,17 @@ import (
 // there is no sing-box program to point at. A unit still saying `sing-box -c …` would
 // look installed and never start.
 func TestNodeUnitRunsThePanelAsTheNode(t *testing.T) {
-	for _, manager := range []Manager{Systemd, OpenRC} {
-		t.Run(string(manager), func(t *testing.T) {
-			text := UnitBody("/usr/local/bin/easysb", manager)
-			if !strings.Contains(text, "/usr/local/bin/easysb") {
-				t.Fatalf("the unit does not name the panel:\n%s", text)
-			}
-			if !strings.Contains(text, "core run -c "+sysinfo.ConfigJSON) {
-				t.Fatalf("the unit does not start the node in core mode:\n%s", text)
-			}
-			// A unit that still names the old core binary would shadow the compiled-in
-			// one, which is exactly the arrangement this release removes.
-			if strings.Contains(text, sysinfo.WorkDir+"/sing-box") {
-				t.Fatalf("the unit still points at a downloaded core:\n%s", text)
-			}
-		})
+	text := UnitBody("/usr/local/bin/easysb")
+	if !strings.Contains(text, "/usr/local/bin/easysb") {
+		t.Fatalf("the unit does not name the panel:\n%s", text)
+	}
+	if !strings.Contains(text, "core run -c "+sysinfo.ConfigJSON) {
+		t.Fatalf("the unit does not start the node in core mode:\n%s", text)
+	}
+	// A unit that still names the old core binary would shadow the compiled-in
+	// one, which is exactly the arrangement this release removes.
+	if strings.Contains(text, sysinfo.WorkDir+"/sing-box") {
+		t.Fatalf("the unit still points at a downloaded core:\n%s", text)
 	}
 }
 

@@ -24,7 +24,7 @@
 - [支持的协议](#支持的协议)
 - [快速开始](#快速开始)
 - [Debian / Ubuntu 软件包](#debian--ubuntu-软件包)
-- [RPM 与 pacman 软件包](#rpm-与-pacman-软件包)
+- [发布产物](#发布产物)
 - [EasySB 能力](#easysb-能力)
 - [交互菜单](#交互菜单)
 - [命令参数](#命令参数)
@@ -61,8 +61,8 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 ```text
 .
 ├── main.go                       # Go 入口（TUI 主程序）
-├── install.sh                    # 安装脚本（一键：配源安装，或装本地安装包）
-├── packaging/                    # 软件包生命周期脚本（deb/、rpm/）、软件源构建（repo/）与服务器置备（server/）
+├── install.sh                    # 安装脚本（一键：配好签名软件源并安装）
+├── packaging/                    # 软件包生命周期脚本（deb/）与软件源构建（repo/）
 ├── VERSION                       # 发布 tag 的唯一来源
 ├── AGENTS.md                     # 面向 AI Agent 与协作者的说明
 ├── go.mod                        # Go module 定义
@@ -101,23 +101,15 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 
 ## 快速开始
 
-一条命令，和 Docker 的 `get.docker.com` 一个形状：脚本自己识别发行版与架构，配好本机的
-签名软件源，再交给系统包管理器安装。软件源按发行版分别构建：Debian 12/13、Ubuntu
-22.04/24.04、Fedora 41/42、RHEL 9/10（含 CentOS、Rocky、AlmaLinux）与 Arch；不在这个
-名单里的系统（Alpine、openSUSE）回退到发布压缩包。
+一条命令，和 Docker 的 `get.docker.com` 一个形状：脚本把本机的 `/etc/os-release` 映射到
+已发布的三个套件之一，装好签名公钥与 apt 软件源，再交给 apt 安装。软件源覆盖 Debian 12/13
+与 Ubuntu 24.04，架构为 amd64 与 arm64。
 
 ```bash
 curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-同一个脚本还带着另外几种用法。安装一个自己下载好的安装包文件：
-
-```bash
-curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash -s -- --method package --package ./easysb_5.0.0_linux_amd64.deb
-```
-
-`--method repo` 强制只走软件源（没有源写法就报错），`--from-source` 从源码构建，
-`--binary ./easysb` 用自己编译好的二进制，`--lang C` 切回中文输出。
+脚本还接受 `--repo-url URL` 指向镜像站，`--lang E` 切换为英文输出。
 
 安装完成后以快捷指令 `sb` 启动深色仪表盘。
 
@@ -137,7 +129,7 @@ sb --language C
 sb --language E
 ```
 
-支持 Debian / Ubuntu（systemd）与 Alpine（OpenRC）；需要 root 权限运行。
+支持 Debian 12+ / Ubuntu 24.04+（systemd）；需要 root 权限运行。
 
 ---
 
@@ -162,97 +154,43 @@ Debian 与 Ubuntu 可以添加 apt 软件源后用 `apt install` / `apt upgrade`
 按机器架构下载对应的 `.deb` 安装：
 
 ```bash
-# 架构：amd64、arm64、armhf、i386、riscv64、s390x
-sudo dpkg -i easysb_5.0.0_linux_amd64.deb
-
-# 或者把这个文件交给安装脚本
-bash install.sh --method package --package ./easysb_5.0.0_linux_amd64.deb
+# 架构：amd64、arm64
+sudo dpkg -i easysb_6.0.0-1_amd64.deb
 ```
 
 ### apt 软件源
 
-apt 索引与 `.deb` 由 `https://sb.kejizero.xyz/linux/<发行版>` 提供，每个发行版一棵树（`debian`、`ubuntu`），地址固定，所以一条软件源配置能一直用下去。安装脚本会替你配好，逐字照 Docker 官方脚本的写法：armored 公钥落到 `/etc/apt/keyrings/easysb.asc`，源写进 `/etc/apt/sources.list.d/easysb.list` 的一行里，同时给出 arch、signed-by、发行版目录与套件，随后由 apt 装上包。
+apt 索引与 `.deb` 由 `https://sb.kejizero.xyz` 提供，地址固定，所以一条软件源配置能一直用下去。安装脚本会替你配好，照 caddy 的写法：armored 公钥解甲后落到 `/usr/share/keyrings/easysb-archive-keyring.gpg`，源写进 `/etc/apt/sources.list.d/easysb.list` 的一行里，给出 signed-by 与套件，随后由 apt 装上包。
 
 ```bash
 curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
 ```
 
-脚本写出的那一行，形状就是 Docker 的 `deb [...] $URL/linux/ubuntu noble stable`：
+脚本写出的那一行：
 
 ```text
-deb [arch=amd64 signed-by=/etc/apt/keyrings/easysb.asc] https://sb.kejizero.xyz/linux/debian bookworm stable
+deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://sb.kejizero.xyz bookworm main
 ```
 
-之后 `sudo apt upgrade` 就能一路把面板升级上去。四个套件分别是 `bookworm`（Debian 12）、`trixie`（Debian 13）、`jammy`（Ubuntu 22.04）与 `noble`（Ubuntu 24.04）；每个 `.deb` 的版本串里都带着它，`5.0.0-1~debian.12~bookworm`、`5.0.0-1~ubuntu.24.04~noble`，所以升级发行版时会装上对应那份。
+之后 `sudo apt upgrade` 就能一路把面板升级上去。三个套件分别是 `bookworm`（Debian 12）、`trixie`（Debian 13）与 `noble`（Ubuntu 24.04）。一份包服务全部套件：它除 `ca-certificates` 外不依赖任何东西，所以版本串里不带发行版（`6.0.0-1`），升级发行版也不会改变 apt 装的是哪一份。
 
-三份源共用一把密钥签名。把 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY`，口令配置成 `GPG_PASSPHRASE`，发布工作流会导入密钥并签完全部产物：apt 的 `Release`（`InRelease` 与 `Release.gpg`）、每个 `.rpm`、rpm-md 的 `repomd.xml`、每个 pacman 包以及 pacman 数据库。口令通过文件读入，不会出现在进程列表里。公钥一律按 Docker 官方源的做法发 armored 文件：`linux/debian/gpg`、`linux/ubuntu/gpg`，rpm 一侧是 `linux/<发行版>/gpg`，pacman 一侧是 `pacman/easysb.asc`。
-
-没有该 secret 时发布出去的源不带签名，三种写法各有宽松形式：`trusted=yes` 代替 `signed-by=`，`gpgcheck=0` 且不带 `gpgkey`，以及 `SigLevel = Optional TrustAll`。安装脚本会按服务器上实际发布的情况选对应写法。
+索引用一把密钥签名。把 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY`，口令配置成 `GPG_PASSPHRASE`，发布工作流会导入密钥并签好 apt 的 `Release`（`InRelease` 与 `Release.gpg`）。口令通过文件读入，不会出现在进程列表里。公钥以 `easysb-archive-keyring.asc` 发布在源根目录。没有 `GPG_PRIVATE_KEY` 的发布直接失败，不会发出未签名的索引。
 
 ---
 
-## RPM 与 pacman 软件包
+## 发布产物
 
-同一个 release 还提供供 Fedora / RHEL 系使用的 `.rpm`，以及供 Arch 使用的 pacman 包。两者与 `.deb` 打成的是同一个二进制、同一段单元文本、同一棵暂存树，所以三种格式彼此一致，也与运行时一致。
+每个发布都打 tag 并命名为 `v<VERSION>`，每个架构一个可升级资产 `easysb_<版本>-1_<架构>.deb`：
 
-两种包在发布服务器上也都是真正的软件源：rpm-md 目录与 pacman 数据库。同一条一键命令会为本系统添加源并直接从源安装，不需要手工复制任何配置：
-
-```bash
-curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
-```
-
-rpm 的目录树也按 Docker 那样分。每个发行版一个目录，`linux/centos`、`linux/rhel`、`linux/rocky` 或 `linux/fedora`，里面放一份 `easysb.repo` 与 armored 的 `gpg` 公钥；包本身在 `linux/<发行版>/<发行版号>/<基架>/stable` 下，所以有 `linux/centos/9/x86_64/stable`、`linux/fedora/42/aarch64/stable` 这样的形状。脚本登记的 `easysb.repo` 把 `baseurl`、`gpgcheck` 与 `gpgkey` 的地址写在一起，包管理器在第一次安装时会自己取回并信任签名公钥，不需要再单独导入一次。两代 dnf 登记这份文件的方式不同，按命令是否存在各走各的：dnf5 用内建的 `config-manager addrepo --from-repofile`，dnf4 用 `dnf-plugins-core` 提供的 `config-manager --add-repo`，只有 yum 的系统则用 `yum-config-manager --add-repo`；之后 `makecache` 再安装。每个 `.rpm` 的版本串里带着对应发行版号，`5.0.0-1.el9`、`5.0.0-1.fc42`，CentOS、RHEL 与 Rocky 共用同一份 `el9` 构建，一个文件供三家使用。pacman 一侧，脚本导入 `pacman/easysb.asc`、在本地信任它并写好 `[easysb]` 段落，pacman 随后用同一把密钥校验数据库（`DatabaseRequired`）与每个包（`Required`）。
-
-也可以继续用 release 页上的单文件方式安装：
-
-```bash
-# Fedora / RHEL（dnf 会一并装好依赖）
-sudo dnf install https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.rpm
-
-# Arch
-sudo pacman -U https://github.com/MinimaxFlora/EasySB/releases/download/v5.0.0/easysb_5.0.0_linux_x86_64.pkg.tar.zst
-```
-
-每个资产都带版本号与架构，命名与 sing-box 一致：
-
-| 格式 | 资产名（以 amd64 为例） |
+| 资产名（以 amd64 为例） | 架构 |
 | :--- | :--- |
-| 发布压缩包 | `easysb-5.0.0-linux-amd64.tar.gz` |
-| Debian | `easysb_5.0.0_linux_amd64.deb` |
-| RPM | `easysb_5.0.0_linux_x86_64.rpm` |
-| pacman | `easysb_5.0.0_linux_x86_64.pkg.tar.zst` |
+| `easysb_6.0.0-1_amd64.deb` | `amd64` |
+| `easysb_6.0.0-1_arm64.deb` | `arm64` |
 
-架构名按各发行版生态自己的写法，而不是 Go 的写法：
-
-| Go `GOARCH` | `.deb`（`DEBARCH_*`） | `.rpm`（`RPMARCH_*`） | pacman（`PACMANARCH_*`） |
-| :--- | :--- | :--- | :--- |
-| `amd64` | `amd64` | `x86_64` | `x86_64` |
-| `arm64` | `arm64` | `aarch64` | `aarch64` |
-| `armv7` | `armhf` | `armv7hl` | `armv7h` |
-| `386` | `i386` | `i686` | —（Arch 没有 i386） |
-| `riscv64` | `riscv64` | `riscv64` | `riscv64` |
-| `s390x` | `s390x` | `s390x` | —（Arch 没有 s390x） |
-
-与 `.deb` 一样，这两个包只负责安装文件并刷新 systemd 单元缓存，启用与启动留给面板，等节点配置完成后再由面板执行。
-
-### 发布服务器
-
-apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero.xyz`。在 Actions 页跑一次 **Provision the release server** 工作流即可备好：装 caddy 提供 HTTPS、建立站点目录、装 vsftpd 并只开一个被限制在该目录里的账号（留给手工上传）。之后每次发布都会用 `rsync` 经一条 SSH 连接把 `dist/repo` 增量同步上去，只传有变化的文件，源始终是新的。
-
-置备与发布共用到六个仓库 secret：
-
-| Secret | 用于 | 说明 |
-| :--- | :--- | :--- |
-| `GPG_PRIVATE_KEY` | 发布 | apt / rpm / pacman 三份源共用的 armored 签名私钥，可选 |
-| `GPG_PASSPHRASE` | 发布 | 该私钥的口令，仅在带口令时需要 |
-| `FTP_PASSWORD` | 发布 | 服务器上传账号的口令 |
-| `SERVER_SSH_PASSWORD` | 置备 | 服务器 root 口令，只在一次性置备时用到 |
-| `SERVER_HOST` | 发布 + 置备 | 发布服务器地址，两个工作流共用 |
-| `SERVER_USER` | 置备 | 置备时登录的账号 |
-
-服务器只需准备一次，因此 `SERVER_SSH_PASSWORD` 只有置备那次需要；日常发布只用 `FTP_PASSWORD`。
-
-`SERVER_HOST` 与 `SERVER_USER` 把地址和登录名留在仓库之外，所以换一台机器是改设置，不是发一次提交。两个都必填：取值缺失时任务直接失败，不会退回某台默认主机。
+只保留最新的 release：每次发布后工作流会裁掉上一个 release 及其 tag。同一批 `.deb` 会摊成
+签名的 apt 树，由 GitHub Pages 发布在 `https://sb.kejizero.xyz`，一键安装脚本与 `apt upgrade`
+因此始终有一个固定地址可用。凭证是两个仓库 secret：`GPG_PRIVATE_KEY`，以及密钥带口令时的
+`GPG_PASSPHRASE`。
 
 ---
 
@@ -268,7 +206,7 @@ apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero
 | 设备面板 | 本机 IPv4/IPv6、交换空间、运行时间、CPU 核心数与负载、内存、磁盘、主机、内核、系统与时区 |
 | 系统信息 | 查看面板运行环境，并能在界面内直接换外观：`↑`/`↓` 加 `Enter` 或 `A`-`D` 选皮肤，`T` 切深浅配色，`I` 在 Unicode 符号与纯 ASCII 之间切换。改完下一帧就生效（主题从此不再跟随终端），字形预览一行可以在其他卡片出问题前先看出终端字体能不能显示这些字形；切换时顶部状态条与底部按键提示保持不动，只有正文换掉 |
 | 复制链接 | 订阅与分享链接以卡片网格呈现在与主菜单同尺寸的固定面板里；订阅卡片显示订阅名（sing-box / mihomo / Base64 订阅）与格式说明，分享链接卡片显示协议名，均不显示主机或完整 URL。`↑`/`↓`/`←`/`→`（或数字键）选择，`Enter` 复制当前项，`C` 复制全部，`Q` 退出程序，`Esc` 返回；复制成功的卡片变成成功色，复制全部在页头提示。窗口变窄变矮时网格自动减少列数并截断内容，面板不溢出。日志页 `C` 复制日志（OSC52） |
-| 证书管理 | 内置 lego 走 HTTP-01 standalone 直接申请 Let's Encrypt 证书：申请、查看、切换激活、删除；申请前先检查域名解析，申请时先停内核腾出 80 端口，全程无需下载任何脚本或额外监听工具。续期按到期时间判断（提前 30 天），由面板自己的 systemd timer / OpenRC 脚本驱动，续期后自动重载 sing-box 与订阅服务 |
+| 证书管理 | 内置 lego 走 HTTP-01 standalone 直接申请 Let's Encrypt 证书：申请、查看、切换激活、删除；申请前先检查域名解析，申请时先停内核腾出 80 端口，全程无需下载任何脚本或额外监听工具。续期按到期时间判断（提前 30 天），由面板自己的 systemd timer 驱动，续期后自动重载 sing-box 与订阅服务 |
 | 订阅生成 | 每个账号一个订阅地址（`/sub/<令牌>`），由内置订阅服务按客户端自动选择格式（`templates/config/tun-fakeip.json`、`templates/config/mihomo.yaml` 或 Base64 分享链接），并通过 `Subscription-Userinfo` 上报用量；面板提供二维码与各协议分享链接 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
 | 服务管理 | 启动、停止、重启、查看状态与开机自启 |
@@ -294,7 +232,7 @@ apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero
 └── 卸载脚本     完整卸载 EasySB
 ```
 
-对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，账号 `/etc/sing-box/easysb-users.json`，快捷指令 `/usr/local/bin/sb`。
+对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，账号 `/etc/sing-box/easysb-users.json`，快捷指令 `/usr/bin/sb`。
 
 ---
 
@@ -308,7 +246,7 @@ apt / rpm / pacman 需要的固定地址由一台主机提供，即 `sb.kejizero
 | `--skin jade\|aurora\|ember\|graphite` | 选择界面皮肤，也可用 `a`-`d`（默认 `jade`，环境变量 `EASYSB_SKIN`） |
 | `--apply-firewall` | 仅恢复端口跳跃规则，供开机单元调用 |
 | `--renew-certs` | 续期全部证书，仅在确有证书被续期时重载 sing-box 与订阅服务（供续期定时器调用） |
-| `--install-renew-timer` | 安装证书续期定时器（systemd timer / OpenRC），单元内记录本二进制的路径 |
+| `--install-renew-timer` | 安装证书续期定时器（systemd timer），单元内记录本二进制的路径 |
 | `--remove-renew-timer` | 移除证书续期定时器 |
 | `--render --width N --height N` | 渲染一次仪表盘后退出（调试用；加 `--screen system` 可渲染子页面） |
 | `--serve` | 运行订阅服务与流量统计循环（`easysb.service` 使用该模式） |
@@ -386,7 +324,6 @@ nft add rule ip nat prerouting udp dport 2080-3000 redirect to :8001
 NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 
 - systemd：`easysb-firewall.service`（oneshot，早于 `sing-box.service`）。
-- OpenRC：`/etc/init.d/easysb-firewall`。
 
 单元通过 `easysb --apply-firewall` 恢复规则，不使用 Hysteria2 端口跳跃时不会创建该单元。
 
@@ -429,12 +366,12 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 环节 | 说明 |
 | :--- | :--- |
 | 来源 | `github.com/sagernet/sing-box` 作为 `go.mod` 直接依赖（当前 `v1.14.2`）；装面板就等于装了内核 |
-| 节点 | `ExecStart=<面板> core run -c /etc/sing-box/config.json`，`<面板>` 在 `install.sh` 安装下是 `/usr/local/bin/easysb`，在 `.deb` 安装下是 `/usr/bin/easysb`；`/etc/sing-box/sing-box` 不再存在 |
+| 节点 | `ExecStart=<面板> core run -c /etc/sing-box/config.json`，`<面板>` 是 `.deb` 安装下的 `/usr/bin/easysb`；`/etc/sing-box/sing-box` 不再存在 |
 | 校验 | `easysb core check -c <配置>` 用将来真正服务节点的同一套引擎构建配置，部署路径重启服务前跑的就是它 |
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
-| 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make tarball-asset`，二者读的都是 `release/TAGS`），tag 与 release 名都是 `v<VERSION>`，一个 release 装下全部资产 |
-| 软件包 | `make deb`、`make rpm`、`make pacman` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成三种包，架构名与单元文本都只有一处来源（`DEBARCH_*` / `RPMARCH_*` / `PACMANARCH_*` 与 `sb --print-unit`）；`packaging/repo/packages.sh` 打软件源要用的分发行版变体（`make repo-packages`） |
-| 软件源 | `make repo` 先打好这些包，再摊成 Docker 形状的 `linux/` 树加 pacman、bin 两份源，发布工作流用 `rsync` 经一条 SSH 连接增量同步到发布服务器；`packaging/repo/index.sh` 负责生成索引并签名，`packaging/server/` 放一次性置备脚本与站点首页用的 Caddy browse 模板，所以站点根目录既是文件列表又是安装命令 |
+| 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make packages-asset`，二者读的都是 `release/TAGS`），tag 与 release 名都是 `v<VERSION>`，发布后裁掉上一个 release |
+| 软件包 | `make deb` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成 `.deb`，架构名与单元文本都只有一处来源（`ARCHES` / `DEBARCH_MAP` 与 `sb --print-unit`）；`pkg-stage` 对二进制做 UPX 压缩，release 资产与软件源因此是同一批字节 |
+| 软件源 | `make repo` 把 `.deb` 摊成标准 apt 树（`pool/main/e/easysb/` 加每个套件一份 `dists/<suite>/`）；`packaging/repo/index.sh` 负责生成索引并签名，发布工作流通过 GitHub Pages 部署到 `https://sb.kejizero.xyz` |
 
 ---
 
@@ -448,10 +385,8 @@ make
 make check
 make dist
 
-# 打 .deb / .rpm / pacman 包，再打分发行版的包，摊成发布服务器要的 linux / pacman / bin 源
+# 打 .deb 包，再摊成 GitHub Pages 发布的签名 apt 树
 make deb
-make rpm
-make pacman
 make repo
 
 # 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）

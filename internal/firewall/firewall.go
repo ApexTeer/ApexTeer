@@ -19,7 +19,6 @@ import (
 const UnitName = "easysb-firewall"
 
 const systemdUnitPath = "/etc/systemd/system/easysb-firewall.service"
-const openRCUnitPath = "/etc/init.d/easysb-firewall"
 
 // Backend identifies the available NAT tooling.
 type Backend string
@@ -244,24 +243,6 @@ func WriteUnit(cfg state.Config) error {
 	if err != nil {
 		return err
 	}
-	if service.Detect() == service.OpenRC {
-		unit := fmt.Sprintf(`#!/sbin/openrc-run
-name="%s"
-description="EasySB Hysteria2 port-hopping firewall rules"
-depend() { after net; before sing-box; }
-
-start() {
-  ebegin "Applying EasySB port-hopping rules"
-  %s --apply-firewall >/dev/null 2>&1
-  eend $?
-}
-`, UnitName, exe)
-		if err := os.WriteFile(openRCUnitPath, []byte(unit), 0o755); err != nil {
-			return err
-		}
-		return nil
-	}
-
 	unit := fmt.Sprintf(`[Unit]
 Description=EasySB Hysteria2 port-hopping firewall rules
 After=network-online.target
@@ -284,12 +265,6 @@ WantedBy=multi-user.target
 
 // RemoveUnit deletes the boot service.
 func RemoveUnit() error {
-	if service.Detect() == service.OpenRC {
-		if err := os.Remove(openRCUnitPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
 	if err := os.Remove(systemdUnitPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -307,11 +282,7 @@ var runUnitAction = func(ctx context.Context, name string, args ...string) ([]by
 
 // UnitAction executes a lifecycle action ("enable" or "disable") on the unit.
 func UnitAction(ctx context.Context, action string) error {
-	name, args := "systemctl", []string{action, UnitName + ".service"}
-	if service.Detect() == service.OpenRC {
-		name, args = "rc-update", []string{mapAction(action), UnitName, "default"}
-	}
-	out, err := runUnitAction(ctx, name, args...)
+	out, err := runUnitAction(ctx, "systemctl", action, UnitName+".service")
 	if err != nil {
 		return unitActionError(action, out, err)
 	}
@@ -329,13 +300,6 @@ func unitActionError(action string, out []byte, err error) error {
 		msg = err.Error()
 	}
 	return errors.New(action + " " + UnitName + ": " + msg)
-}
-
-func mapAction(action string) string {
-	if action == "disable" {
-		return "del"
-	}
-	return "add"
 }
 
 func has(name string) bool {

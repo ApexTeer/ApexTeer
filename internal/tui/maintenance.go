@@ -201,7 +201,7 @@ func scriptUpdate() actionFunc {
 		lang := a.lang
 		current := a.scriptVersion
 		return a.startTask(lang.T("script_updating"), func(ctx context.Context, r *taskReporter) error {
-			updated, remote, err := update.Apply(ctx, current, r.Log, r.Progress)
+			updated, remote, err := update.Apply(ctx, current, r.Log)
 			if err != nil {
 				return err
 			}

@@ -1,14 +1,13 @@
 name: Build EasySB Go release
 
 # 源码：根目录 Go module（main.go、internal/**）
-# 产物：以 tag `v<VERSION>` 发布的一套资产 —— 每个架构一个发布压缩包
-#       easysb-<版本>-linux-<架构>.tar.gz，三种安装包 easysb_<版本>_linux_<架构>.<扩展名>
-# 软件源：再按发行版打一套包，摆成 linux / pacman / bin 三份源，用 rsync 经一条 SSH
-#         连接增量送到发布服务器，install.sh --method repo 就是从那里装。
-# Assets: one release tagged `v<VERSION>` carrying a tarball per architecture and the
-# three package formats. A second set of per-distribution packages is laid out as
-# linux / pacman / bin sources and rsynced to the release server over a single SSH
-# connection.
+# 产物：以 tag `v<VERSION>` 发布的一套资产 —— 每个架构一个 .deb
+#       easysb_<版本>-1_<架构>.deb
+# 软件源：同一批 .deb 摆成一棵标准 apt 树（pool / dists），GPG 签名后由 GitHub Pages
+#         原样发布在站点根，一键安装在 https://sb.kejizero.xyz/install.sh。
+# Assets: one release tagged `v<VERSION>` carrying a .deb per architecture. The same
+# packages are laid out as a plain apt tree, signed with GPG and published verbatim by
+# GitHub Pages, so the one-command install lives at https://sb.kejizero.xyz/install.sh.
 
 on:
   push:
@@ -26,31 +25,22 @@ on:
       - 'install.sh'
       - '.github/workflows/easysb-go-release.yml'
   # A pull request runs the same gate as a push. The jobs that publish - release and
-  # deploy - are held back to a push, so nothing is published from a branch, but the
+  # pages - are held back to a push, so nothing is published from a branch, but the
   # check, the cross-compile and the packaging all run before the merge rather than
-  # after it. Without this trigger a merged pull request went straight from review to a
-  # published release and to the release server, with no automated gate in between.
+  # after it.
   pull_request:
     branches:
       - master
   workflow_dispatch:
 
-# 默认只读：只有 release 作业需要写权限，由它自己声明。deploy 作业拿着服务器口令和
-# GPG 私钥，让它和发布作业共用同一个宽权限令牌没有任何理由。
-# Read-only by default. Only the release job needs to write, and it declares that
-# itself: the deploy job holds the server's password and the signing key, and has no
-# reason to carry the same broad token as the job that publishes.
+# 默认只读：release 作业自己声明 contents: write，pages 作业自己声明 pages / id-token。
+# Read-only by default; the release job declares contents: write and the pages job
+# declares pages / id-token for itself.
 permissions:
   contents: read
 
-# Only the newest commit may publish, so an older run can never overwrite the
-# release assets after a newer one. The group is per-ref, which keeps that property
-# for master - every push to it still shares one group - while giving each pull
-# request its own. Without the ref, merging a pull request cancelled the very run
-# that was checking it: the merge starts a push run, cancel-in-progress kills the
-# pull request's run mid-gate, and its verdict is never seen before the merge it
-# was supposed to gate. That is what happened to the first pull request this
-# workflow saw.
+# Only the newest commit may publish. The group is per-ref so every push to master
+# shares one group while each pull request gets its own.
 concurrency:
   group: easysb-go-release-${{ github.ref }}
   cancel-in-progress: true
@@ -82,13 +72,6 @@ jobs:
       # make check 读 release/TAGS 的标签，make dist-asset 读同一处并盖上提交号。
       # Tags, link flags and the arch mapping live once, in the Makefile and
       # release/TAGS: make check reads the tags, make dist-asset reads the same file.
-      #
-      # 关卡就是 make check：gofmt、vet（发布标签与无标签各一遍）和带标签的测试。过去
-      # 这里只跑 make test，于是 AGENTS.md 写成"提交前关卡"的另外两项只在开发者的机器
-      # 上执行过，谁忘了都没有人拦。
-      # The gate is `make check`: gofmt, vet in both tag sets, and the tagged tests. This
-      # step used to run `make test` alone, so the other two thirds of the gate AGENTS.md
-      # calls the pre-commit gate only ever ran on a developer's machine.
       - name: 提交前关卡
         run: make check
 
@@ -107,11 +90,12 @@ jobs:
         id: ver
         run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
-  # 每个架构出一个发布压缩包；压缩包里的可执行文件就叫 easysb，解包即可安装。
-  # 原始二进制 dist/easysb-linux-<架构> 只是打包的中间产物，不对外发布。
-  # One release tarball per architecture; the executable inside is named `easysb`, so the
-  # tarball unpacks straight into place. The raw dist/easysb-linux-<arch> binary is only
-  # an intermediate and is never published.
+  # 每个架构一个作业：从一棵暂存树出来一个 .deb。二进制由 --print-unit 打印的 systemd
+  # 单元、UPX 压缩后的可执行文件都在这一棵树上，安装进系统的单元与面板运行时写下的完全
+  # 一致，不存在第二处定义。
+  # One job per architecture: one .deb from one staging tree. The systemd units printed by
+  # --print-unit and the UPX-compressed executable both come from that tree, so the
+  # packaged unit matches the runtime one and there is no second definition.
   build:
     needs: prepare
     runs-on: ubuntu-26.04
@@ -129,111 +113,43 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: 构建并打包 linux/${{ matrix.asset }}
-        run: make tarball-asset ASSET=${{ matrix.asset }} COMMIT=${GITHUB_SHA}
-
-      - name: 上传构建产物
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: easysb-bin-${{ matrix.asset }}
-          path: |
-            dist/easysb-linux-${{ matrix.asset }}
-            dist/easysb-*-linux-${{ matrix.asset }}.tar.gz
-          if-no-files-found: error
-
-  # 每个架构只跑一个作业，三种包（.deb / .rpm / pacman）都从同一棵暂存树出来：
-  # 同一个二进制、同一段由二进制自己打印（--print-unit）的 systemd 单元，所以安装
-  # 进系统的单元与面板运行时写下的完全一致，不存在第二处定义。Arch 没有 i386 与
-  # s390x，pacman-asset 只对 Arch 支持的架构出包。
-  # One job per architecture builds all three formats from one staging tree: one binary
-  # and one systemd unit text printed by the binary itself (--print-unit), so the
-  # packaged unit matches the runtime one. Arch has no i386 or s390x, so the pacman
-  # package is only produced for the architectures Arch ships.
-  packages:
-    needs: [prepare, build]
-    runs-on: ubuntu-26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        asset: ${{ fromJSON(needs.prepare.outputs.assets) }}
-    steps:
-      - name: 检出仓库
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: 下载该架构的二进制
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: easysb-bin-${{ matrix.asset }}
-          path: dist
-
-      - name: 安装 Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      # rpm 目标要 rpmbuild，pacman 目标要 bsdtar（libarchive-tools）。
-      # The rpm target needs rpmbuild; the pacman target needs bsdtar.
+      # UPX 缺失时 pkg-stage 会原样打包，构建不会失败；这里装上是为了让发布包稳定地小。
+      # pkg-stage packages the binary as built when UPX is missing, so the build does not
+      # depend on it; installing it here just keeps the published package reliably small.
       - name: 安装打包工具
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq rpm libarchive-tools
+          sudo apt-get install -y -qq upx-ucl
 
       - name: 安装 fpm
         run: sudo gem install --no-document fpm
 
-      - name: 打包三种格式
-        run: make packages-asset ASSET=${{ matrix.asset }} REUSE_DIST=1 COMMIT=${GITHUB_SHA}
-
-      # 软件源按发行版各出一份包：版本串里带着发行版（5.0.0-1~debian.12~bookworm、
-      # 5.0.0-1.el9），换发行版时包管理器才会跟着升级。这与上面那套通用包是两回事：
-      # 通用包给 Release 页手动下载，这一套只进软件源。两者出自同一棵暂存树。
-      # The sources carry one package per distribution release, with the distribution in the
-      # version string (5.0.0-1~debian.12~bookworm, 5.0.0-1.el9), which is what makes an
-      # upgrade of the distribution also upgrade the package. These are separate from the
-      # generic packages above: those are for manual download from the Release page, these
-      # only feed the repository. Both come from the same staging tree.
-      - name: 打包分发行版的软件源包
-        run: make repo-packages-asset ASSET=${{ matrix.asset }} NO_BUILD=1 REUSE_DIST=1
+      - name: 构建并打包 linux/${{ matrix.asset }}
+        run: make packages-asset ASSET=${{ matrix.asset }} COMMIT=${GITHUB_SHA}
 
       - name: 上传安装包
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: easysb-packages-${{ matrix.asset }}
-          path: |
-            dist/*.deb
-            dist/*.rpm
-            dist/*.pkg.tar.zst
-            dist/repopkgs/*
+          name: easysb-package-${{ matrix.asset }}
+          path: dist/*.deb
           if-no-files-found: error
 
-  # 一个 release 装下全部资产：tag 与 release 名都是 v<版本>，与 sing-box 一致。
-  # 安装包不再单独占一个 debian 标签，软件源改由发布服务器承载（见 deploy）。
-  # One release carries every asset, tagged and named v<version>, matching sing-box.
-  # The packages no longer get a separate `debian` tag: the release server carries the
-  # sources instead (see deploy).
-  #
-  # 只有 push 才发布：pull_request 也走这套工作流（构建与打包都要在合并前过一遍），但
-  # 从分支发出一个 release 不是它该做的事。
-  # Only a push publishes. A pull request runs the same workflow so that the build and the
-  # packaging are exercised before the merge, but a branch must never cut a release.
+  # 一个 release 装下全部 .deb：tag 与 release 名都是 v<版本>，与 sing-box 一致。
+  # 发布只保留最新一个 release；上传完再把旧的连同 tag 一起收走，Release 页始终只剩当前版本。
+  # One release carries every .deb, tagged and named v<version>, matching sing-box. Only
+  # the newest release is kept: after the upload the stale releases and their tags are
+  # pruned, so the Release page only ever shows the current version.
   release:
     if: github.event_name != 'pull_request'
-    needs: [prepare, build, packages]
+    needs: [prepare, build]
     runs-on: ubuntu-26.04
-    # 这个作业上传资产并清理旧资产，是唯一需要写权限的地方。
-    # This job uploads the assets and prunes the stale ones: the one place that needs
-    # to write.
     permissions:
       contents: write
     steps:
-      - name: 检出仓库
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
       - name: 下载全部产物
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: easysb-*
+          pattern: easysb-package-*
           path: dist
           merge-multiple: true
 
@@ -251,35 +167,31 @@ jobs:
             - 内核 / Core: sing-box 已编译进面板（来源 https://github.com/SagerNet/sing-box），无需单独安装
               the sing-box core is compiled into the panel, nothing to install separately
 
-            一键安装 / One-click（自动识别发行版，配好签名软件源并安装，同 Docker）:
+            一键安装 / One-click（Debian 12+ / Ubuntu 24.04+，自动配好签名软件源并安装）:
 
              ```bash
             curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
             ```
 
-            手动安装 / Manual: 下载本页对应架构的 `.deb` / `.rpm` / `.pkg.tar.zst`，或
-            发布压缩包 `easysb-${{ needs.prepare.outputs.version }}-linux-<架构>.tar.gz`，
-            交给 `install.sh --method package`。下载 the package or tarball for this
-            architecture and hand it to `install.sh --method package`.
+            手动安装 / Manual: 下载本页对应架构的 `.deb`，或先用 `apt` 配好软件源：
+
+             ```bash
+            sudo apt update && sudo apt install easysb
+            ```
           files: |
-            dist/*.tar.gz
             dist/*.deb
-            dist/*.rpm
-            dist/*.pkg.tar.zst
 
       # action-gh-release 只覆盖同名文件，改过命名之后旧资产会一直躺在 release 里。
-      # 放在上传之后清理，上传万一失败时上一轮的资产还在。清完资产集合就等于刚构建的
-      # 那一套。
+      # 放在上传之后清理，上传万一失败时上一轮的资产还在。
       # action-gh-release only overwrites same-named files, so old assets linger after a
-      # rename. Pruning after the upload keeps the previous assets in place if the upload
-      # fails; once it is done the release equals what was just built.
+      # rename; pruning after the upload keeps the previous assets if the upload fails.
       - name: 清理旧资产
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="v${{ needs.prepare.outputs.version }}"
-          keep="$(cd dist && ls -1 *.tar.gz *.deb *.rpm *.pkg.tar.zst 2>/dev/null | sort)"
+          keep="$(ls -1 dist/*.deb | xargs -n1 basename | sort)"
           printf '本轮资产 / current assets:\n%s\n' "$keep"
           while IFS= read -r name; do
             [ -n "$name" ] || continue
@@ -290,32 +202,45 @@ jobs:
             gh release delete-asset "$version" "$name" --yes
           done < <(gh release view "$version" --json assets --jq '.assets[].name')
 
-  # 把按发行版打好的包组装成软件源并同步到发布服务器：apt 与 rpm 都按发行版分目录，摆成
-  # Docker 官方源的形状，pacman 按架构分，bin 放发布压缩包。GitHub Release 只能当静态下载，
-  # 服务的固定地址来自这台服务器，install.sh 里写的就是它。包的构建在上面的 packages 作业，
-  # 这里只摆目录、生成索引并签名。
-  # Lays the per-distribution packages out as sources and syncs them to the release server:
-  # apt and rpm each split by distribution, in Docker's official shape, pacman
-  # per-architecture, and bin for the tarballs. GitHub Releases can only serve files; the
-  # stable address install.sh uses comes from here. The packages are built in the packages
-  # job above; this job only lays out the trees, indexes and signs them.
+      # 只留最新一个 release：上一版连同它的 tag 一并收走。tag 是我们自己发布的历史，
+      # 删掉不影响任何仍在使用的软件源（源由 Pages 承载）。
+      # Keep only the newest release: the previous one and its tag go together. The tag is
+      # our own publishing history, and the sources live on Pages, so removing it breaks
+      # nothing that is still in use.
+      - name: 清理旧 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current="v${{ needs.prepare.outputs.version }}"
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            [ "$tag" = "$current" ] && continue
+            echo "删除旧 release / pruning: $tag"
+            gh release delete "$tag" --yes --cleanup-tag
+          done < <(gh release list --limit 100 --json tagName --jq '.[].tagName')
+
+  # 把同一批 .deb 组装成 apt 树并签名，交给 GitHub Pages 发布：pool 一份、dists/<套件>
+  # 按发行版分，公钥与 install.sh 在站点根。caddy 风格的落点对应
+  # /usr/share/keyrings/easysb-archive-keyring.gpg + /etc/apt/sources.list.d/easysb.list。
+  # Lays the same .deb files out as a signed apt tree and hands it to GitHub Pages: one
+  # shared pool, per-release dists/<suite>, and the public key plus install.sh at the site
+  # root. The caddy-style drop points are /usr/share/keyrings/easysb-archive-keyring.gpg
+  # and /etc/apt/sources.list.d/easysb.list.
   #
-  # 先跑一次 “Provision the release server” 工作流把服务器准备好，这里才传得上去。
-  # Run the "Provision the release server" workflow once before this can upload.
-  #
-  # 同样是 push 才同步：这个作业拿着服务器口令往生产站点 rsync，分支上的任何一次提交
-  # 都不该碰它。
-  # Also push-only: this job rsyncs to the production site with the server's password, and
-  # nothing on a branch may reach it.
-  deploy:
+  # 同样是 push 才发布：分支上的任何一次提交都不该碰生产站点。
+  # Also push-only: nothing on a branch may reach the production site.
+  pages:
     if: github.event_name != 'pull_request'
-    needs: [prepare, release]
+    needs: [prepare, build]
     runs-on: ubuntu-26.04
-    # 755 MB 的软件源走一条 SSH 连接，首次同步几分钟，之后只传变化；留足余量，慢链路
-    # 也不会被误杀。
-    # The 755 MB source rsyncs over one SSH connection: minutes on the first run, only
-    # changes afterwards. The margin keeps a slow-but-working link from being killed.
-    timeout-minutes: 60
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - name: 检出仓库
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -323,131 +248,59 @@ jobs:
       - name: 下载全部产物
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: easysb-*
+          pattern: easysb-package-*
           path: dist
           merge-multiple: true
 
-      # apt-ftparchive 来自 apt-utils，createrepo_c 来自 createrepo-c，pacman 的
-      # repo-add 由 pacman-package-manager 提供，rpm 提供 `rpm --addsign`。repo-add 靠
-      # bsdtar（libarchive-tools）解包，配方是 zstd 压缩，两个都必须装上，否则它会判定
-      # 「不是包」而失败。sshpass 给同步步骤用，口令走环境变量，不进命令行。
-      # apt-ftparchive ships in apt-utils, createrepo_c in createrepo-c, pacman's
-      # repo-add in pacman-package-manager and `rpm --addsign` in rpm. repo-add unpacks
-      # through bsdtar (libarchive-tools) and the packages are zstd compressed, so both are
-      # required; without them repo-add calls every package "not a package file" and fails.
-      # sshpass drives the sync step; the password travels through the environment, never
-      # through a command line.
+      # apt-ftparchive 来自 apt-utils。
+      # apt-ftparchive ships in apt-utils.
       - name: 安装索引工具
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq apt-utils createrepo-c pacman-package-manager \
-            libarchive-tools zstd rpm sshpass
+          sudo apt-get install -y -qq apt-utils
 
       # 私钥可以带口令：导入不需要口令，签名时从 GPG_PASSPHRASE_FILE 读，口令不进 argv。
       # The private key may be passphrase protected: importing needs no passphrase, and
       # signing reads it from GPG_PASSPHRASE_FILE, so it never reaches the process list.
-      - name: 导入签名密钥（可选）
+      - name: 导入签名密钥
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
-          if [ -n "$GPG_PRIVATE_KEY" ]; then
-            printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
-            fingerprint="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')"
-            echo "GPG_KEY_ID=$fingerprint" >> "$GITHUB_ENV"
-            if [ -n "$GPG_PASSPHRASE" ]; then
-              printf '%s' "$GPG_PASSPHRASE" > "$RUNNER_TEMP/gpg.pass"
-              chmod 600 "$RUNNER_TEMP/gpg.pass"
-              echo "GPG_PASSPHRASE_FILE=$RUNNER_TEMP/gpg.pass" >> "$GITHUB_ENV"
-            fi
-          else
-            echo "没有 GPG_PRIVATE_KEY，索引保持未签名 / no GPG_PRIVATE_KEY, publishing an unsigned index"
-          fi
-
-      - name: 组装软件源
-        run: make repo-index GPG_KEY_ID="${GPG_KEY_ID:-}" GPG_PASSPHRASE_FILE="${GPG_PASSPHRASE_FILE:-}"
-
-      # 同步用 SSH 上的 rsync：FTP 和「整棵推过去」都试过，都败在这条慢上行上。这套树有
-      # 755 MB、438 个文件，FTP 每写一块都要等一个往返回执（实测 25 KB/s，v5.0.0 第一次
-      # 分发行版发布 30 分钟只传完两个包）；把整棵树打成 tar 用 scp 推，实测上行只有
-      # 350~850 KB/s，传了 36 分钟被对端掐断连接。rsync 只传有变化的文件，内容没变的一律
-      # 跳过，断了下一轮接着传，慢链路也能一轮轮收敛。
-      #
-      # 传输前先探一次上行：实测速度低于「755 MB 在 50 分钟内传不完」的阈值就直接失败，
-      # 比等满超时再看半截站点清楚得多。--delete 收走旧的扁平 apt/ 与 rpm/<架构>/，
-      # --delay-updates 让每个文件先落到临时名再改名，不会露出写了一半的包。
-      # The sync is rsync over SSH: both FTP and one wholesale push failed on this slow uplink.
-      # The tree is 755 MB across 438 files; FTP waits a round trip per write (25 KB/s), and
-      # tarring the whole tree for scp ran 36 minutes at 350-850 KB/s before the peer dropped
-      # the connection. rsync sends only what changed, skips identical files and resumes on the
-      # next run, so a slow link still converges.
-      #
-      # An upload probe measures the real rate first and fails below what 755 MB needs in 50
-      # minutes. --delete retires the flat apt/ and rpm/<arch>/; --delay-updates renames each
-      # file into place, so no half-written package ever shows up.
-      - name: 同步到发布服务器
-        env:
-          # 口令从环境递进去，不进 argv，也不出现在日志里。
-          # The password arrives through the environment, never an argument.
-          SSHPASS: ${{ secrets.SERVER_SSH_PASSWORD }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          # 站点根目录可以从 secret 覆盖；没有就用置备时的默认值。
-          # The site root can be overridden from a secret; otherwise the provisioning default.
-          WEBROOT: ${{ secrets.SERVER_WEBROOT }}
-        run: |
-          set -euo pipefail
-          : "${WEBROOT:=/var/www/sb.kejizero.xyz}"
-          target="${SERVER_USER}@${SERVER_HOST}"
-          ssh_opts=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=20
-                    -o PubkeyAuthentication=no -o PreferredAuthentications=password
-                    -o ServerAliveInterval=30 -o ServerAliveCountMax=40 -o TCPKeepAlive=yes)
-          srun() { sshpass -e ssh "${ssh_opts[@]}" "$@"; }
-
-          # rsync 让 sshpass 去起 ssh：口令只从环境读，既不进命令行也不进日志。
-          # rsync starts ssh through sshpass, so the password only ever comes from the
-          # environment, never a command line.
-          #
-          # 注意别再用 sshpass 包住 rsync：sshpass 起完子进程会把 SSHPASS 从环境里摘掉，
-          # 于是 rsync 里那层 sshpass 读不到口令，连接刚建立就被关掉（v5.0.0 第一次用
-          # rsync 就栽在这里）。口令交给 RSYNC_RSH 这一层就够了。
-          # Do not wrap rsync in sshpass: sshpass unsets SSHPASS before exec'ing its child, so
-          # the sshpass inside rsync finds no password and the connection closes immediately.
-          # Letting RSYNC_RSH own the password is enough.
-          export SSHPASS
-          export RSYNC_RSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=40 -o TCPKeepAlive=yes"
-
-          # 服务器上要有 rsync；缺了就装。
-          # The server needs rsync; install it when missing.
-          srun "$target" 'command -v rsync >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync; }'
-
-          probe=/var/tmp/easysb-probe.bin
-          head -c 16777216 /dev/urandom > "$probe"
-          start=$(date +%s%N)
-          sshpass -e scp "${ssh_opts[@]}" "$probe" "${target}:/var/tmp/easysb-probe.bin"
-          elapsed_ms=$(( ($(date +%s%N) - start) / 1000000 ))
-          rm -f "$probe"
-          srun "$target" 'rm -f /var/tmp/easysb-probe.bin'
-          kbps=$(( 16384000 / (elapsed_ms + 1) ))
-          echo "上行探测 / upload probe: ${kbps} KB/s（16 MiB / ${elapsed_ms} ms）"
-          if [ "$kbps" -lt 256 ]; then
-            echo "::error::到发布服务器只有 ${kbps} KB/s，755 MB 在超时前传不完；请检查服务器上行带宽"
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "::error::缺少 GPG_PRIVATE_KEY，软件源无法签名 / missing GPG_PRIVATE_KEY"
             exit 1
           fi
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          fingerprint="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')"
+          echo "GPG_KEY_ID=$fingerprint" >> "$GITHUB_ENV"
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            printf '%s' "$GPG_PASSPHRASE" > "$RUNNER_TEMP/gpg.pass"
+            chmod 600 "$RUNNER_TEMP/gpg.pass"
+            echo "GPG_PASSPHRASE_FILE=$RUNNER_TEMP/gpg.pass" >> "$GITHUB_ENV"
+          fi
 
-          # --delete 会把本地没有的东西一并从服务器删掉，所以先确认这棵树是完整的：产物
-          # 不全会把整个站点清空。
-          # --delete also removes anything absent locally, so refuse to sync an incomplete
-          # tree: an empty dist/repo would wipe the whole site.
-          for entry in linux pacman bin install.sh; do
-            [ -e "dist/repo/$entry" ] || { echo "::error::dist/repo 缺少 $entry，拒绝同步 / refusing to sync an incomplete tree"; exit 1; }
-          done
+      - name: 组装并签名软件源
+        run: make repo GPG_KEY_ID="$GPG_KEY_ID" GPG_PASSPHRASE_FILE="${GPG_PASSPHRASE_FILE:-}"
 
-          rsync -az --delete --delay-updates --partial \
-            --stats --human-readable --skip-compress=deb,rpm,zst,gz,xz,bz2,zstd \
-            dist/repo/ "$target:$WEBROOT/"
+      # Pages 默认跑 Jekyll，会跳过一些以点或下划线开头的路径；.nojekyll 关掉它。CNAME
+      # 把站点固定在自定义域上，install.sh 里那个地址才成立。
+      # Pages runs Jekyll by default and skips some dot/underscore paths; .nojekyll turns
+      # that off. CNAME pins the site to the custom domain install.sh points at.
+      - name: 站点文件
+        run: |
+          set -euo pipefail
+          touch dist/repo/.nojekyll
+          printf 'sb.kejizero.xyz\n' > dist/repo/CNAME
 
-          # rsync -a 保留源文件的属主与权限，站点根得重新交给 FTP 账号，并让 caddy 读得到。
-          # rsync -a preserves the source ownership and modes, so the site root is handed back
-          # to the FTP account and made readable by caddy.
-          srun "$target" "chown -R easysb: '$WEBROOT' && chmod -R a+rX '$WEBROOT'"
+      - name: 配置 Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: 上传站点产物
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: dist/repo
+
+      - name: 发布到 Pages
+        id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

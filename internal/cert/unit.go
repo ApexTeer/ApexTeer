@@ -13,12 +13,10 @@ import (
 
 // The renewal timer is what renews the certificates: no crontab is installed and
 // nothing else on the host renews them. A minimal server image has no cron at all,
-// and a container has no init to run it, so the panel drives renewal the same way
-// it drives everything else: a systemd unit or an OpenRC init script.
+// so the panel drives renewal the same way it drives everything else: a systemd unit.
 const (
 	systemdServicePath = "/etc/systemd/system/easysb-acme.service"
 	systemdTimerPath   = "/etc/systemd/system/easysb-acme.timer"
-	openRCPath         = "/etc/init.d/easysb-acme"
 )
 
 // renewTimerUnit is the daily timer that runs the renewal pass.
@@ -46,31 +44,10 @@ Type=oneshot
 ExecStart=%s --renew-certs
 `
 
-// renewOpenRC is the OpenRC equivalent: a daily cron-style entry that runs the
-// same command.
-const renewOpenRC = `#!/sbin/openrc-run
-name="easysb-acme"
-description="EasySB certificate renewal"
-
-depend() {
-  need net
-}
-
-start() {
-  ebegin "Renewing EasySB certificates"
-  %s --renew-certs
-  eend $?
-}
-`
-
 // TimerInstalled reports whether the renewal timer is on disk.
 func TimerInstalled() bool {
-	for _, p := range []string{systemdTimerPath, openRCPath} {
-		if _, err := os.Stat(p); err == nil {
-			return true
-		}
-	}
-	return false
+	_, err := os.Stat(systemdTimerPath)
+	return err == nil
 }
 
 // InstallTimer writes the renewal unit and enables it. It is idempotent: issuing
@@ -80,14 +57,6 @@ func InstallTimer(ctx context.Context, log func(string)) error {
 	if err != nil {
 		return err
 	}
-	if service.Detect() == service.OpenRC {
-		if err := os.WriteFile(openRCPath, []byte(fmt.Sprintf(renewOpenRC, exe)), 0o755); err != nil {
-			return err
-		}
-		log("$ rc-update add easysb-acme default")
-		return runQuiet(ctx, "rc-update", "add", "easysb-acme", "default")
-	}
-
 	if err := os.WriteFile(systemdServicePath, []byte(fmt.Sprintf(renewServiceUnit, exe)), 0o644); err != nil {
 		return err
 	}
@@ -103,15 +72,6 @@ func InstallTimer(ctx context.Context, log func(string)) error {
 
 // RemoveTimer deletes the renewal unit.
 func RemoveTimer(ctx context.Context, log func(string)) error {
-	if service.Detect() == service.OpenRC {
-		if err := runQuiet(ctx, "rc-update", "del", "easysb-acme", "default"); err != nil {
-			return err
-		}
-		if err := os.Remove(openRCPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
 	log("$ systemctl disable --now easysb-acme.timer")
 	if err := runQuiet(ctx, "systemctl", "disable", "--now", "easysb-acme.timer"); err != nil {
 		return err
@@ -127,9 +87,6 @@ func RemoveTimer(ctx context.Context, log func(string)) error {
 // TimerStatus is the next scheduled renewal as systemd reports it, empty when the
 // timer is absent or systemd cannot say.
 func TimerStatus() string {
-	if service.Detect() == service.OpenRC {
-		return ""
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "systemctl", "list-timers", "easysb-acme.timer", "--no-pager").Output()

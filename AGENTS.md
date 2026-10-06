@@ -23,11 +23,8 @@ Read `docs/` first, then the package you need:
 make            # build ./easysb with the tags from release/TAGS
 make check      # gofmt -l + go vet + go test, the pre-commit gate
 make dist       # cross-compile every release architecture into dist/
-make deb        # package the dist/ binaries into .deb files with fpm
-make rpm        # package them into .rpm files for the Fedora / RHEL family
-make pacman     # package them into pacman packages for Arch
-make repo       # build the per-distribution packages and lay out the linux/ source tree
-make repo-index # lay out and index the sources when the packages already exist
+make deb        # package the dist/ binaries into .deb files with fpm (UPX-compressed)
+make repo       # lay the .deb files out as a signed apt tree in dist/repo
 ```
 
 `make help` lists every target. The bare Go commands still work; `make build` only
@@ -43,25 +40,25 @@ make screens    # render every screen and assert the layout (python3)
 ## Rules that are easy to get wrong
 
 - The release tag is always `v<VERSION>`. Derive it; never hardcode it in a
-  second place. `install.sh`, the workflow, and `internal/update` share it.
+  second place. The workflow, `internal/update`, and the release notes share it.
   `VERSION` is embedded into the binary with `go:embed`; do not reintroduce a
   `main.version` default or a version constant in `install.sh`.
-- The `.deb`, the `.rpm`, the pacman package and the apt repository share the
-  release's single sources: the arch names come from the Makefile (`ARCHES` plus
-  the `DEBARCH_MAP` / `RPMARCH_MAP` / `PACMANARCH_*` mappings, because Debian spells
-  armv7 `armhf`, rpm spells it `armv7hl` and Arch `armv7h`), and the packaged
-  systemd units are printed by the binary (`easysb --print-unit node|sub`) rather
-  than copied into `packaging/`. A hand-written unit or a second arch list in the
-  workflow drifts. The three formats come from one staged tree (`make pkg-stage`,
-  driven per architecture by `make packages-asset`), so installing the `.deb` and
-  installing the `.rpm` put down the same bytes.
-- The sources are laid out in Docker's official shape, so a distribution is a
-  directory: apt and rpm share the `linux/<distro>/...` tree (`DEB_SUITES` and
-  `RPM_TREES` in the Makefile, both keyed on asset names), and `packaging/repo/`
-  holds the two scripts that build and index it (`make repo` is `repo-packages`
-  then `repo-index`). Distro directories, suites and release numbers must stay in
-  step with `install.sh`'s `repo_coords`, which is what decides whether a machine
-  gets a source or the tarball.
+- EasySB ships as a single `.deb`: the only architectures are `amd64` and `arm64`
+  (the two the BBR kernels cover), the only platform is Debian and Ubuntu, and the
+  only package is the `.deb`. The arch names come from the Makefile's `ARCHES` /
+  `DEBARCH_MAP`, and the packaged systemd units are printed by the binary
+  (`easysb --print-unit node|sub`) rather than copied into `packaging/`. A
+  hand-written unit or a second arch list in the workflow drifts. The `.deb` comes
+  from one staged tree (`make pkg-stage`, driven per architecture by `make
+  packages-asset`), and `pkg-stage` UPX-compresses the binary there, so the release
+  asset and the apt source put down the same bytes.
+- The apt source is a plain apt tree published by GitHub Pages at
+  `https://sb.kejizero.xyz`: one shared `pool/main/e/easysb/` and one
+  `dists/<suite>/main/binary-<arch>/` per suite, keyed on `APT_SUITES` in the
+  Makefile (`bookworm`, `trixie`, `noble`). `packaging/repo/index.sh` lays it out
+  and signs it (`make repo`), and the workflow deploys it. `install.sh` maps a
+  machine's `/etc/os-release` to one of the same three suites, so the suite list
+  and the install script must stay in step.
 - Keep `/etc/sing-box/easysb.conf` compatible with the legacy shell tool. Add
   keys, do not rename or repurpose them. The one exception is a key that
   described a component which no longer exists (v4 dropped `SUB_PORT` and
