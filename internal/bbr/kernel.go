@@ -38,8 +38,15 @@ func Releases(ctx context.Context) ([]Release, error) {
 	return releasesFromTags(tags, arch), nil
 }
 
+// newestVersions is how many kernel versions the list offers. The menu is a pick
+// between the current and the previous build, not an archive: older versions are
+// still installable from the kernel project's own releases, but they only lengthen
+// a list read on a terminal.
+const newestVersions = 2
+
 // releasesFromTags picks the releases this architecture can install and sorts them
-// newest first, the standard build of a version ahead of its max build. Every
+// newest first, the standard build of a version ahead of its max build. Only the
+// newest versions are kept, so the menu stays the current and previous kernel. Every
 // version here comes from the release list: nothing about it is written down in
 // this repository, so a kernel published upstream shows up on its own.
 func releasesFromTags(tags []string, arch string) []Release {
@@ -57,6 +64,21 @@ func releasesFromTags(tags []string, arch string) []Release {
 		}
 		return list[i].Profile == Standard && list[j].Profile != Standard
 	})
+	// The sort puts versions in descending order, so the first newestVersions
+	// distinct versions are the ones to keep; every profile published for those
+	// versions stays.
+	seen := make(map[string]bool, newestVersions)
+	kept := list[:0]
+	for _, rel := range list {
+		if !seen[rel.Version] {
+			if len(seen) == newestVersions {
+				break
+			}
+			seen[rel.Version] = true
+		}
+		kept = append(kept, rel)
+	}
+	list = kept
 	return list
 }
 

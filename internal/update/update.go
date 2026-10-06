@@ -1,29 +1,30 @@
-// Package update self-updates the EasySB binary from the v<version> GitHub
-// release tarball, mirroring the legacy script's self-update flow.
+// Package update upgrades the installed EasySB package through apt. EasySB ships as
+// a .deb from a signed apt source, so an upgrade is the package manager's job: the
+// panel refreshes the source and installs the newest easysb, then asks the operator
+// to restart it. There is no separate binary download any more.
 package update
 
 import (
-	"archive/tar"
-	"compress/gzip"
+	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
-	"path"
-	"runtime"
+	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/download"
 )
 
-// Repo is the EasySB repository that publishes the binaries.
+// Repo is the EasySB repository that publishes the sources.
 const Repo = "MinimaxFlora/EasySB"
+
+// PackageName is the Debian package the panel is installed as.
+const PackageName = "easysb"
+
+// versionURL points at the raw VERSION file on the default branch.
+const versionURL = "https://raw.githubusercontent.com/" + Repo + "/master/VERSION"
 
 // bareVersion strips a leading v and surrounding space so a version prints the same
 // whether the caller carried the release tag or the bare number.
@@ -36,47 +37,29 @@ func ReleaseTag(version string) string {
 	return "v" + bareVersion(version)
 }
 
-// versionURL points at the raw VERSION file on the default branch.
-const versionURL = "https://raw.githubusercontent.com/" + Repo + "/master/VERSION"
-
-// AssetName maps a Go architecture to the published asset suffix.
-func AssetName(goarch string) (string, bool) {
+// debArch maps a Go architecture to Debian's spelling. EasySB publishes only amd64
+// and arm64, the two architectures the BBR kernels cover.
+func debArch(goarch string) (string, bool) {
 	switch goarch {
-	case "amd64":
-		return "amd64", true
-	case "arm64":
-		return "arm64", true
-	case "arm":
-		return "armv7", true
-	case "386":
-		return "386", true
-	case "riscv64":
-		return "riscv64", true
-	case "s390x":
-		return "s390x", true
+	case "amd64", "arm64":
+		return goarch, true
 	}
 	return "", false
 }
 
-// AssetFileName builds the published archive name for a version and architecture,
-// the shape install.sh and the release workflow both use, for example
-// easysb-5.0.0-linux-amd64.tar.gz.
-func AssetFileName(version, goarch string) (string, bool) {
-	asset, ok := AssetName(goarch)
+// PackageFileName builds the published .deb name for a version and architecture,
+// the shape the Makefile and the release workflow both use, for example
+// easysb_6.0.0-1_amd64.deb. A version that already carries a revision is used as is.
+func PackageFileName(version, goarch string) (string, bool) {
+	arch, ok := debArch(goarch)
 	if !ok {
 		return "", false
 	}
-	return "easysb-" + bareVersion(version) + "-linux-" + asset + ".tar.gz", true
-}
-
-// AssetURL returns the download URL for an EasySB version and the current
-// architecture.
-func AssetURL(version string) (string, error) {
-	name, ok := AssetFileName(version, runtime.GOARCH)
-	if !ok {
-		return "", errors.New("unsupported architecture: " + runtime.GOARCH)
+	v := bareVersion(version)
+	if !strings.Contains(v, "-") {
+		v += "-1"
 	}
-	return "https://github.com/" + Repo + "/releases/download/" + ReleaseTag(version) + "/" + name, nil
+	return PackageName + "_" + v + "_" + arch + ".deb", true
 }
 
 // RemoteVersion downloads the published VERSION file.
@@ -99,11 +82,11 @@ func RemoteVersion(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// Apply downloads the current architecture binary and replaces the running
-// executable. It returns false when the installed binary already matches the
-// remote build. current is the running EasySB version string. The binary download
-// reports itself to progress, which the panel turns into a bar.
-func Apply(ctx context.Context, current string, log func(string), progress download.Progress) (bool, string, error) {
+// Apply refreshes the apt source and upgrades the easysb package. It returns false
+// when nothing changed - the installed binary already matches the published version,
+// or apt found no newer package - and true when the package was replaced. current is
+// the running EasySB version string. The apt output is streamed to log.
+func Apply(ctx context.Context, current string, log func(string)) (bool, string, error) {
 	remote, err := RemoteVersion(ctx)
 	if err != nil {
 		log("cannot read remote version: " + err.Error())
@@ -115,196 +98,68 @@ func Apply(ctx context.Context, current string, log func(string), progress downl
 		}
 	}
 
-	target := remote
-	if target == "" {
-		target = current
+	if _, err := exec.LookPath("apt-get"); err != nil {
+		return false, remote, errors.New("apt-get not found: EasySB upgrades through apt")
 	}
-	if target == "" {
-		return false, remote, errors.New("missing version for release tag")
-	}
-	url, err := AssetURL(target)
-	if err != nil {
-		return false, remote, err
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return false, remote, err
-	}
-	archive := exe + ".tar.gz"
-	tmp := exe + ".new"
+	before := installedVersion(ctx)
 
-	log("GET " + url)
-	if err := download.WithProgress(ctx, url, archive, 5*time.Minute, progress); err != nil {
+	log("apt-get update")
+	if err := runApt(ctx, log, "update"); err != nil {
 		return false, remote, err
 	}
-	defer os.Remove(archive)
-	// The tarball replaces the running binary as root, so it is checked against the
-	// sha256 GitHub publishes for the release asset before it is unpacked. That digest
-	// is read over TLS from the releases API, which makes a tarball that arrived from
-	// anywhere other than the release itself fail here. An older release that carries
-	// no digest only loses the extra check.
-	if name, ok := AssetFileName(target, runtime.GOARCH); ok {
-		digest, err := AssetDigest(ctx, target, name)
-		switch {
-		case err != nil:
-			log("cannot read release digest: " + err.Error())
-		case digest == "":
-			log("release carries no sha256 digest")
-		default:
-			if err := verifyDigest(archive, digest); err != nil {
-				return false, remote, err
-			}
-			log("verified " + digest)
-		}
-	}
-	if err := extractBinary(archive, tmp); err != nil {
-		os.Remove(tmp)
+	log("apt-get install -y " + PackageName)
+	if err := runApt(ctx, log, "install", "-y", PackageName); err != nil {
 		return false, remote, err
 	}
-	if err := os.Chmod(tmp, 0o755); err != nil {
-		return false, remote, err
-	}
-	if same, err := sameFile(exe, tmp); err == nil && same {
-		os.Remove(tmp)
+
+	after := installedVersion(ctx)
+	if after != "" && after == before {
 		return false, remote, nil
-	}
-	// Keep the binary being replaced, so a release that will not start can be
-	// rolled back on the host instead of needing another download.
-	if current, err := os.ReadFile(exe); err == nil {
-		_ = os.WriteFile(exe+".bak", current, 0o755)
-	}
-	if err := os.Rename(tmp, exe); err != nil {
-		os.Remove(tmp)
-		return false, remote, err
 	}
 	return true, remote, nil
 }
 
-// releaseAsset is the part of a releases-API asset a check needs: the name to find
-// the right one and the sha256 digest GitHub computed for it.
-type releaseAsset struct {
-	Name   string `json:"name"`
-	Digest string `json:"digest"`
+// installedVersion reads the installed package version, empty when the package is not
+// installed or dpkg is unavailable.
+func installedVersion(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Version}", PackageName).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
-// releaseInfo is the part of the release document that carries the assets.
-type releaseInfo struct {
-	Assets []releaseAsset `json:"assets"`
-}
+// runApt runs apt-get with the package's own output folded into log, so the task
+// screen shows exactly what the package manager printed. DEBIAN_FRONTEND keeps it
+// from opening a prompt on a machine with debconf.
+func runApt(ctx context.Context, log func(string), args ...string) error {
+	cmd := exec.CommandContext(ctx, "apt-get", args...)
+	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 
-// AssetDigest reads the sha256 digest GitHub publishes for a release asset, in the
-// "sha256:<hex>" form the releases API reports. It returns an empty digest and no
-// error when the answer holds none - an older release predates the field, or GitHub
-// withheld it - so the caller can still update with the download check alone.
-func AssetDigest(ctx context.Context, version, name string) (string, error) {
-	url := "https://api.github.com/repos/" + Repo + "/releases/tags/" + ReleaseTag(version)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "EasySB")
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("release metadata: %s", resp.Status)
-	}
-	var doc releaseInfo
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
-		return "", err
-	}
-	for _, a := range doc.Assets {
-		if a.Name == name {
-			return a.Digest, nil
-		}
-	}
-	return "", nil
-}
-
-// verifyDigest compares the sha256 of a downloaded file against a "sha256:<hex>"
-// digest the releases API published.
-func verifyDigest(file, digest string) error {
-	want, ok := strings.CutPrefix(digest, "sha256:")
-	if !ok {
-		return fmt.Errorf("unsupported digest %q", digest)
-	}
-	got, err := hashFile(file)
-	if err != nil {
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	if err := cmd.Start(); err != nil {
+		pw.Close()
 		return err
 	}
-	sum := hex.EncodeToString(got[:])
-	if !strings.EqualFold(sum, want) {
-		return fmt.Errorf("sha256 mismatch: got %s want %s", sum, want)
+	done := make(chan struct{})
+	go func() {
+		sc := bufio.NewScanner(pr)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			if line := strings.TrimRight(sc.Text(), "\r"); line != "" {
+				log(line)
+			}
+		}
+		close(done)
+	}()
+
+	err := cmd.Wait()
+	pw.Close()
+	<-done
+	if err != nil {
+		return fmt.Errorf("apt-get %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
-}
-
-// extractBinary writes the easysb member of a release archive to dest. The archive
-// holds the binary, the license and the readme, and the binary sits at the root, so
-// the member is matched by base name.
-func extractBinary(archive, dest string) error {
-	f, err := os.Open(archive)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return err
-	}
-	defer gz.Close()
-
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if hdr.Typeflag != tar.TypeReg || path.Base(hdr.Name) != "easysb" {
-			continue
-		}
-		out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(out, tr); err != nil {
-			out.Close()
-			return err
-		}
-		return out.Close()
-	}
-	return errors.New("release archive carries no easysb binary")
-}
-
-func sameFile(a, b string) (bool, error) {
-	ha, err := hashFile(a)
-	if err != nil {
-		return false, err
-	}
-	hb, err := hashFile(b)
-	if err != nil {
-		return false, err
-	}
-	return ha == hb, nil
-}
-
-func hashFile(path string) ([32]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return [32]byte{}, err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return [32]byte{}, err
-	}
-	var out [32]byte
-	copy(out[:], h.Sum(nil))
-	return out, nil
 }

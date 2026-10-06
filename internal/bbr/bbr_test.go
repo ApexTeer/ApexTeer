@@ -265,7 +265,6 @@ func TestReleasesComeOnlyFromThePublishedList(t *testing.T) {
 		{Tag: "x86_64-9.10.0-max", Version: "9.10.0", Profile: Max},
 		{Tag: "x86_64-9.1.0", Version: "9.1.0", Profile: Standard},
 		{Tag: "x86_64-9.1.0-max", Version: "9.1.0", Profile: Max},
-		{Tag: "x86_64-9.0.9", Version: "9.0.9", Profile: Standard},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("releasesFromTags returned %d releases (%v), want %d", len(got), got, len(want))
@@ -277,6 +276,34 @@ func TestReleasesComeOnlyFromThePublishedList(t *testing.T) {
 	}
 	if len(releasesFromTags(tags, "riscv64")) != 0 {
 		t.Error("an architecture without published kernels must come back empty")
+	}
+}
+
+func TestReleasesKeepOnlyTheNewestVersions(t *testing.T) {
+	// The menu is the current and previous kernel, each in whichever profiles the
+	// project published, and never a longer archive.
+	tags := []string{
+		"x86_64-9.9.9",
+		"x86_64-9.9.9-max",
+		"x86_64-9.9.8",
+		"x86_64-9.9.8-max",
+		"x86_64-9.9.7",
+		"x86_64-9.9.6-max",
+	}
+	got := releasesFromTags(tags, "x86_64")
+	want := []Release{
+		{Tag: "x86_64-9.9.9", Version: "9.9.9", Profile: Standard},
+		{Tag: "x86_64-9.9.9-max", Version: "9.9.9", Profile: Max},
+		{Tag: "x86_64-9.9.8", Version: "9.9.8", Profile: Standard},
+		{Tag: "x86_64-9.9.8-max", Version: "9.9.8", Profile: Max},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("releasesFromTags returned %d releases (%v), want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("release %d = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
 

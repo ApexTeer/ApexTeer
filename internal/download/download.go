@@ -87,11 +87,10 @@ func WithProgress(ctx context.Context, url, dest string, timeout time.Duration, 
 	// Stream into a file of our own beside dest and rename it into place once every byte
 	// is there. os.Create would write through whatever is at dest - following a symlink
 	// that had been left there, or truncating a file that belongs to something else - and
-	// both of this function's callers hand the result to something that trusts it as
-	// root: the kernel packages go to dpkg, the release tarball replaces the running
-	// binary. A name the caller cannot predict, created exclusively, is what makes the
-	// file the download's own; the rename is also what makes a failed download leave the
-	// destination untouched instead of half written.
+	// the kernel packages this fetches are handed to dpkg as root. A name the caller
+	// cannot predict, created exclusively, is what makes the file the download's own;
+	// the rename is also what makes a failed download leave the destination untouched
+	// instead of half written.
 	dir := filepath.Dir(dest)
 	f, err := os.CreateTemp(dir, filepath.Base(dest)+".part-*")
 	if err != nil {

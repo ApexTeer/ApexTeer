@@ -4,9 +4,10 @@ EasySB is one Go module rooted at the repository root. Everything the running
 program needs is compiled into a single static binary: the sing-box core is a
 module requirement (`internal/sbcore`) and certificates are issued in process
 through `github.com/go-acme/lego/v5`. A running panel therefore fetches nothing at
-all — no core archive, no `acme.sh`, no socat. The only downloads left are the
-panel's own release (`internal/update`) and the optional BBR kernel packages
-(`internal/bbr`).
+all — no core archive, no `acme.sh`, no socat. The only download left is the
+optional BBR kernel packages (`internal/bbr`); the panel's own update
+(`internal/update`) reads the published `VERSION` over HTTPS only to say whether a
+newer release exists, and hands the actual upgrade to apt.
 
 ## Repository layout
 
@@ -17,7 +18,7 @@ panel's own release (`internal/update`) and the optional BBR kernel packages
 ├── release/TAGS                    # the one definition of the build tag set
 ├── install.sh                      # installer: one command sets up the source and installs
 ├── Makefile                        # build / test / dist entry points (see `make help`)
-├── packaging/                      # package lifecycle scripts (deb/, rpm/), the source builder (repo/) and server/
+├── packaging/                      # package lifecycle scripts (deb/) and the apt source builder (repo/)
 ├── go.mod / go.sum                 # module github.com/MinimaxFlora/EasySB, Go 1.27.1
 ├── templates/                      # readable JSONC samples and subscription template
 │   ├── anytls/
@@ -58,26 +59,23 @@ editing.
 
 ## Packaging
 
-One release carries everything, tagged and named `v<VERSION>`: a release tarball per
-architecture and the three package formats. The `.deb`, the `.rpm`, the pacman package
-and the package sources are built from the same `dist/` binaries as the release, so
-nothing is compiled twice and no arch list is repeated. All three formats come from one
-staged tree (`make pkg-stage`), which one architecture's job drives end to end with
+One release is tagged and named `v<VERSION>` and carries one `.deb` per architecture.
+The package and the apt source are built from the same `dist/` binaries, so nothing is
+compiled twice and no arch list is repeated. The `.deb` comes from one staged tree
+(`make pkg-stage`), which one architecture's job drives end to end with
 `make packages-asset`:
 
 | Piece | Where it comes from |
 | :--- | :--- |
-| Binary and shortcut | `dist/easysb-linux-<asset>` → `/usr/bin/easysb`, symlinked as `/usr/bin/sb` |
-| Release tarball | `make tarball-asset` wraps that binary as `dist/easysb-<version>-linux-<asset>.tar.gz`, with the member `easysb` at the root, which is what `install.sh` and `internal/update` unpack |
+| Binary and shortcut | `dist/easysb-linux-<asset>` → `/usr/bin/easysb`, symlinked as `/usr/bin/sb`; `pkg-stage` UPX-compresses it on the way into the tree |
 | `sing-box.service` | `easysb --print-unit node --unit-exec /usr/bin/easysb`, the same `internal/service.UnitBody` the panel writes at runtime |
 | `easysb.service` | `easysb --print-unit sub --unit-exec /usr/bin/easysb`, the same `internal/subd.UnitBody` |
-| Package architecture | `DEBARCH_MAP`, `RPMARCH_MAP` and `PACMANARCH_*` in the `Makefile` (armv7 → `armhf` / `armv7hl` / `armv7h`; rpm spells 386 `i686`; Arch has no i386 or s390x, so no pacman package is made for them). The maps always key on an asset name (`amd64`, `armv7`, …), so one table drives packaging, layout and indexing |
-| Source packages | `make repo-packages` builds one variant per distribution release, with the distribution in the version string: `5.0.0-1~debian.12~bookworm`, `5.0.0-1.el9`, `5.0.0-1.fc42`. `packaging/repo/packages.sh` drives fpm from the `Makefile`'s `DEB_SUITES` / `RPM_TREES` tables and writes into `REPO_PKGS` (`dist/repopkgs`). These are separate from the release assets: those are the generic files on the release page, these only feed the sources |
-| Source trees | `make repo-index` lays the packages out as Docker's official `linux/` tree: `packaging/repo/index.sh` writes `linux/<distro>/dists/<suite>/pool/stable/<arch>/*.deb` with `Packages` and `Release` beside it (plus `InRelease` / `Release.gpg` when signed), `linux/<distro>/<release>/<basearch>/stable/` with a `repodata/` for rpm, `linux/<distro>/easysb.repo` and the armored `linux/<distro>/gpg` per distribution, `pacman/<arch>/` via `repo-add` and `bin/` for the tarballs. `make repo` is `repo-packages` then `repo-index`. The root also carries `install.sh`, so the one-command install (`curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash`) is served from the same fixed address, the way `get.docker.com` serves Docker's. With `GPG_KEY_ID` set everything is signed with that one key and each tree publishes its armored public key: `linux/<distro>/gpg` on both apt and rpm sides, and `pacman/easysb.asc` plus a `.sig` for every package and for `easysb.db`. The `easysb.repo` carries `baseurl`, `gpgcheck` and `gpgkey` together, so one fetch registers the source through dnf4's `config-manager --add-repo` or dnf5's `config-manager addrepo --from-repofile` |
+| Package architecture | `DEBARCH_MAP` in the `Makefile`, keyed on the asset name (`amd64`, `arm64`), so one table drives packaging and layout |
+| apt source | `make repo` runs `packaging/repo/index.sh`: the `.deb` files go into one shared `pool/main/e/easysb/`, and each suite in `APT_SUITES` (`bookworm`, `trixie`, `noble`) gets `dists/<suite>/main/binary-<arch>/Packages` plus a signed `Release` / `InRelease`. The armored public key and `install.sh` sit at the site root |
 
 `dist/easysb-linux-<asset>` is only an intermediate: `pkg-stage` copies it into the
-staged tree and `tarball-asset` wraps it, and neither the release nor the sources ever
-publish it on its own.
+staged tree and `deb-asset` builds the `.deb` there, and neither the release nor the
+source ever publishes the raw binary on its own.
 
 The package ships the units but does not enable or start them: a fresh host has no
 node configuration, so the panel enables and starts the service once the user has
@@ -85,19 +83,13 @@ configured it. Because the packaged unit lives in `/usr/lib/systemd/system` and 
 panel writes its own to `/etc/systemd/system`, the panel's copy wins while it exists
 and the packaged one is the fallback — the two never fight over one path.
 
-The fixed URLs apt, rpm and pacman need live on the release server
-(`sb.kejizero.xyz`), not on a second release tag: the release workflow ships
-`dist/repo` there over one SSH connection with an incremental rsync, so the one-command
-`install.sh` can write a
-source entry that never changes. The server itself is prepared once by
-`packaging/server/provision.sh` (caddy for HTTPS, vsftpd for a manual-upload account,
-a Caddy browse template for the landing page), driven by the "Provision the release
-server" workflow. The landing page is not a static file: `packaging/server/browse.html`
-is the template Caddy renders over the directory listing, so the home page shows the
-the source directories and the install commands together. It travels to the server
-inside `dist/repo/.easysb/`, where the Caddyfile's dotfile rule keeps it from being
-served or listed; `packaging/server/favicon.svg` travels with it, and an exact-path
-route serves it as `/favicon.svg`, so the root listing stays the sources alone.
+The fixed URL apt needs lives on GitHub Pages (`sb.kejizero.xyz`), not on a second
+release tag: the release workflow builds `dist/repo`, signs it with the release key
+and deploys it with `actions/deploy-pages`, so the one-command `install.sh` can write a
+source entry that never changes. The site root carries `install.sh`, the armored key
+`easysb-archive-keyring.asc`, the shared `pool/` and the per-suite `dists/`; a `CNAME`
+file pins the custom domain and `.nojekyll` keeps Pages from running Jekyll over the
+tree.
 
 ## Packages
 
@@ -122,7 +114,7 @@ route serves it as `/favicon.svg`, so the root listing stays the sources alone.
 | `internal/sysinfo` | host/device/core/service status for the dashboard: local IPv4/IPv6, CPU cores, load, memory, swap, disk and uptime |
 | `internal/netutil` | small network helpers (public IPv4-first IP detection, host resolution) |
 | `internal/uninstall` | remove the deployment while keeping the issued certificates |
-| `internal/update` | self-update from the GitHub release tag `v<version>` |
+| `internal/update` | check the published `VERSION` and upgrade the `easysb` package through apt, then ask for a restart |
 | `internal/toolbox` | what every toolbox entry returns and what the panel hands it: one `Result` shaped as a table, one `Options` carrying every outside dependency |
 | `internal/toolbox/tools` | the toolbox registry: the one list the menu, the board and `--tool` read |
 | `internal/toolbox/backtrace` | 三网回程: ICMP path probing and the carrier that carries the return traffic |

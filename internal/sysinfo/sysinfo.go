@@ -45,19 +45,19 @@ const (
 	SubSystemdUnit = "/etc/systemd/system/easysb.service"
 	SubOpenRCUnit  = "/etc/init.d/easysb"
 
-	// PanelPath is the preferred location of the panel binary: where install.sh puts it.
+	// PanelPath is the preferred location of the panel binary: where the .deb puts it,
+	// which is also where install.sh ends up, since it installs that package.
 	// Anything that has to name the panel in a unit, a timer or a launcher takes its
 	// candidates from PanelPaths rather than os.Executable(): a panel run from a scratch
 	// copy (a test build, an unpacked tree) must not redirect the installed service to
 	// that copy, because deleting the copy would then take the service down with it.
-	PanelPath = "/usr/local/bin/easysb"
+	PanelPath = "/usr/bin/easysb"
 )
 
 // PanelPaths are the candidate locations of the panel binary, most preferred first.
-// A deb installs to /usr/bin, so that copy is listed here too: without it a package
-// install would have no stable path to name in a unit and would fall back to wherever
-// the running process happens to live.
-var PanelPaths = []string{PanelPath, "/usr/local/bin/sb", "/usr/bin/easysb", "/usr/bin/sb"}
+// The /usr/local entries are the legacy tarball install; they stay listed so an
+// uninstall still finds and removes an old copy after the move to the .deb.
+var PanelPaths = []string{PanelPath, "/usr/bin/sb", "/usr/local/bin/easysb", "/usr/local/bin/sb"}
 
 // Status is one snapshot of the host for the dashboard: what the deployment is, how the
 // services are doing, and the machine underneath them. A field the host would not answer

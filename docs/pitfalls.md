@@ -10,8 +10,6 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 - **A rewrite can orphan an old release.** Rewriting the commit that a release
   tag pointed at can make the old tag/release unreachable (it starts returning
   404). Re-publish under the current tag scheme.
-- **armv7 naming.** Go spells armv7 as `GOARCH=arm` with `GOARM=7`, but the
-  published asset keeps the name `armv7`. Keep the matrix mapping explicit.
 - **Older runs overwriting newer assets.** The workflow uses a `concurrency`
   group with `cancel-in-progress` so a stale build cannot publish over a fresher
   one.
@@ -21,29 +19,33 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   the core into the panel, so there is no separate core release to yield the flag
   to. Turning it back off is a decision about what a visitor sees as the latest
   release, not a detail - which is what the old wording was trying to say.
-- **Publish the sources with rsync, and never wrap rsync in `sshpass`.** The tree
-  is 755 MB across 400-odd files. FTP-Deploy-Action waits a round trip per write
-  (~25 KB/s here), and pushing one tar with `scp` sustains only 350-850 KB/s and
-  was dropped by the peer after 36 minutes. `rsync -az --delete --delay-updates`
-  over one SSH connection moved the same tree in about 6.5 minutes and only sends
-  changes on later runs. The catch: `sshpass` does not leave `SSHPASS` intact for
-  its child (1.09 masks it, newer versions unset it), so `sshpass -e rsync ...`
-  leaves the `sshpass` that rsync starts through `RSYNC_RSH` with no password -
-  the run dies immediately with `sshpass: -e option given but "SSHPASS"
-  environment variable is not set` and `connection unexpectedly closed (0 bytes
-  received so far)`. Run `rsync` directly and let `RSYNC_RSH` own the password.
-- **Build rpm format 4, or the packages look unsigned on RHEL-family hosts.**
-  rpm 6 sets `%_rpmformat 6`, so `rpmbuild` on Ubuntu 26.04 emits format 6
-  packages, and `rpm --addsign` then writes only an OpenPGP v6 signature
-  (`RPMSIGTAG_OPENPGP`). rpm at or below 4.20 - RHEL/CentOS/Rocky 9 and 10,
-  Fedora 41 and 42 - ignores that tag, so `dnf` fails with `Package ... is not
-  signed` / `Error: GPG check FAILED` even though the package was signed and the
-  index signature verifies. `packages.sh` therefore passes
-  `--rpmbuild-define "_rpmformat 4"` to fpm; rpm 6 then writes the signature into
-  the legacy RSA/DSA tag. A local rpm 4.18 cannot tell the two apart (it does not
-  know `_rpmformat` and always builds format 4), so this only reproduces on the
-  newer runner: check a published package with `rpm -qp --qf
-  '%{RPMFORMAT}\n'`, which prints `6` before the fix and nothing after it.
+- **Only the newest release survives.** `action-gh-release` overwrites same-named
+  assets but leaves anything else, so the release job prunes its own assets and
+  then deletes every other release and its tag (`gh release delete
+  --cleanup-tag`). The Release page is expected to show exactly one version; a
+  lingering older release means the prune step did not run.
+- **Pages needs `.nojekyll` and `CNAME`.** GitHub Pages runs Jekyll by default,
+  which can skip paths in an apt tree, and a project site without a `CNAME` file
+  is served under `github.io` instead of `sb.kejizero.xyz` - the address
+  `install.sh` and the sources are pinned to. The pages job writes both into
+  `dist/repo` before the upload.
+- **The `Release` file must be generated outside its own tree.** `apt-ftparchive
+  release .` checksums every file under the suite directory, so a `Release` that
+  already exists there would be listed among its own sums. `index.sh` writes it to
+  a temp file first and moves it in afterwards.
+- **The pool is shared, so `Filename` is relative to the site root.** Both
+  architectures and every suite read the same `pool/main/e/easysb/`; `Packages`
+  therefore lists paths like `pool/main/e/easysb/easysb_6.0.0-1_amd64.deb`, not
+  paths under the suite. `index.sh` generates it from a temp tree that mirrors the
+  pool path so the field stays site-root relative.
+- **The apt source must be signed.** The pages job fails when `GPG_PRIVATE_KEY` is
+  absent rather than publishing an unsigned index: `install.sh` writes a
+  `signed-by=` entry, and apt rejects a source whose index does not carry the key's
+  signature.
+- **The suite list has two homes and they must not drift.** `APT_SUITES` in the
+  Makefile decides which `dists/<suite>` directories exist; `install.sh` maps
+  `/etc/os-release` onto one of the same names. Adding a distribution release
+  means editing both, or a machine will be handed a source that is not published.
 
 ## Version and identity
 
@@ -51,9 +53,10 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   `/etc/os-release` overwrote the script version variable. The Go build embeds a
   dedicated `VERSION` file with `go:embed`, so there is exactly one number: there
   is no `main.version` fallback to keep in step with it.
-- **One tag scheme.** `install.sh`, the workflow, and `internal/update` must all
-  derive `v<VERSION>`. A hardcoded tag in one place silently breaks downloads, so
-  `install.sh` detects the latest release rather than pinning a version.
+- **One tag scheme.** The workflow, the release notes, and `internal/update` must
+  all derive `v<VERSION>`. A hardcoded tag in one place silently breaks the update
+  check, so `internal/update` reads the published `VERSION` rather than pinning a
+  number.
 
 ## sing-box integration
 
@@ -93,10 +96,9 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   rejects a whole configuration naming an API it was not built with.
 - **`with_naive_outbound` must stay out of `release/TAGS`.** Upstream's
   `DEFAULT_BUILD_TAGS` includes it, and it drags in the cronet/Chromium libraries,
-  which have no build for 386, armv7, riscv64 or s390x (and need `with_purego` on
-  windows): copying upstream's list verbatim breaks four of the six release
-  architectures. The panel's node configuration never uses a naive outbound, so the
-  tag set is deliberately narrower.
+  which need `with_purego` and have no build on every target: copying upstream's
+  list verbatim breaks the release. The panel's node configuration never uses a
+  naive outbound, so the tag set is deliberately narrower.
 - **Downloads assume direct GitHub access.** Deployment targets are overseas,
   so binary and kernel-package downloads go straight to `github.com`. Mirror
   prefixes were removed on purpose; do not reintroduce them to work around a local

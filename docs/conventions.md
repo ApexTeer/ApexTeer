@@ -30,34 +30,28 @@
 
 - `VERSION` holds the program version, currently in `X.Y.Z` form.
 - `VERSION` is the only place the number is written: it is embedded with
-  `go:embed`, and `install.sh` reads it in a checkout or detects the latest
-  release otherwise. Do not add a `main.version` default or a script constant.
+  `go:embed`, and `install.sh` never needs it, because apt resolves the package
+  itself. Do not add a `main.version` default or a script constant.
 - The program version is independent of the sing-box core version.
 - Release tags are `v<VERSION>`, and the release name is that same string. The
-  workflow, `install.sh` and `internal/update` all derive the tag from the
-  version; do not create a second naming scheme.
-- Release assets are named after the version and the architecture, in the shape
-  sing-box uses: `easysb-<version>-linux-<goarch>.tar.gz` for the tarball, and
-  `easysb_<version>_linux_<arch>.<ext>` for the `.deb` / `.rpm` / pacman package,
-  where `<arch>` is that ecosystem's own spelling. `dist/easysb-linux-<asset>` is
-  an intermediate and is never published by itself.
-- The package sources live on the release server, not on a second release tag, so
-  the one-command `install.sh` has one fixed address (`https://sb.kejizero.xyz`)
-  to point at. The root carries `install.sh` itself, so the one command (`curl -fsSL
-  https://sb.kejizero.xyz/install.sh | sudo bash`) needs no second address. The
-  subtrees are `linux/<distro>/` for apt and rpm, `pacman/<arch>/` and
-  `bin/`; `make repo` builds them and the workflow syncs them there. The layout is
-  Docker's official one, so a distribution is a directory and the packages sit
-  under it: `linux/<distro>/dists/<suite>/pool/stable/<arch>/` for apt and
-  `linux/<distro>/<release>/<basearch>/stable/` for rpm, with one
-  `linux/<distro>/easysb.repo` and one armored `linux/<distro>/gpg` per
-  distribution. The rpm repo file carries `baseurl`, `gpgcheck` and `gpgkey`
-  together, so registering the rpm source is one fetch per dnf generation: dnf5's
-  `config-manager addrepo --from-repofile` and dnf4's `config-manager --add-repo`
-  (which `dnf-plugins-core` provides). Every tree is signed with one key when
-  `GPG_KEY_ID` is set, and `pacman/easysb.asc` is the pacman side. `install.sh`
-  writes the strict entry only when it finds that key on the server, and the
-  permissive form otherwise.
+  workflow, `internal/update` and the release notes all derive the tag from the
+  version; do not create a second naming scheme. Only the newest release is kept:
+  the workflow prunes older releases and their tags after every publish.
+- Release assets are one `.deb` per architecture, `easysb_<version>-1_<arch>.deb`,
+  where `<arch>` is Debian's spelling (`amd64`, `arm64`) and `-1` is the package's
+  own revision. `dist/easysb-linux-<asset>` is an intermediate and is never
+  published by itself.
+- The apt source is published by GitHub Pages, not on a second release tag, so the
+  one-command `install.sh` has one fixed address (`https://sb.kejizero.xyz`) to
+  point at. The root carries `install.sh` itself, so the one command (`curl -fsSL
+  https://sb.kejizero.xyz/install.sh | sudo bash`) needs no second address. The tree
+  is a plain apt tree: one shared `pool/main/e/easysb/` and one
+  `dists/<suite>/main/binary-<arch>/` per suite, with `Packages` and the signed
+  `Release` / `InRelease`; the armored public key is `easysb-archive-keyring.asc` at
+  the root. `make repo` builds and signs it (`apt-ftparchive`) and the workflow
+  deploys it with `actions/deploy-pages`. The suites are Debian and Ubuntu's current
+  releases, `bookworm`, `trixie` and `noble`, and every one of them ships both
+  architectures; `install.sh` and the Makefile's `APT_SUITES` move together.
 
 ## Commits
 
@@ -83,33 +77,25 @@
 
 ## Release
 
-- `.github/workflows/easysb-go-release.yml` cross-compiles `linux/{amd64,arm64,armv7,386,riscv64,s390x}`,
-  runs on push to `master` for changes under the watched paths, and publishes one
-  release, tagged and named `v<VERSION>`, carrying a tarball per architecture and the
-  three package formats.
-- The same binaries are wrapped into `.deb` (`make deb`), `.rpm` (`make rpm`) and
-  pacman (`make pacman`) packages by fpm, all from one staged tree. `packages.sh`
-  builds the per-distribution variants the sources need (`make repo-packages`, with
-  the distribution in the version string: `5.0.0-1~debian.12~bookworm`,
-  `5.0.0-1.el9`) and `index.sh` lays them out and indexes them (`make repo-index`,
-  via `apt-ftparchive`, `createrepo_c` and `repo-add`); `make repo` is both. The
-  per-ecosystem arch names live in the Makefile's `DEBARCH_MAP` / `RPMARCH_MAP` /
-  `PACMANARCH_*`, always keyed on an asset name so one table serves packaging, layout
-  and indexing; the packaged units come from `easysb --print-unit`; do not hand-write
-  a unit under `packaging/`. The release workflow ships `dist/repo`
-  to the release server with an incremental rsync over one SSH connection; `packaging/server/` holds the one-shot
-  provisioning script, the Caddy browse template the landing page is rendered from, and
-  the favicon. The template and the favicon travel as `dist/repo/.easysb/browse.html`
-  and `dist/repo/.easysb/favicon.svg`, so `make repo` is the only place that decides
-  where they land.
-- The apt index, the rpm-md trees and the pacman database are signed with one
-  passphrase-protected key: the secrets are `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`,
-  and signing reads the passphrase from a 0600 file so it never reaches a process
-  list. Run the "Provision the release server" workflow once; `FTP_PASSWORD` and
-  `SERVER_SSH_PASSWORD` are what it needs.
-  The server's address and the account the provisioning run logs in as are secrets as
-  well (`SERVER_HOST`, `SERVER_USER`), so neither is written into the repository and
-  moving to another host is a settings change, not a commit.
+- `.github/workflows/easysb-go-release.yml` cross-compiles `linux/{amd64,arm64}`
+  (the two architectures the BBR kernels cover), runs on push to `master` for
+  changes under the watched paths, and publishes one release, tagged and named
+  `v<VERSION>`, carrying one `.deb` per architecture. The release job then prunes the
+  older releases and their tags, so the Release page only shows the current version.
+- The `.deb` (`make deb`) is built by fpm from one staged tree; the arch names live in
+  the Makefile's `DEBARCH_MAP`, keyed on an asset name so one table serves packaging
+  and layout. `pkg-stage` UPX-compresses the binary on the way into the tree, so the
+  release asset and the apt source carry the same compressed bytes. The packaged units
+  come from `easysb --print-unit`; do not hand-write a unit under `packaging/`.
+- `make repo` (`packaging/repo/index.sh`, via `apt-ftparchive`) lays the `.deb` files
+  out as the apt tree and signs it. The workflow deploys `dist/repo` to GitHub Pages
+  with `actions/deploy-pages`, adding `.nojekyll` and the `CNAME` that pins
+  `sb.kejizero.xyz`; `packaging/repo/` is the only place that decides the layout.
+- The apt index is signed with one passphrase-protected key: the secrets are
+  `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, and signing reads the passphrase from a 0600
+  file so it never reaches a process list. The pages job requires `GPG_PRIVATE_KEY`
+  and fails without it, because an unsigned source is not something `install.sh`
+  should ever point a machine at.
 - After a force push, trigger the workflow with a normal push; force pushes do
   not reliably raise a `push` event for Actions.
 

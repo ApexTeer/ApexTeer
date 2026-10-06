@@ -41,10 +41,9 @@ strings must be added to the table for both languages in the same commit.
 `VERSION` is the single source of truth, and it is compiled into the binary with
 `go:embed`. A bare `go build` and a published release therefore report the same
 number, with no `-ldflags -X main.version` to keep in step and no second constant
-to drift. The workflow publishes under the tag `v<VERSION>`; `install.sh` reads
-the in-tree file when it runs inside a checkout and otherwise asks GitHub for the
-latest release tag; `internal/update` derives the same tag from the remote
-version. Never hardcode a release tag in more than one place.
+to drift. The workflow publishes under the tag `v<VERSION>`; `internal/update`
+reads the same number from the published `VERSION` file, derives the tag from it,
+and lets apt do the upgrade. Never hardcode a release tag in more than one place.
 
 ## Non-interactive entry points
 

@@ -410,7 +410,7 @@ var table = []entry{
 	{"svc_disable", "取消开机自启", "Disable on boot"},
 	{"service_restart_failed", "重启服务失败", "restarting the service failed"},
 	{"script_update_run", "立即检查并更新", "Check for and install the latest release"},
-	{"desc_script_update_run", "下载并替换本面板二进制，替换后需重新运行", "Download and replace this binary, then run it again"},
+	{"desc_script_update_run", "通过 apt 升级本面板软件包，升级后需重新运行", "Upgrade this package through apt, then run it again"},
 	{"script_updating", "正在更新版本", "Updating version"},
 	{"script_uptodate", "已是最新版本", "Already up to date"},
 	{"script_updated", "版本更新完成", "Version updated"},
