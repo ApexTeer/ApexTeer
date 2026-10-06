@@ -14,11 +14,11 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/MinimaxFlora/EasySB/internal/download"
+	"github.com/EasySB-Team/EasySB/internal/download"
 )
 
 // Repo is the EasySB repository that publishes the sources.
-const Repo = "MinimaxFlora/EasySB"
+const Repo = "EasySB-Team/EasySB"
 
 // PackageName is the Debian package the panel is installed as.
 const PackageName = "easysb"

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // smallScale is Default() shrunk to a few megabytes: every test runs the real measurement

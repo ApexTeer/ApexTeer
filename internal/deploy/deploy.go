@@ -13,13 +13,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/cert"
-	"github.com/MinimaxFlora/EasySB/internal/config"
-	"github.com/MinimaxFlora/EasySB/internal/sbcore"
-	"github.com/MinimaxFlora/EasySB/internal/service"
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
-	"github.com/MinimaxFlora/EasySB/internal/user"
+	"github.com/EasySB-Team/EasySB/internal/cert"
+	"github.com/EasySB-Team/EasySB/internal/config"
+	"github.com/EasySB-Team/EasySB/internal/sbcore"
+	"github.com/EasySB-Team/EasySB/internal/service"
+	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/sysinfo"
+	"github.com/EasySB-Team/EasySB/internal/user"
 )
 
 // ErrRejected is returned when the core refuses the generated configuration.

@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/state"
 
-	"github.com/MinimaxFlora/EasySB/internal/theme"
-	"github.com/MinimaxFlora/EasySB/internal/ui"
+	"github.com/EasySB-Team/EasySB/internal/theme"
+	"github.com/EasySB-Team/EasySB/internal/ui"
 )
 
 // The dashboard is one frame of fixed size: a status strip on the first line, then

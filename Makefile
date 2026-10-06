@@ -61,7 +61,7 @@ GOARCH_arm64 := arm64
 PKG_NAME       ?= easysb
 PKG_MAINTAINER ?= MinimaxFlora <zj18139624826@gmail.com>
 PKG_LICENSE    ?= GPL-3.0-or-later
-PKG_URL        ?= https://github.com/MinimaxFlora/EasySB
+PKG_URL        ?= https://github.com/EasySB-Team/EasySB
 PKG_DESC       ?= EasySB: a sing-box panel with the core compiled in
 PKG_EXEC       := /usr/bin/easysb
 # 打包暂存树 / the staging tree the .deb is built from.
@@ -90,7 +90,7 @@ REPO_DIR       ?= $(DIST)/repo
 # 它一致，两处一起改。
 # Public root URL of the sources: the latest release's asset directory. install.sh's
 # default REPO_URL has to match, so the two move together.
-REPO_URL       ?= https://github.com/MinimaxFlora/EasySB/releases/latest/download
+REPO_URL       ?= https://github.com/EasySB-Team/EasySB/releases/latest/download
 
 # Debian 架构名 / Debian architecture names.
 DEBARCH_amd64 := amd64

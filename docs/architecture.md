@@ -19,7 +19,7 @@ newer release exists, and hands the actual upgrade to apt.
 ├── install.sh                      # installer: one command sets up the source and installs
 ├── Makefile                        # build / test / dist entry points (see `make help`)
 ├── packaging/                      # package lifecycle scripts (deb/) and the apt source builder (repo/)
-├── go.mod / go.sum                 # module github.com/MinimaxFlora/EasySB, Go 1.27.1
+├── go.mod / go.sum                 # module github.com/EasySB-Team/EasySB, Go 1.27.1
 ├── templates/                      # readable JSONC samples and subscription template
 │   ├── anytls/
 │   ├── hysteria2/
@@ -86,7 +86,7 @@ and the packaged one is the fallback — the two never fight over one path.
 The fixed URL apt needs is the GitHub Release itself: the release workflow builds
 `dist/repo` as a flat ("trivial") apt repository, signs it with the release key and
 attaches every file to the release, so the one-command `install.sh` can write a source
-entry (`https://github.com/MinimaxFlora/EasySB/releases/latest/download`) that never
+entry (`https://github.com/EasySB-Team/EasySB/releases/latest/download`) that never
 changes. That one directory carries `install.sh`, the armored key
 `easysb-archive-keyring.asc`, `Packages`/`Packages.gz`, the signed
 `Release`/`InRelease`/`Release.gpg` and one `.deb` per architecture; a single package

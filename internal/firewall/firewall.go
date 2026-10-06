@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/service"
-	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/service"
+	"github.com/EasySB-Team/EasySB/internal/state"
 )
 
 // UnitName is the boot service that reapplies the NAT rules.

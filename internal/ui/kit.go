@@ -15,7 +15,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/EasySB-Team/EasySB/internal/theme"
 )
 
 // Kind is the semantic tone of a value: how much attention it deserves.

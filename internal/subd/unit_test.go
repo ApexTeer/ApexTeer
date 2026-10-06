@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/EasySB-Team/EasySB/internal/sysinfo"
 )
 
 // The subscription unit runs this same binary with --serve, and it has to name the

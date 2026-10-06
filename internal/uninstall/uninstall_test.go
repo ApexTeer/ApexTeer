@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/EasySB-Team/EasySB/internal/sysinfo"
 )
 
 // TestWithin is the guard that decides whether the certificate state directory has

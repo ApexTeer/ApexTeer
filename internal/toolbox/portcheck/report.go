@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // Notes that are always part of a run: what was measured, how to read the

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/netutil"
+	"github.com/EasySB-Team/EasySB/internal/netutil"
 )
 
 // Report is what can be checked about a domain before spending an ACME attempt on

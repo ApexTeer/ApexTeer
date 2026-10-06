@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/cert"
-	"github.com/MinimaxFlora/EasySB/internal/firewall"
-	"github.com/MinimaxFlora/EasySB/internal/service"
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/subd"
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/EasySB-Team/EasySB/internal/cert"
+	"github.com/EasySB-Team/EasySB/internal/firewall"
+	"github.com/EasySB-Team/EasySB/internal/service"
+	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/subd"
+	"github.com/EasySB-Team/EasySB/internal/sysinfo"
 )
 
 // BackupDir is where the pre-uninstall archive is written.

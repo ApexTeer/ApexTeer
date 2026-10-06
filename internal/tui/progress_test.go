@@ -10,9 +10,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/icons"
-	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/EasySB-Team/EasySB/internal/i18n"
+	"github.com/EasySB-Team/EasySB/internal/icons"
+	"github.com/EasySB-Team/EasySB/internal/theme"
 )
 
 // testLayout is the layout a task screen is drawn into: the same two slots a page uses, so

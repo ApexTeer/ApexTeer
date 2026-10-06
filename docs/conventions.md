@@ -42,9 +42,9 @@
   own revision. `dist/easysb-linux-<asset>` is an intermediate and is never
   published by itself.
 - The apt source is the GitHub Release itself, so the one-command `install.sh` has one
-  fixed address (`https://github.com/MinimaxFlora/EasySB/releases/latest/download`) to
+  fixed address (`https://github.com/EasySB-Team/EasySB/releases/latest/download`) to
   point at. That directory carries `install.sh` itself, so the one command (`curl
-  -fsSL https://github.com/MinimaxFlora/EasySB/releases/latest/download/install.sh |
+  -fsSL https://github.com/EasySB-Team/EasySB/releases/latest/download/install.sh |
   sudo bash`) needs no second address. It is a flat ("trivial") apt repository: every
   file sits in one directory (`Packages` and the signed `Release` / `InRelease` /
   `Release.gpg`, the armored key `easysb-archive-keyring.asc`, `install.sh`, and one

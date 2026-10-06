@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // The files the system table reads. They are named constants so a fixture and the code

@@ -8,14 +8,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/cert"
-	"github.com/MinimaxFlora/EasySB/internal/deploy"
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/netutil"
-	"github.com/MinimaxFlora/EasySB/internal/service"
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/subd"
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/EasySB-Team/EasySB/internal/cert"
+	"github.com/EasySB-Team/EasySB/internal/deploy"
+	"github.com/EasySB-Team/EasySB/internal/i18n"
+	"github.com/EasySB-Team/EasySB/internal/netutil"
+	"github.com/EasySB-Team/EasySB/internal/service"
+	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/subd"
+	"github.com/EasySB-Team/EasySB/internal/sysinfo"
 )
 
 // issueCertAction collects the acme email (when needed) and domain, then issues

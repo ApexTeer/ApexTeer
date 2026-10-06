@@ -16,11 +16,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/cert"
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/stats"
-	"github.com/MinimaxFlora/EasySB/internal/subscribe"
-	"github.com/MinimaxFlora/EasySB/internal/user"
+	"github.com/EasySB-Team/EasySB/internal/cert"
+	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/stats"
+	"github.com/EasySB-Team/EasySB/internal/subscribe"
+	"github.com/EasySB-Team/EasySB/internal/user"
 )
 
 // SubPath is the single endpoint every client format is served from. The

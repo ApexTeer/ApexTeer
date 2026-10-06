@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // apiBatchURL is the free, key-less ip-api batch endpoint. It is deliberately

@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // memChunk is the granularity of the copy loop and of the source buffer's fill: large

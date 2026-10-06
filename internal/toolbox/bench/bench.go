@@ -32,7 +32,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // Group is the toolbox menu group every benchmark here is filed under.

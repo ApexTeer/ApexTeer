@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // The toolbox entries this package implements. ID is the menu node id, the i18n key

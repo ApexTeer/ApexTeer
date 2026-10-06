@@ -36,7 +36,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // ID is the toolbox node id, the i18n key suffix ("toolbox_"+ID) and the --tool

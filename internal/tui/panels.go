@@ -7,9 +7,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/EasySB-Team/EasySB/internal/i18n"
+	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/theme"
 )
 
 // hintRows is the height of the pinned hint box, or zero when the terminal is

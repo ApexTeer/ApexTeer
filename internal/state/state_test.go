@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/EasySB-Team/EasySB/internal/sysinfo"
 )
 
 // saveInto points the state file at a temporary directory for one test.

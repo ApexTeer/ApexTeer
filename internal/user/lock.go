@@ -1,6 +1,6 @@
 package user
 
-import "github.com/MinimaxFlora/EasySB/internal/filelock"
+import "github.com/EasySB-Team/EasySB/internal/filelock"
 
 // Locked takes the account lock and returns the store as it is on disk right now.
 // The caller changes the store, calls Save and releases the lock. Loading under the

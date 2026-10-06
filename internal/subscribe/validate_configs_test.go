@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MinimaxFlora/EasySB/internal/sbcore"
-	"github.com/MinimaxFlora/EasySB/internal/secret"
+	"github.com/EasySB-Team/EasySB/internal/sbcore"
+	"github.com/EasySB-Team/EasySB/internal/secret"
 )
 
 func TestZZValidateRenderedDocuments(t *testing.T) {

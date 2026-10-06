@@ -7,14 +7,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/cert"
-	"github.com/MinimaxFlora/EasySB/internal/firewall"
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/subd"
-	"github.com/MinimaxFlora/EasySB/internal/subscribe"
-	"github.com/MinimaxFlora/EasySB/internal/uninstall"
-	"github.com/MinimaxFlora/EasySB/internal/update"
+	"github.com/EasySB-Team/EasySB/internal/cert"
+	"github.com/EasySB-Team/EasySB/internal/firewall"
+	"github.com/EasySB-Team/EasySB/internal/i18n"
+	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/subd"
+	"github.com/EasySB-Team/EasySB/internal/subscribe"
+	"github.com/EasySB-Team/EasySB/internal/uninstall"
+	"github.com/EasySB-Team/EasySB/internal/update"
 )
 
 // clientLabel returns the localized menu label for a subscription client.

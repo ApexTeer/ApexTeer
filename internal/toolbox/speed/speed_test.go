@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // stubRunner answers the runner calls from tables, so no test in this file opens a

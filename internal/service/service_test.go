@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/EasySB-Team/EasySB/internal/sysinfo"
 )
 
 // The node unit has to run the panel itself: the core is compiled into this binary, so

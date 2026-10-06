@@ -7,9 +7,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/icons"
-	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/EasySB-Team/EasySB/internal/i18n"
+	"github.com/EasySB-Team/EasySB/internal/icons"
+	"github.com/EasySB-Team/EasySB/internal/theme"
 )
 
 // linkCardHeight is the number of terminal rows one card occupies: two border

@@ -27,4 +27,4 @@ full-screen bubbletea TUI. Persistent state lives in
 under the tag `v<VERSION>`. The binaries are wrapped into `.deb` packages and laid
 out as a signed, flat apt repository by `make repo`, then attached to the release,
 so the source has the fixed address
-`https://github.com/MinimaxFlora/EasySB/releases/latest/download`.
+`https://github.com/EasySB-Team/EasySB/releases/latest/download`.

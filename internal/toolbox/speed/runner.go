@@ -11,7 +11,7 @@ import (
 
 	"github.com/showwin/speedtest-go/speedtest"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // rate is a measured throughput in bits per second.

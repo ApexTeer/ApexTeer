@@ -6,8 +6,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/user"
+	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/user"
 )
 
 //go:embed mihomo.yaml

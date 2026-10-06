@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // cpuInfoPath is where a Linux kernel describes the processor. Anything else (Windows, a

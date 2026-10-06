@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // TestRunDiskSmall runs the real disk benchmark on a few megabytes. It checks the four

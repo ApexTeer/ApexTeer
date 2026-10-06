@@ -15,16 +15,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/bbr"
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/prefs"
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
-	"github.com/MinimaxFlora/EasySB/internal/theme"
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
-	"github.com/MinimaxFlora/EasySB/internal/toolbox/tools"
-	"github.com/MinimaxFlora/EasySB/internal/ui"
-	"github.com/MinimaxFlora/EasySB/internal/user"
+	"github.com/EasySB-Team/EasySB/internal/bbr"
+	"github.com/EasySB-Team/EasySB/internal/i18n"
+	"github.com/EasySB-Team/EasySB/internal/prefs"
+	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySB-Team/EasySB/internal/sysinfo"
+	"github.com/EasySB-Team/EasySB/internal/theme"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox/tools"
+	"github.com/EasySB-Team/EasySB/internal/ui"
+	"github.com/EasySB-Team/EasySB/internal/user"
 )
 
 func press(code rune) tea.KeyPressMsg {

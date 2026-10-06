@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/service"
+	"github.com/EasySB-Team/EasySB/internal/service"
 )
 
 // The renewal timer is what renews the certificates: no crontab is installed and

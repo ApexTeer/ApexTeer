@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // diskFileName is the file the single-disk benchmark writes under Options.ScratchDir. The

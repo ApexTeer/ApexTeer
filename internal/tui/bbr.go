@@ -8,9 +8,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/bbr"
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/icons"
+	"github.com/EasySB-Team/EasySB/internal/bbr"
+	"github.com/EasySB-Team/EasySB/internal/i18n"
+	"github.com/EasySB-Team/EasySB/internal/icons"
 )
 
 // buildBBR is the BBR section: switching the running kernel's congestion control

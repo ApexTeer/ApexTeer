@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySB-Team/EasySB/internal/toolbox"
 )
 
 // testIP is the address every canned answer is about: an RFC 5737 documentation address,
