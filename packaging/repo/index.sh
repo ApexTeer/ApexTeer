@@ -87,7 +87,13 @@ for suite in $APT_SUITES; do
     # The Filename field is relative to the site root, so Packages is generated from a
     # temporary tree that mirrors the pool path and holds only this architecture's
     # package. Hard links only; no bytes are copied.
-    tmp="$(mktemp -d)"
+    #
+    # 临时树必须落在 REPO_DIR 所在的文件系统上：mktemp 默认用 /tmp，而 CI 里 /tmp 与
+    # 工作目录常常是不同挂载，跨设备硬链接会以 "Invalid cross-device link" 失败。
+    # The scratch tree has to live on REPO_DIR's filesystem: plain mktemp uses /tmp, which
+    # on CI is often a different mount from the workspace, and a cross-device hard link
+    # fails with "Invalid cross-device link".
+    tmp="$(mktemp -d "$REPO_DIR/.pkgtmp.XXXXXX")"
     mkdir -p "$tmp/$pool_rel"
     for deb in "$REPO_DIR/$pool_rel"/*_"$debarch".deb; do
       ln "$deb" "$tmp/$pool_rel/"
@@ -106,12 +112,13 @@ Architecture: $debarch
 EOF
   done
 
-  # Release 不能写进自己的树里再生成：apt-ftparchive 会把已存在的 Release 也算进校验和，
-  # 于是文件引用自己。先落到树外，再挪进去。
-  # Release cannot be written inside its own tree while it is generated: apt-ftparchive
-  # would checksum the file that already exists there and the file would reference
-  # itself. It lands outside the tree first and is moved in afterwards.
-  tmp="$(mktemp)"
+  # Release 不能写进它要校验的那棵树里再生成：apt-ftparchive 会把已存在的 Release 也算进
+  # 校验和，于是文件引用自己。先落到 $root 之外（同一文件系统，避免跨设备 mv），再挪进去。
+  # Release cannot be written inside the tree it checksums while it is generated:
+  # apt-ftparchive would checksum the file that already exists there and the file would
+  # reference itself. It lands outside $root first (on the same filesystem, so the move
+  # never crosses devices) and is moved in afterwards.
+  tmp="$(mktemp "$REPO_DIR/.release.XXXXXX")"
   ( cd "$root" && apt-ftparchive \
       -o "APT::FTPArchive::Release::Origin=$PKG_NAME" \
       -o "APT::FTPArchive::Release::Label=$PKG_NAME" \
