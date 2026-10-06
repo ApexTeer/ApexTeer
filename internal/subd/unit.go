@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/EasySB-Team/EasySB/internal/service"
-	"github.com/EasySB-Team/EasySB/internal/sysinfo"
+	"github.com/EasySBTeam/EasySB/internal/service"
+	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
 // UnitPath returns where the subscription service unit should live.

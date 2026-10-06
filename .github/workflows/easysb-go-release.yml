@@ -5,11 +5,11 @@ name: Build EasySB Go release
 #       easysb_<版本>-1_<架构>.deb，外加同一批 .deb 摆成的扁平 apt 仓库
 #       （Packages / Release / InRelease / 公钥 / install.sh）。
 # 软件源：GitHub Release 本身就是软件源，根地址是
-#         https://github.com/EasySB-Team/EasySB/releases/latest/download
+#         https://github.com/EasySBTeam/EasySB/releases/latest/download
 # Assets: one release tagged `v<VERSION>` carrying a .deb per architecture plus a flat
 # apt repository built from the same packages (Packages / Release / InRelease / keyring /
 # install.sh). The release itself is the apt source, rooted at
-# https://github.com/EasySB-Team/EasySB/releases/latest/download.
+# https://github.com/EasySBTeam/EasySB/releases/latest/download.
 
 on:
   push:
@@ -206,14 +206,14 @@ jobs:
           body: |
             > EasySB v${{ needs.prepare.outputs.version }}
 
-            - 项目地址 / Homepage: https://github.com/EasySB-Team/EasySB
+            - 项目地址 / Homepage: https://github.com/EasySBTeam/EasySB
             - 内核 / Core: sing-box 已编译进面板（来源 https://github.com/SagerNet/sing-box），无需单独安装
               the sing-box core is compiled into the panel, nothing to install separately
 
             一键安装 / One-click（Debian 12+ / Ubuntu 24.04+，自动配好签名软件源并安装）:
 
              ```bash
-            curl -fsSL https://github.com/EasySB-Team/EasySB/releases/latest/download/install.sh | sudo bash
+            curl -fsSL https://github.com/EasySBTeam/EasySB/releases/latest/download/install.sh | sudo bash
             ```
 
             手动安装 / Manual: 下载本页对应架构的 `.deb`，或先用 `apt` 配好软件源：

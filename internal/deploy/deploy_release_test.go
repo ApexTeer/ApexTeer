@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EasySB-Team/EasySB/internal/sbcore"
-	"github.com/EasySB-Team/EasySB/internal/secret"
-	"github.com/EasySB-Team/EasySB/internal/state"
-	"github.com/EasySB-Team/EasySB/internal/user"
+	"github.com/EasySBTeam/EasySB/internal/sbcore"
+	"github.com/EasySBTeam/EasySB/internal/secret"
+	"github.com/EasySBTeam/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
 // TestEveryProtocolIsAcceptedByTheCarriedCore renders a node with the tagged protocols

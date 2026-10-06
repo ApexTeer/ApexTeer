@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // smallScale is Default() shrunk to a few megabytes: every test runs the real measurement

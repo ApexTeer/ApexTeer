@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/sbcore"
+	"github.com/EasySBTeam/EasySB/internal/sbcore"
 )
 
 // The paths the deployment lives at and the units it installs. WorkDir is the one

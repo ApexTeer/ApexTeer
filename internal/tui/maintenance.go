@@ -7,14 +7,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/cert"
-	"github.com/EasySB-Team/EasySB/internal/firewall"
-	"github.com/EasySB-Team/EasySB/internal/i18n"
-	"github.com/EasySB-Team/EasySB/internal/state"
-	"github.com/EasySB-Team/EasySB/internal/subd"
-	"github.com/EasySB-Team/EasySB/internal/subscribe"
-	"github.com/EasySB-Team/EasySB/internal/uninstall"
-	"github.com/EasySB-Team/EasySB/internal/update"
+	"github.com/EasySBTeam/EasySB/internal/cert"
+	"github.com/EasySBTeam/EasySB/internal/firewall"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/subd"
+	"github.com/EasySBTeam/EasySB/internal/subscribe"
+	"github.com/EasySBTeam/EasySB/internal/uninstall"
+	"github.com/EasySBTeam/EasySB/internal/update"
 )
 
 // clientLabel returns the localized menu label for a subscription client.

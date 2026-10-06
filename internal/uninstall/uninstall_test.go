@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EasySB-Team/EasySB/internal/sysinfo"
+	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
 // TestWithin is the guard that decides whether the certificate state directory has

@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/sbcore"
-	"github.com/EasySB-Team/EasySB/internal/state"
-	"github.com/EasySB-Team/EasySB/internal/user"
+	"github.com/EasySBTeam/EasySB/internal/sbcore"
+	"github.com/EasySBTeam/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
 // DefaultInterval is how often the counters are sampled when the node state does

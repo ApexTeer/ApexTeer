@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/filelock"
+	"github.com/EasySBTeam/EasySB/internal/filelock"
 )
 
 // BoardEnv names the environment variable that moves the stored board. It exists for the

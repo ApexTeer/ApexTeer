@@ -8,10 +8,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/i18n"
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
-	"github.com/EasySB-Team/EasySB/internal/toolbox/tools"
-	"github.com/EasySB-Team/EasySB/internal/ui"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/tools"
+	"github.com/EasySBTeam/EasySB/internal/ui"
 )
 
 // toolOutcome is one finished run of a toolbox entry: what it reported, whether it could run

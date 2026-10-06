@@ -6,8 +6,8 @@ import (
 
 	"charm.land/bubbletea/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/i18n"
-	"github.com/EasySB-Team/EasySB/internal/theme"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/theme"
 )
 
 func TestQuotaFieldsRoundTrip(t *testing.T) {

@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/EasySB-Team/EasySB/internal/sysinfo"
+	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
 // enabledPorts joins the listening ports of enabled protocols for the status

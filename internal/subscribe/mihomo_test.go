@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/state"
 )
 
 func TestGenerateMihomo(t *testing.T) {

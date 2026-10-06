@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // apiBatchURL is the free, key-less ip-api batch endpoint. It is deliberately

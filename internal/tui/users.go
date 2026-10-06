@@ -10,13 +10,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/deploy"
-	"github.com/EasySB-Team/EasySB/internal/i18n"
-	"github.com/EasySB-Team/EasySB/internal/secret"
-	"github.com/EasySB-Team/EasySB/internal/state"
-	"github.com/EasySB-Team/EasySB/internal/subscribe"
-	"github.com/EasySB-Team/EasySB/internal/sysinfo"
-	"github.com/EasySB-Team/EasySB/internal/user"
+	"github.com/EasySBTeam/EasySB/internal/deploy"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/secret"
+	"github.com/EasySBTeam/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/subscribe"
+	"github.com/EasySBTeam/EasySB/internal/sysinfo"
+	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
 // v4 replaces the node-wide credential with one account per subscriber, so the

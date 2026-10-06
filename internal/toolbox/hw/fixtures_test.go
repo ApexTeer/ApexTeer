@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // The fixtures below are what the tests read instead of a host: fixture text for /proc

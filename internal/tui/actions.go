@@ -10,18 +10,18 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/config"
-	"github.com/EasySB-Team/EasySB/internal/deploy"
-	"github.com/EasySB-Team/EasySB/internal/firewall"
-	"github.com/EasySB-Team/EasySB/internal/i18n"
-	"github.com/EasySB-Team/EasySB/internal/netutil"
-	"github.com/EasySB-Team/EasySB/internal/sbcore"
-	"github.com/EasySB-Team/EasySB/internal/secret"
-	"github.com/EasySB-Team/EasySB/internal/service"
-	"github.com/EasySB-Team/EasySB/internal/state"
-	"github.com/EasySB-Team/EasySB/internal/subd"
-	"github.com/EasySB-Team/EasySB/internal/sysinfo"
-	"github.com/EasySB-Team/EasySB/internal/user"
+	"github.com/EasySBTeam/EasySB/internal/config"
+	"github.com/EasySBTeam/EasySB/internal/deploy"
+	"github.com/EasySBTeam/EasySB/internal/firewall"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/netutil"
+	"github.com/EasySBTeam/EasySB/internal/sbcore"
+	"github.com/EasySBTeam/EasySB/internal/secret"
+	"github.com/EasySBTeam/EasySB/internal/service"
+	"github.com/EasySBTeam/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/subd"
+	"github.com/EasySBTeam/EasySB/internal/sysinfo"
+	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
 func serviceAction(verb string) actionFunc {

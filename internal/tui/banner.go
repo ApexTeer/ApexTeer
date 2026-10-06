@@ -3,7 +3,7 @@ package tui
 import (
 	"charm.land/lipgloss/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/theme"
+	"github.com/EasySBTeam/EasySB/internal/theme"
 )
 
 // logoGlyphs holds the "ANSI Shadow" block letters used for the EasySB banner.

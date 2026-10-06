@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/state"
 )
 
 func TestHopRange(t *testing.T) {

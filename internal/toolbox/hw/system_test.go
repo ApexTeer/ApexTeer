@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 func TestSystemInfo(t *testing.T) {

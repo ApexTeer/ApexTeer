@@ -9,8 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/secret"
-	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/secret"
+	"github.com/EasySBTeam/EasySB/internal/state"
 )
 
 // editSubPort prompts for the subscription endpoint port. The port must not

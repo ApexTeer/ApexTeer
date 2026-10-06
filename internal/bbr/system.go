@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/download"
+	"github.com/EasySBTeam/EasySB/internal/download"
 )
 
 // sysctlGet reads one kernel parameter (empty when it cannot be read).

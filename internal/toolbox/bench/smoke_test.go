@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // TestDefaultScaleSmoke runs the sizes the panel actually uses. It is skipped unless

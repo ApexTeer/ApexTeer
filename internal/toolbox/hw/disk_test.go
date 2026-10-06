@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // The disk fixtures. Sizes are what /sys/block reports in 512-byte sectors: 83886080

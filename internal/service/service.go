@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/sysinfo"
+	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
 // ProjectHome is referenced in the generated unit for documentation.
-const ProjectHome = "https://github.com/EasySB-Team/EasySB"
+const ProjectHome = "https://github.com/EasySBTeam/EasySB"
 
 // Manager identifies the init system in use.
 type Manager string

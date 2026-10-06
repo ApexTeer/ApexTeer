@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // mountInfoFixture is a trimmed /proc/self/mountinfo: a container root, a tmpfs, two real

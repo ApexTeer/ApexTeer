@@ -15,16 +15,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/i18n"
-	"github.com/EasySB-Team/EasySB/internal/sysinfo"
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
-	"github.com/EasySB-Team/EasySB/internal/toolbox/backtrace"
-	"github.com/EasySB-Team/EasySB/internal/toolbox/bench"
-	"github.com/EasySB-Team/EasySB/internal/toolbox/hw"
-	"github.com/EasySB-Team/EasySB/internal/toolbox/ipquality"
-	"github.com/EasySB-Team/EasySB/internal/toolbox/portcheck"
-	"github.com/EasySB-Team/EasySB/internal/toolbox/speed"
-	"github.com/EasySB-Team/EasySB/internal/unlock"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/sysinfo"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/backtrace"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/bench"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/hw"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/ipquality"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/portcheck"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/speed"
+	"github.com/EasySBTeam/EasySB/internal/unlock"
 )
 
 // Group ids, in the order the menu lists them.

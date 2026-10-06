@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // TestRunMemorySmall runs the real bandwidth measurement on a 4 MiB buffer and checks the

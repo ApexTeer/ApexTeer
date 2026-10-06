@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/EasySB-Team/EasySB/internal/subscribe"
+	"github.com/EasySBTeam/EasySB/internal/subscribe"
 )
 
 // clientFromRequest picks the document format from the client's User-Agent,

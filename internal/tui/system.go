@@ -7,9 +7,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/icons"
-	"github.com/EasySB-Team/EasySB/internal/theme"
-	"github.com/EasySB-Team/EasySB/internal/ui"
+	"github.com/EasySBTeam/EasySB/internal/icons"
+	"github.com/EasySBTeam/EasySB/internal/theme"
+	"github.com/EasySBTeam/EasySB/internal/ui"
 )
 
 // systemModel is the system information screen. It reports what the panel is

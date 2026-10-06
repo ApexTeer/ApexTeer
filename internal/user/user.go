@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/secret"
-	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/secret"
+	"github.com/EasySBTeam/EasySB/internal/state"
 )
 
 // Status is the derived account state. Only the admin switch, the quota and the

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/state"
 )
 
 func storePath(t *testing.T) string {

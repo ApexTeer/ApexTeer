@@ -3,7 +3,7 @@
 #  EasySB 软件源：摆成扁平树、生成索引并签名 / lay out a flat tree, index and sign it
 # ------------------------------------------------------------------------------
 #  源是"平凡"（flat）apt 仓库：所有文件都在同一层，GitHub Release 直接承载它们，
-#  仓库地址就是 https://github.com/EasySB-Team/EasySB/releases/latest/download。
+#  仓库地址就是 https://github.com/EasySBTeam/EasySB/releases/latest/download。
 #
 #    Packages / Packages.gz                        索引，Filename 都是同层文件名
 #    Release / InRelease / Release.gpg             索引元数据与签名
@@ -13,7 +13,7 @@
 #
 #  A flat (trivial) apt repository: every file sits in one directory, which a GitHub
 #  Release can serve as-is, so the source URL is
-#  https://github.com/EasySB-Team/EasySB/releases/latest/download.
+#  https://github.com/EasySBTeam/EasySB/releases/latest/download.
 #
 #  同一个 .deb 服务所有发行版：EasySB 只依赖 ca-certificates，不分发行版打包反而让
 #  各个套件引用同一份字节，升级也简单，因此这里没有 dists/<套件> 分层。

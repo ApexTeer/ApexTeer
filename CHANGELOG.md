@@ -11,7 +11,7 @@
 ### 新增
 
 - **平台收敛为 Debian / Ubuntu，架构收敛为 amd64 / arm64**：只保留 `.deb` 一种包，`release/TAGS`、`VERSION` 与 `Makefile` 的架构表（`ARCHES` / `DEBARCH_MAP`）同步收敛，删除 rpm / pacman / armhf / i386 / riscv64 / s390x 的全部定义。
-- **软件源改为附在 GitHub Release 上的扁平 apt 仓库**：`make repo` 把 `.deb` 摆进 `dist/repo` 一层目录，`packaging/repo/index.sh` 用 `apt-ftparchive` 生成 `Packages(.gz)`、`Release` 并签名出 `InRelease` / `Release.gpg`，`Filename` 剥掉 `./` 前缀以匹配 release 资产的裸文件名；公钥 `easysb-archive-keyring.asc`、`install.sh` 与索引同处一层。发布工作流把 `dist/repo/*` 作为资产附到 release，源地址固定为 `https://github.com/EasySB-Team/EasySB/releases/latest/download`（只保留最新 release，`latest` 始终可用）。一份包服务所有受支持的 Debian / Ubuntu 发行版，因此没有 `dists/<suite>` 分层。
+- **软件源改为附在 GitHub Release 上的扁平 apt 仓库**：`make repo` 把 `.deb` 摆进 `dist/repo` 一层目录，`packaging/repo/index.sh` 用 `apt-ftparchive` 生成 `Packages(.gz)`、`Release` 并签名出 `InRelease` / `Release.gpg`，`Filename` 剥掉 `./` 前缀以匹配 release 资产的裸文件名；公钥 `easysb-archive-keyring.asc`、`install.sh` 与索引同处一层。发布工作流把 `dist/repo/*` 作为资产附到 release，源地址固定为 `https://github.com/EasySBTeam/EasySB/releases/latest/download`（只保留最新 release，`latest` 始终可用）。一份包服务所有受支持的 Debian / Ubuntu 发行版，因此没有 `dists/<suite>` 分层。
 - **UPX 压缩进入打包主流程**：`make pkg-stage` 在暂存树里对二进制做 UPX 压缩，release 资产与软件源因此是同一批字节，二者不再可能有差异。
 - **发布只保留最新一版**：发布工作流在 publish 后裁掉上一个 release 及其 tag，只留最新资产，避免旧的 `.deb` 长期可被 apt 取到。
 

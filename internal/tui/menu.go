@@ -3,9 +3,9 @@ package tui
 import (
 	"charm.land/bubbletea/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/i18n"
-	"github.com/EasySB-Team/EasySB/internal/icons"
-	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/icons"
+	"github.com/EasySBTeam/EasySB/internal/state"
 )
 
 type actionFunc func(a *App) tea.Cmd

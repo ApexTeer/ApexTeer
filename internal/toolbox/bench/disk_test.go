@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // TestRunDiskSmall runs the real disk benchmark on a few megabytes. It checks the four

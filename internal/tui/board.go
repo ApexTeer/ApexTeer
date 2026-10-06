@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/EasySB-Team/EasySB/internal/prefs"
-	"github.com/EasySB-Team/EasySB/internal/toolbox/tools"
+	"github.com/EasySBTeam/EasySB/internal/prefs"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/tools"
 )
 
 // The toolbox 看板 shows the entries the operator picked, and remembers the pick. This is the

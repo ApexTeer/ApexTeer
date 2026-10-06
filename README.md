@@ -48,7 +48,7 @@ EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol de
 - **Core**: sing-box is **compiled into the panel** — `github.com/sagernet/sing-box` is a `go.mod` requirement, so installing EasySB installs the core with it, and the node is `easysb core run`. There is no core binary to download, replace or switch, and the traffic counters come with the build (`with_v2ray_api`, see `release/TAGS`).
 - **Certificates**: Let's Encrypt through `go-acme/lego`, in the panel's own process. No acme.sh, no socat, nothing downloaded to issue a certificate.
 
-- Homepage: https://github.com/EasySB-Team/EasySB
+- Homepage: https://github.com/EasySBTeam/EasySB
 - Core source (compiled in): https://github.com/SagerNet/sing-box
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
@@ -107,7 +107,7 @@ signing key and the apt source, and installs through apt. The source is the GitH
 Release itself and covers Debian 12 and 13 and Ubuntu 24.04, for amd64 and arm64.
 
 ```bash
-curl -fsSL https://github.com/EasySB-Team/EasySB/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/EasySBTeam/EasySB/releases/latest/download/install.sh | sudo bash
 ```
 
 The script also takes `--repo-url URL` to point at a mirror and `--lang E` to switch
@@ -161,7 +161,7 @@ sudo dpkg -i easysb_6.0.0-1_amd64.deb
 ### apt repository
 
 The apt index and the `.deb` files are attached to the GitHub Release, at the fixed
-address `https://github.com/EasySB-Team/EasySB/releases/latest/download`, so one
+address `https://github.com/EasySBTeam/EasySB/releases/latest/download`, so one
 sources entry covers every later version (the workflow keeps only the newest release,
 so `latest` always resolves). The setup is caddy's: the armored key is dearmored to
 `/usr/share/keyrings/easysb-archive-keyring.gpg`, the entry is one line in
@@ -169,13 +169,13 @@ so `latest` always resolves). The setup is caddy's: the armored key is dearmored
 package.
 
 ```bash
-curl -fsSL https://github.com/EasySB-Team/EasySB/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/EasySBTeam/EasySB/releases/latest/download/install.sh | sudo bash
 ```
 
 The entry the installer writes is:
 
 ```text
-deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.com/EasySB-Team/EasySB/releases/latest/download ./
+deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.com/EasySBTeam/EasySB/releases/latest/download ./
 ```
 
 After that `sudo apt upgrade` keeps the panel current. The source is a flat apt
@@ -404,7 +404,7 @@ numbers come from — including why there is no geekbench or fio — is in
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
 | Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make packages-asset`, which read `release/TAGS`) and publishes one release, tagged and named `v<VERSION>`, then prunes the previous one |
 | Packages | `make deb` wraps the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`ARCHES` / `DEBARCH_MAP` and `sb --print-unit`); `pkg-stage` UPX-compresses the binary, so the release asset and the source put down the same bytes |
-| Sources | `make repo` lays the `.deb` files out as a flat apt repository (`Packages`, signed `Release`/`InRelease`, the keyring and `install.sh` all in one directory); `packaging/repo/index.sh` writes the indexes and signs them, and the release workflow attaches that directory to the release at `https://github.com/EasySB-Team/EasySB/releases/latest/download` |
+| Sources | `make repo` lays the `.deb` files out as a flat apt repository (`Packages`, signed `Release`/`InRelease`, the keyring and `install.sh` all in one directory); `packaging/repo/index.sh` writes the indexes and signs them, and the release workflow attaches that directory to the release at `https://github.com/EasySBTeam/EasySB/releases/latest/download` |
 
 ---
 

@@ -7,7 +7,7 @@ Guidance for AI agents working in this repository.
 EasySB is a single static Go binary that deploys and operates a five-protocol
 sing-box server on Linux, with a full-screen bubbletea TUI. It replaces a
 legacy bash implementation. The entry point is `main.go`; the module is
-`github.com/EasySB-Team/EasySB` and requires Go 1.27.1.
+`github.com/EasySBTeam/EasySB` and requires Go 1.27.1.
 
 Read `docs/` first, then the package you need:
 
@@ -53,7 +53,7 @@ make screens    # render every screen and assert the layout (python3)
   packages-asset`), and `pkg-stage` UPX-compresses the binary there, so the release
   asset and the apt source put down the same bytes.
 - The apt source is the GitHub Release itself, a flat ("trivial") apt repository
-  rooted at `https://github.com/EasySB-Team/EasySB/releases/latest/download`: every
+  rooted at `https://github.com/EasySBTeam/EasySB/releases/latest/download`: every
   file sits in one directory (`Packages`, `Release`, `InRelease`, `Release.gpg`, the
   armored key, `install.sh`, and one `.deb` per architecture), so no `dists/` split
   exists. `packaging/repo/index.sh` lays it out and signs it (`make repo`), and the

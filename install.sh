@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  EasySB 安装脚本 / EasySB installer
-#  项目地址 Homepage : https://github.com/EasySB-Team/EasySB
+#  项目地址 Homepage : https://github.com/EasySBTeam/EasySB
 # ==============================================================================
 #  一条命令装完，与 Docker 官方的 get.docker.com 同一条路：装好签名公钥，登记唯一的
 #  apt 源，再交给 apt 安装。软件源是 GitHub Release 上的一棵扁平 apt 仓库，所有发行版
@@ -13,7 +13,7 @@
 #  Debian 12+ and Ubuntu 24.04+ are supported, the same releases the BBR kernels cover.
 #
 #  用法 / Usage:
-#    curl -fsSL https://github.com/EasySB-Team/EasySB/releases/latest/download/install.sh | sudo bash
+#    curl -fsSL https://github.com/EasySBTeam/EasySB/releases/latest/download/install.sh | sudo bash
 #    bash install.sh [--repo-url URL] [--lang C|E]
 # ==============================================================================
 
@@ -23,7 +23,7 @@ set -euo pipefail
 # 一个地址，两处一起改。
 # Public root of the sources: the latest release's asset directory. This and the
 # Makefile's REPO_URL are the same address, so the two defaults move together.
-REPO_URL="${EASYSB_REPO_URL:-https://github.com/EasySB-Team/EasySB/releases/latest/download}"
+REPO_URL="${EASYSB_REPO_URL:-https://github.com/EasySBTeam/EasySB/releases/latest/download}"
 # 签名公钥与源列表的落点，caddy 风格：公钥给 signed-by，源单独一份 .list。
 # Where the key and the source list land, caddy style: the key feeds signed-by and the
 # source is its own .list file.

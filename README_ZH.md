@@ -48,7 +48,7 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 - **内核**：sing-box **已编译进面板本体**——`github.com/sagernet/sing-box` 是 `go.mod` 的直接依赖，装上面板就有内核，节点就是 `easysb core run`；没有任何内核二进制要下载、替换或切换，账号流量统计也随构建一起带上（`with_v2ray_api`，见 `release/TAGS`）。
 - **证书**：用 `go-acme/lego` 在面板自己的进程里申请 Let's Encrypt 证书，不再下载 acme.sh，也不需要 socat。
 
-- 项目地址：https://github.com/EasySB-Team/EasySB
+- 项目地址：https://github.com/EasySBTeam/EasySB
 - 内核来源（已编译进面板）：https://github.com/SagerNet/sing-box
 - 变更记录：[CHANGELOG.md](CHANGELOG.md)
 - 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)
@@ -106,7 +106,7 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 Release 本身，覆盖 Debian 12/13 与 Ubuntu 24.04，架构为 amd64 与 arm64。
 
 ```bash
-curl -fsSL https://github.com/EasySB-Team/EasySB/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/EasySBTeam/EasySB/releases/latest/download/install.sh | sudo bash
 ```
 
 脚本还接受 `--repo-url URL` 指向镜像站，`--lang E` 切换为英文输出。
@@ -160,16 +160,16 @@ sudo dpkg -i easysb_6.0.0-1_amd64.deb
 
 ### apt 软件源
 
-apt 索引与 `.deb` 附在 GitHub Release 上，地址固定为 `https://github.com/EasySB-Team/EasySB/releases/latest/download`，所以一条软件源配置能一直用下去（工作流只保留最新 release，`latest` 因此始终可用）。安装脚本会替你配好，照 caddy 的写法：armored 公钥解甲后落到 `/usr/share/keyrings/easysb-archive-keyring.gpg`，源写进 `/etc/apt/sources.list.d/easysb.list` 的一行里，给出 signed-by，随后由 apt 装上包。
+apt 索引与 `.deb` 附在 GitHub Release 上，地址固定为 `https://github.com/EasySBTeam/EasySB/releases/latest/download`，所以一条软件源配置能一直用下去（工作流只保留最新 release，`latest` 因此始终可用）。安装脚本会替你配好，照 caddy 的写法：armored 公钥解甲后落到 `/usr/share/keyrings/easysb-archive-keyring.gpg`，源写进 `/etc/apt/sources.list.d/easysb.list` 的一行里，给出 signed-by，随后由 apt 装上包。
 
 ```bash
-curl -fsSL https://github.com/EasySB-Team/EasySB/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/EasySBTeam/EasySB/releases/latest/download/install.sh | sudo bash
 ```
 
 脚本写出的那一行：
 
 ```text
-deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.com/EasySB-Team/EasySB/releases/latest/download ./
+deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.com/EasySBTeam/EasySB/releases/latest/download ./
 ```
 
 之后 `sudo apt upgrade` 就能一路把面板升级上去。软件源是一棵扁平 apt 仓库（所有文件同一层，发行版字段为 `./`），因此没有按发行版分的索引。一份包服务全部受支持的发行版：它除 `ca-certificates` 外不依赖任何东西，所以版本串里不带发行版（`6.0.0-1`），升级发行版也不会改变 apt 装的是哪一份。
@@ -371,7 +371,7 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
 | 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make packages-asset`，二者读的都是 `release/TAGS`），tag 与 release 名都是 `v<VERSION>`，发布后裁掉上一个 release |
 | 软件包 | `make deb` 用 fpm 把同一批 `dist/` 二进制与同一棵暂存树打成 `.deb`，架构名与单元文本都只有一处来源（`ARCHES` / `DEBARCH_MAP` 与 `sb --print-unit`）；`pkg-stage` 对二进制做 UPX 压缩，release 资产与软件源因此是同一批字节 |
-| 软件源 | `make repo` 把 `.deb` 摊成扁平 apt 仓库（`Packages`、签名的 `Release`/`InRelease`、公钥与 `install.sh` 同处一层）；`packaging/repo/index.sh` 负责生成索引并签名，发布工作流把该目录作为资产附到 release，地址固定为 `https://github.com/EasySB-Team/EasySB/releases/latest/download` |
+| 软件源 | `make repo` 把 `.deb` 摊成扁平 apt 仓库（`Packages`、签名的 `Release`/`InRelease`、公钥与 `install.sh` 同处一层）；`packaging/repo/index.sh` 负责生成索引并签名，发布工作流把该目录作为资产附到 release，地址固定为 `https://github.com/EasySBTeam/EasySB/releases/latest/download` |
 
 ---
 

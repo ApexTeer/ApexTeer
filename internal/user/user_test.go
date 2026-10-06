@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/state"
 )
 
 var testNow = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)

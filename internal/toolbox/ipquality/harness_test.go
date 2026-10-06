@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // testIP is the address every canned answer is about: an RFC 5737 documentation address,

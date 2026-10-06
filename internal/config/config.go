@@ -9,8 +9,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/EasySB-Team/EasySB/internal/state"
-	"github.com/EasySB-Team/EasySB/internal/user"
+	"github.com/EasySBTeam/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
 // StatsListen is the loopback endpoint of the core's stats service. It is not

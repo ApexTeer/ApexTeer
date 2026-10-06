@@ -13,13 +13,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/EasySB-Team/EasySB/internal/cert"
-	"github.com/EasySB-Team/EasySB/internal/config"
-	"github.com/EasySB-Team/EasySB/internal/sbcore"
-	"github.com/EasySB-Team/EasySB/internal/service"
-	"github.com/EasySB-Team/EasySB/internal/state"
-	"github.com/EasySB-Team/EasySB/internal/sysinfo"
-	"github.com/EasySB-Team/EasySB/internal/user"
+	"github.com/EasySBTeam/EasySB/internal/cert"
+	"github.com/EasySBTeam/EasySB/internal/config"
+	"github.com/EasySBTeam/EasySB/internal/sbcore"
+	"github.com/EasySBTeam/EasySB/internal/service"
+	"github.com/EasySBTeam/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/sysinfo"
+	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
 // ErrRejected is returned when the core refuses the generated configuration.
