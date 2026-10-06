@@ -52,13 +52,14 @@ make screens    # render every screen and assert the layout (python3)
   from one staged tree (`make pkg-stage`, driven per architecture by `make
   packages-asset`), and `pkg-stage` UPX-compresses the binary there, so the release
   asset and the apt source put down the same bytes.
-- The apt source is a plain apt tree published by GitHub Pages at
-  `https://sb.kejizero.xyz`: one shared `pool/main/e/easysb/` and one
-  `dists/<suite>/main/binary-<arch>/` per suite, keyed on `APT_SUITES` in the
-  Makefile (`bookworm`, `trixie`, `noble`). `packaging/repo/index.sh` lays it out
-  and signs it (`make repo`), and the workflow deploys it. `install.sh` maps a
-  machine's `/etc/os-release` to one of the same three suites, so the suite list
-  and the install script must stay in step.
+- The apt source is the GitHub Release itself, a flat ("trivial") apt repository
+  rooted at `https://github.com/MinimaxFlora/EasySB/releases/latest/download`: every
+  file sits in one directory (`Packages`, `Release`, `InRelease`, `Release.gpg`, the
+  armored key, `install.sh`, and one `.deb` per architecture), so no `dists/` split
+  exists. `packaging/repo/index.sh` lays it out and signs it (`make repo`), and the
+  release job attaches the tree to the release. The single `.deb` serves every
+  distribution; `install.sh` still maps a machine's `/etc/os-release` to a supported
+  release, purely to reject one we do not ship for.
 - Keep `/etc/sing-box/easysb.conf` compatible with the legacy shell tool. Add
   keys, do not rename or repurpose them. The one exception is a key that
   described a component which no longer exists (v4 dropped `SUB_PORT` and

@@ -6,12 +6,12 @@
 
 ## [Unreleased]
 
-本版把发布范围收敛为 Debian / Ubuntu，发布通道整体改由 GitHub Release 与 GitHub Pages 承载。
+本版把发布范围收敛为 Debian / Ubuntu，发布通道整体改由 GitHub Release 承载。
 
 ### 新增
 
 - **平台收敛为 Debian / Ubuntu，架构收敛为 amd64 / arm64**：只保留 `.deb` 一种包，`release/TAGS`、`VERSION` 与 `Makefile` 的架构表（`ARCHES` / `DEBARCH_MAP`）同步收敛，删除 rpm / pacman / armhf / i386 / riscv64 / s390x 的全部定义。
-- **软件源改由 GitHub Pages 承载**：`make repo` 把 `.deb` 摊成标准 apt 树（`pool/main/e/easysb/` 一份共享，每个套件一份 `dists/<suite>/main/binary-<arch>/`），`packaging/repo/index.sh` 用 `apt-ftparchive` 生成 `Packages(.gz)`、`Release` 并签名出 `InRelease` / `Release.gpg`，公钥发布为源根的 `easysb-archive-keyring.asc`；发布工作流用 `actions/deploy-pages` 把这棵树发布到自定义域 `https://sb.kejizero.xyz`（`CNAME` + `.nojekyll`）。三个套件 `bookworm` / `trixie` / `noble` 由 Makefile 的 `APT_SUITES` 单点定义。
+- **软件源改为附在 GitHub Release 上的扁平 apt 仓库**：`make repo` 把 `.deb` 摆进 `dist/repo` 一层目录，`packaging/repo/index.sh` 用 `apt-ftparchive` 生成 `Packages(.gz)`、`Release` 并签名出 `InRelease` / `Release.gpg`，`Filename` 剥掉 `./` 前缀以匹配 release 资产的裸文件名；公钥 `easysb-archive-keyring.asc`、`install.sh` 与索引同处一层。发布工作流把 `dist/repo/*` 作为资产附到 release，源地址固定为 `https://github.com/MinimaxFlora/EasySB/releases/latest/download`（只保留最新 release，`latest` 始终可用）。一份包服务所有受支持的 Debian / Ubuntu 发行版，因此没有 `dists/<suite>` 分层。
 - **UPX 压缩进入打包主流程**：`make pkg-stage` 在暂存树里对二进制做 UPX 压缩，release 资产与软件源因此是同一批字节，二者不再可能有差异。
 - **发布只保留最新一版**：发布工作流在 publish 后裁掉上一个 release 及其 tag，只留最新资产，避免旧的 `.deb` 长期可被 apt 取到。
 
@@ -66,7 +66,7 @@
 
 ### 移除
 
-- 删除发布服务器与服务器置备链路：`.github/workflows/server-setup.yml`、`packaging/server/`（`provision.sh`、站点首页与 favicon）以及发布工作流里的 `rsync` / FTP / `SERVER_*` 秘密；源由 GitHub Pages 直接发布，不再需要一台常驻主机。
+- 删除发布服务器与服务器置备链路：`.github/workflows/server-setup.yml`、`packaging/server/`（`provision.sh`、站点首页与 favicon）以及发布工作流里的 `rsync` / FTP / `SERVER_*` 秘密；源由 GitHub Release 直接承载，不再需要一台常驻主机。
 - 删除 rpm / pacman 打包与源：`packaging/rpm/`、`packaging/repo/packages.sh`（`make repo-packages`）、`make rpm` / `make pacman` 目标，以及工作流里对应的签名与 repomd 步骤。
 
 - 删除已无用的 sing-box 重编译链路：`.github/workflows/singbox-v2ray-api.yml`（含 `prune` job）、`scripts/build_singbox_v2ray_api.sh`、`scripts/verify_singbox_arches.sh`、`scripts/prune_release_assets.py`、`scripts/plan_check.py`，以及只验证已删除内核管理的 `scripts/vps/verify-kernel-*.sh` / `verify-source-switch.sh`。内核已编译进面板，这些脚本维护的 `singbox-stable` / `singbox-alpha` 通道不再被任何代码消费。
@@ -74,9 +74,9 @@
 ### 变更
 
 - **自更新改走 apt**：`internal/update.Apply` 不再下载 tar.gz 自替换运行中的二进制，而是用 `dpkg-query` 比对已安装版本、经 `apt-get install` 升级 `easysb` 包并流式回显日志；面板「更新版本」入口与预览资产名（`easysb_<版本>-1_<架构>.deb`）随之更新。
-- **`install.sh` 收敛为极简 apt 单路径**：把 `/etc/os-release` 映射到 `bookworm` / `trixie` / `noble` 之一，从 `$REPO_URL/easysb-archive-keyring.asc` 取公钥解甲后落到 `/usr/share/keyrings/easysb-archive-keyring.gpg`，写一行 `deb [signed-by=…] $REPO_URL <套件> main` 到 `/etc/apt/sources.list.d/easysb.list`，再 `apt update && apt install easysb`；删除 `--method` / `--from-source` / `--binary` 与发布压缩包兜底，只留 `--repo-url` 与 `--lang`。
+- **`install.sh` 收敛为极简 apt 单路径**：核对 `/etc/os-release` 是否在受支持的 Debian / Ubuntu 发行版内（不再选择套件，仅拒绝不支持的发行版），从 `$REPO_URL/easysb-archive-keyring.asc` 取公钥解甲后落到 `/usr/share/keyrings/easysb-archive-keyring.gpg`，写一行 `deb [signed-by=…] $REPO_URL ./` 到 `/etc/apt/sources.list.d/easysb.list`，再 `apt update && apt install easysb`；删除 `--method` / `--from-source` / `--binary` 与发布压缩包兜底，只留 `--repo-url` 与 `--lang`。
 - **安装路径由 `/usr/local/bin` 改为 `/usr/bin`**：`.deb` 与自更新都落到 `/usr/bin/easysb`（快捷指令 `/usr/bin/sb`），`internal/sysinfo` 的面板路径探测同步收敛。
-- 文档（`README.md` / `README_ZH.md` / `docs/*.md` / `AGENTS.md`）同步改写为 apt + GitHub Pages 的发布模型，删除 rpm / pacman / 发布服务器 / `SERVER_*` 秘密的说明。
+- 文档（`README.md` / `README_ZH.md` / `docs/*.md` / `AGENTS.md`）同步改写为 apt + GitHub Release 的发布模型，删除 rpm / pacman / 发布服务器 / `SERVER_*` 秘密的说明。
 
 - **版本号收敛到唯一来源**：`VERSION` 是唯一写下版本号的地方，现在用 `go:embed`
   在编译期读进二进制。删除 `main.go` 的 `version = "5.0.0"` 默认值，以及发布工作流

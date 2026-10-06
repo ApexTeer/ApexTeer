@@ -84,23 +84,17 @@ GPG_PASSPHRASE_FILE ?=
 # so a passphrase is read from a file.
 GPG_BATCH      := --batch --yes --pinentry-mode loopback
 
-# 软件源目录树 / the repository tree: a plain apt tree with one suite directory per
-# distribution release and the pool shared at the root.
+# 软件源目录树 / the repository tree: a flat apt repository, every file in one directory.
 REPO_DIR       ?= $(DIST)/repo
-# 源对外发布的根地址：install.sh 的默认 REPO_URL 必须与它一致，两处一起改。
-# Public root URL of the sources; install.sh's default REPO_URL has to match, so the two
-# move together.
-REPO_URL       ?= https://sb.kejizero.xyz
+# 源对外发布的根地址：GitHub Release 的最新资产目录，install.sh 的默认 REPO_URL 必须与
+# 它一致，两处一起改。
+# Public root URL of the sources: the latest release's asset directory. install.sh's
+# default REPO_URL has to match, so the two move together.
+REPO_URL       ?= https://github.com/MinimaxFlora/EasySB/releases/latest/download
 
 # Debian 架构名 / Debian architecture names.
 DEBARCH_amd64 := amd64
 DEBARCH_arm64 := arm64
-
-# 软件源的套件 / the apt suites the sources carry. These are the Debian and Ubuntu
-# releases EasySB supports (BBR requires Debian 12+ and Ubuntu 24.04+), and every one of
-# them ships both architectures. install.sh's repo_coords maps an OS release to one of
-# these names, so the two lists move together.
-APT_SUITES := bookworm trixie noble
 
 # 脚本按资产名取 Debian 架构名，映射仍只有 DEBARCH_* 一处定义。
 # The scripts look Debian's architecture name up by asset; the mapping still lives only
@@ -252,26 +246,27 @@ packages-asset: ## 打包单个架构的 .deb 到 dist/（ASSET=…）
 
 # --- 软件源 / Repository ------------------------------------------------------
 
-# 源根目录 dist/repo 是一棵标准 apt 树，GitHub Pages 原样发布在站点根：pool 只有一份
-# （同一份 .deb 被所有套件共用），按发行版分的只有 dists/<套件>。签名公钥与 install.sh
-# 放在站点根，对应 caddy 风格的落点 /usr/share/keyrings/easysb-archive-keyring.gpg。
-# The repository root dist/repo is a plain apt tree published verbatim at the Pages site
-# root: one shared pool (the same .deb serves every suite) and per-release dists/<suite>.
-# The signing key and install.sh sit at the site root, the caddy-style drop point for
+# 源根目录 dist/repo 是一棵扁平 apt 仓库，所有文件在同一层，由 GitHub Release 原样承载：
+# 同一份 .deb 被所有发行版共用，因此没有 dists/<套件> 分层。签名公钥、install.sh 与索引
+# 都在这一层，对应 caddy 风格的落点 /usr/share/keyrings/easysb-archive-keyring.gpg。
+# The repository root dist/repo is a flat apt repository, every file in one directory,
+# served verbatim by a GitHub Release: the same .deb serves every distribution, so there
+# is no per-suite dists/ split. The signing key, install.sh and the indexes all sit in
+# that one directory, the caddy-style drop point for
 # /usr/share/keyrings/easysb-archive-keyring.gpg.
 #
-# 摆放、索引与签名都在 packaging/repo/index.sh 里；这个目标只把 Makefile 里那份套件与
-# 架构表传进去，表仍然只有这一处定义。
+# 摆放、索引与签名都在 packaging/repo/index.sh 里；这个目标只把 Makefile 里那份架构表
+# 传进去，表仍然只有这一处定义。
 # Laying out, indexing and signing live in packaging/repo/index.sh; this target only hands
-# it the suite and architecture tables, which are still defined in exactly one place.
+# it the architecture table, which is still defined in exactly one place.
 apt-index: ## 生成 apt 源到 dist/repo（设置 GPG_KEY_ID 时签名）
 	@DIST='$(DIST)' REPO_DIR='$(REPO_DIR)' \
 	 PKG_NAME='$(PKG_NAME)' VERSION='$(VERSION)' PKG_DESC='$(PKG_DESC)' \
-	 APT_SUITES='$(APT_SUITES)' DEBARCH_MAP='$(DEBARCH_MAP)' \
+	 DEBARCH_MAP='$(DEBARCH_MAP)' \
 	 GPG_KEY_ID='$(GPG_KEY_ID)' GPG_PASSPHRASE_FILE='$(GPG_PASSPHRASE_FILE)' \
 	 bash packaging/repo/index.sh
 
-repo: apt-index ## 组装完整软件源到 dist/repo（pool / dists / install.sh / 公钥）
+repo: apt-index ## 组装完整软件源到 dist/repo（Packages / Release / install.sh / 公钥）
 
 install: deb ## 安装刚构建的本机 .deb（需要 root，仅 Debian / Ubuntu）
 	@sudo apt-get install -y "$(DIST)/$(PKG_NAME)_$(VERSION)-1_$(shell dpkg --print-architecture).deb"

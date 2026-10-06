@@ -41,17 +41,17 @@
   where `<arch>` is Debian's spelling (`amd64`, `arm64`) and `-1` is the package's
   own revision. `dist/easysb-linux-<asset>` is an intermediate and is never
   published by itself.
-- The apt source is published by GitHub Pages, not on a second release tag, so the
-  one-command `install.sh` has one fixed address (`https://sb.kejizero.xyz`) to
-  point at. The root carries `install.sh` itself, so the one command (`curl -fsSL
-  https://sb.kejizero.xyz/install.sh | sudo bash`) needs no second address. The tree
-  is a plain apt tree: one shared `pool/main/e/easysb/` and one
-  `dists/<suite>/main/binary-<arch>/` per suite, with `Packages` and the signed
-  `Release` / `InRelease`; the armored public key is `easysb-archive-keyring.asc` at
-  the root. `make repo` builds and signs it (`apt-ftparchive`) and the workflow
-  deploys it with `actions/deploy-pages`. The suites are Debian and Ubuntu's current
-  releases, `bookworm`, `trixie` and `noble`, and every one of them ships both
-  architectures; `install.sh` and the Makefile's `APT_SUITES` move together.
+- The apt source is the GitHub Release itself, so the one-command `install.sh` has one
+  fixed address (`https://github.com/MinimaxFlora/EasySB/releases/latest/download`) to
+  point at. That directory carries `install.sh` itself, so the one command (`curl
+  -fsSL https://github.com/MinimaxFlora/EasySB/releases/latest/download/install.sh |
+  sudo bash`) needs no second address. It is a flat ("trivial") apt repository: every
+  file sits in one directory (`Packages` and the signed `Release` / `InRelease` /
+  `Release.gpg`, the armored key `easysb-archive-keyring.asc`, `install.sh`, and one
+  `.deb` per architecture), so there is no `dists/<suite>` split. `make repo` builds and
+  signs it (`apt-ftparchive`) and the release job attaches it to the release. One
+  package serves every distribution; `install.sh` still maps a machine to a supported
+  Debian or Ubuntu release only to reject one we do not ship for.
 
 ## Commits
 
@@ -88,12 +88,12 @@
   release asset and the apt source carry the same compressed bytes. The packaged units
   come from `easysb --print-unit`; do not hand-write a unit under `packaging/`.
 - `make repo` (`packaging/repo/index.sh`, via `apt-ftparchive`) lays the `.deb` files
-  out as the apt tree and signs it. The workflow deploys `dist/repo` to GitHub Pages
-  with `actions/deploy-pages`, adding `.nojekyll` and the `CNAME` that pins
-  `sb.kejizero.xyz`; `packaging/repo/` is the only place that decides the layout.
+  out as a flat apt repository and signs it. The release job attaches `dist/repo/*` to
+  the release, which serves as the source root; `packaging/repo/` is the only place
+  that decides the layout.
 - The apt index is signed with one passphrase-protected key: the secrets are
   `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, and signing reads the passphrase from a 0600
-  file so it never reaches a process list. The pages job requires `GPG_PRIVATE_KEY`
+  file so it never reaches a process list. The release job requires `GPG_PRIVATE_KEY`
   and fails without it, because an unsigned source is not something `install.sh`
   should ever point a machine at.
 - After a force push, trigger the workflow with a normal push; force pushes do

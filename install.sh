@@ -4,23 +4,26 @@
 #  项目地址 Homepage : https://github.com/MinimaxFlora/EasySB
 # ==============================================================================
 #  一条命令装完，与 Docker 官方的 get.docker.com 同一条路：装好签名公钥，登记唯一的
-#  apt 源，再交给 apt 安装。只支持 Debian 12+ 与 Ubuntu 24.04+（EasySB 的 BBR 内核
-#  也只发这两个发行版）。
+#  apt 源，再交给 apt 安装。软件源是 GitHub Release 上的一棵扁平 apt 仓库，所有发行版
+#  共用同一份包。只支持 Debian 12+ 与 Ubuntu 24.04+（EasySB 的 BBR 内核也只发这两个
+#  发行版）。
 #  One command does the whole job, the way get.docker.com does it: install the signing
-#  key, register the single apt source and let apt install. Only Debian 12+ and Ubuntu
-#  24.04+ are supported, the same releases the BBR kernels cover.
+#  key, register the single apt source and let apt install. The source is a flat apt
+#  repository hosted on the GitHub Release, one package shared by every distribution. Only
+#  Debian 12+ and Ubuntu 24.04+ are supported, the same releases the BBR kernels cover.
 #
 #  用法 / Usage:
-#    curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
+#    curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/latest/download/install.sh | sudo bash
 #    bash install.sh [--repo-url URL] [--lang C|E]
 # ==============================================================================
 
 set -euo pipefail
 
-# 软件源根地址：install.sh 与 Makefile 的 REPO_URL 是同一个地址，两处一起改。
-# Public root of the sources: this and the Makefile's REPO_URL are the same address, so
-# the two defaults move together.
-REPO_URL="${EASYSB_REPO_URL:-https://sb.kejizero.xyz}"
+# 软件源根地址：GitHub Release 的最新资产目录。install.sh 与 Makefile 的 REPO_URL 是同
+# 一个地址，两处一起改。
+# Public root of the sources: the latest release's asset directory. This and the
+# Makefile's REPO_URL are the same address, so the two defaults move together.
+REPO_URL="${EASYSB_REPO_URL:-https://github.com/MinimaxFlora/EasySB/releases/latest/download}"
 # 签名公钥与源列表的落点，caddy 风格：公钥给 signed-by，源单独一份 .list。
 # Where the key and the source list land, caddy style: the key feeds signed-by and the
 # source is its own .list file.
@@ -126,9 +129,14 @@ main() {
   rm -f "$tmpkey" "$tmpkey.gpg"
   ok "$KEYRING"
 
+  # 扁平 apt 仓库没有 dists/<套件> 分层，发行版字段固定为 ./，所有发行版共用同一份索引
+  # 与同一份 .deb；detect_suite 只用于提前拒绝没有包的发行版。
+  # A flat apt repository has no dists/<suite> split, so the distribution field is ./ and
+  # every distribution shares one index and one .deb; detect_suite only rejects a
+  # distribution we do not ship for.
   log "$(say '登记软件源' 'Registering the package source')"
   as_root tee "$SOURCES" >/dev/null <<EOF
-deb [signed-by=${KEYRING}] ${REPO_URL} ${suite} main
+deb [signed-by=${KEYRING}] ${REPO_URL} ./
 EOF
   ok "$SOURCES"
 

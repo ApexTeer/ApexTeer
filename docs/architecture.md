@@ -71,7 +71,7 @@ compiled twice and no arch list is repeated. The `.deb` comes from one staged tr
 | `sing-box.service` | `easysb --print-unit node --unit-exec /usr/bin/easysb`, the same `internal/service.UnitBody` the panel writes at runtime |
 | `easysb.service` | `easysb --print-unit sub --unit-exec /usr/bin/easysb`, the same `internal/subd.UnitBody` |
 | Package architecture | `DEBARCH_MAP` in the `Makefile`, keyed on the asset name (`amd64`, `arm64`), so one table drives packaging and layout |
-| apt source | `make repo` runs `packaging/repo/index.sh`: the `.deb` files go into one shared `pool/main/e/easysb/`, and each suite in `APT_SUITES` (`bookworm`, `trixie`, `noble`) gets `dists/<suite>/main/binary-<arch>/Packages` plus a signed `Release` / `InRelease`. The armored public key and `install.sh` sit at the site root |
+| apt source | `make repo` runs `packaging/repo/index.sh`: it writes one flat directory with `Packages` / `Packages.gz`, a signed `Release` / `InRelease` / `Release.gpg`, the armored key `easysb-archive-keyring.asc`, `install.sh` and one `.deb` per architecture. The release job attaches those files to the release, which serves as the source root |
 
 `dist/easysb-linux-<asset>` is only an intermediate: `pkg-stage` copies it into the
 staged tree and `deb-asset` builds the `.deb` there, and neither the release nor the
@@ -83,13 +83,14 @@ configured it. Because the packaged unit lives in `/usr/lib/systemd/system` and 
 panel writes its own to `/etc/systemd/system`, the panel's copy wins while it exists
 and the packaged one is the fallback — the two never fight over one path.
 
-The fixed URL apt needs lives on GitHub Pages (`sb.kejizero.xyz`), not on a second
-release tag: the release workflow builds `dist/repo`, signs it with the release key
-and deploys it with `actions/deploy-pages`, so the one-command `install.sh` can write a
-source entry that never changes. The site root carries `install.sh`, the armored key
-`easysb-archive-keyring.asc`, the shared `pool/` and the per-suite `dists/`; a `CNAME`
-file pins the custom domain and `.nojekyll` keeps Pages from running Jekyll over the
-tree.
+The fixed URL apt needs is the GitHub Release itself: the release workflow builds
+`dist/repo` as a flat ("trivial") apt repository, signs it with the release key and
+attaches every file to the release, so the one-command `install.sh` can write a source
+entry (`https://github.com/MinimaxFlora/EasySB/releases/latest/download`) that never
+changes. That one directory carries `install.sh`, the armored key
+`easysb-archive-keyring.asc`, `Packages`/`Packages.gz`, the signed
+`Release`/`InRelease`/`Release.gpg` and one `.deb` per architecture; a single package
+serves every distribution, so there is no `dists/` split and no `pool/`.
 
 ## Packages
 

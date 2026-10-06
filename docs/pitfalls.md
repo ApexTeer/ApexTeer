@@ -24,28 +24,22 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   then deletes every other release and its tag (`gh release delete
   --cleanup-tag`). The Release page is expected to show exactly one version; a
   lingering older release means the prune step did not run.
-- **Pages needs `.nojekyll` and `CNAME`.** GitHub Pages runs Jekyll by default,
-  which can skip paths in an apt tree, and a project site without a `CNAME` file
-  is served under `github.io` instead of `sb.kejizero.xyz` - the address
-  `install.sh` and the sources are pinned to. The pages job writes both into
-  `dist/repo` before the upload.
 - **The `Release` file must be generated outside its own tree.** `apt-ftparchive
-  release .` checksums every file under the suite directory, so a `Release` that
-  already exists there would be listed among its own sums. `index.sh` writes it to
-  a temp file first and moves it in afterwards.
-- **The pool is shared, so `Filename` is relative to the site root.** Both
-  architectures and every suite read the same `pool/main/e/easysb/`; `Packages`
-  therefore lists paths like `pool/main/e/easysb/easysb_6.0.0-1_amd64.deb`, not
-  paths under the suite. `index.sh` generates it from a temp tree that mirrors the
-  pool path so the field stays site-root relative.
-- **The apt source must be signed.** The pages job fails when `GPG_PRIVATE_KEY` is
-  absent rather than publishing an unsigned index: `install.sh` writes a
+  release .` checksums every file under the directory, so a `Release` that already
+  exists there would be listed among its own sums. `index.sh` writes it to a temp
+  file outside `dist/repo` first and moves it in afterwards.
+- **The repository is flat, so `Filename` must be a bare name.** The source is a
+  GitHub Release whose assets have no directory structure, so `Packages` lists
+  `Filename: easysb_6.0.0-1_amd64.deb`, with no `./` and no `pool/` prefix.
+  `index.sh` strips the `./` that `apt-ftparchive packages .` writes, so apt builds
+  the download URL as `<release root>/<name>`.
+- **The apt source must be signed.** The release job fails when `GPG_PRIVATE_KEY` is
+  absent rather than attaching an unsigned index: `install.sh` writes a
   `signed-by=` entry, and apt rejects a source whose index does not carry the key's
   signature.
-- **The suite list has two homes and they must not drift.** `APT_SUITES` in the
-  Makefile decides which `dists/<suite>` directories exist; `install.sh` maps
-  `/etc/os-release` onto one of the same names. Adding a distribution release
-  means editing both, or a machine will be handed a source that is not published.
+- **A machine maps to a supported release, but one package serves them all.** There
+  is no suite directory any more, so `install.sh`'s release check only rejects a
+  distribution we do not ship for; it no longer selects an index.
 
 ## Version and identity
 
