@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/user"
+	"github.com/EasySBTeam/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
 //go:embed tun-fakeip.json

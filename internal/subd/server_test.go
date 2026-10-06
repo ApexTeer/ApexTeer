@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/cert"
-	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/user"
+	"github.com/EasySBTeam/EasySB/internal/cert"
+	"github.com/EasySBTeam/EasySB/internal/state"
+	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
 // endpointNow is the clock every endpoint test runs on.

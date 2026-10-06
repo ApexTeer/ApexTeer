@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // Paths the disk table reads.

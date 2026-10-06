@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/EasySBTeam/EasySB/internal/theme"
 )
 
 func testStyle() theme.Style {

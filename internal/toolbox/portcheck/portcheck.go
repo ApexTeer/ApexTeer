@@ -38,7 +38,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // DefaultIPURL is the service that answers with the address it saw. It is IPv4

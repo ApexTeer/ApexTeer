@@ -48,7 +48,7 @@ EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol de
 - **Core**: sing-box is **compiled into the panel** — `github.com/sagernet/sing-box` is a `go.mod` requirement, so installing EasySB installs the core with it, and the node is `easysb core run`. There is no core binary to download, replace or switch, and the traffic counters come with the build (`with_v2ray_api`, see `release/TAGS`).
 - **Certificates**: Let's Encrypt through `go-acme/lego`, in the panel's own process. No acme.sh, no socat, nothing downloaded to issue a certificate.
 
-- Homepage: https://github.com/MinimaxFlora/EasySB
+- Homepage: https://github.com/EasySBTeam/EasySB
 - Core source (compiled in): https://github.com/SagerNet/sing-box
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
@@ -101,13 +101,13 @@ Ports are prompted one by one: Enter takes the default, `r` picks a random port,
 
 ## Quick Start
 
-One command, the same shape as Docker's `get.docker.com`: the script maps the
-machine's `/etc/os-release` to one of the three published suites, installs the
-signing key and the apt source, and installs through apt. The sources cover Debian 12
-and 13 and Ubuntu 24.04, for amd64 and arm64.
+One command, the same shape as Docker's `get.docker.com`: the script checks the
+machine's `/etc/os-release` against the releases EasySB ships for, installs the
+signing key and the apt source, and installs through apt. The source is the GitHub
+Release itself and covers Debian 12 and 13 and Ubuntu 24.04, for amd64 and arm64.
 
 ```bash
-curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
+curl -fsSL https://github.com/EasySBTeam/EasySB/releases/latest/download/install.sh | sudo bash
 ```
 
 The script also takes `--repo-url URL` to point at a mirror and `--lang E` to switch
@@ -160,34 +160,36 @@ sudo dpkg -i easysb_6.0.0-1_amd64.deb
 
 ### apt repository
 
-The apt index and the `.deb` files are served from `https://sb.kejizero.xyz`, a fixed
-address, so one sources entry covers every later version. The setup is caddy's: the
-armored key is dearmored to `/usr/share/keyrings/easysb-archive-keyring.gpg`, the entry
-is one line in `/etc/apt/sources.list.d/easysb.list` carrying `signed-by`, and apt
-installs the package.
+The apt index and the `.deb` files are attached to the GitHub Release, at the fixed
+address `https://github.com/EasySBTeam/EasySB/releases/latest/download`, so one
+sources entry covers every later version (the workflow keeps only the newest release,
+so `latest` always resolves). The setup is caddy's: the armored key is dearmored to
+`/usr/share/keyrings/easysb-archive-keyring.gpg`, the entry is one line in
+`/etc/apt/sources.list.d/easysb.list` carrying `signed-by`, and apt installs the
+package.
 
 ```bash
-curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
+curl -fsSL https://github.com/EasySBTeam/EasySB/releases/latest/download/install.sh | sudo bash
 ```
 
 The entry the installer writes is:
 
 ```text
-deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://sb.kejizero.xyz bookworm main
+deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.com/EasySBTeam/EasySB/releases/latest/download ./
 ```
 
-After that `sudo apt upgrade` keeps the panel current. The three suites are `bookworm`
-(Debian 12), `trixie` (Debian 13) and `noble` (Ubuntu 24.04). One package serves all
-of them: it depends on nothing but `ca-certificates`, so the version string carries no
-distribution (`6.0.0-1`) and upgrading the distribution does not change which package
-apt pulls.
+After that `sudo apt upgrade` keeps the panel current. The source is a flat apt
+repository (every file in one directory, the `./` distribution), so there is no
+per-distribution index. One package serves every supported release: it depends on
+nothing but `ca-certificates`, so the version string carries no distribution
+(`6.0.0-1`) and upgrading the distribution does not change which package apt pulls.
 
 The index is signed with one key. Add the armored private key as the repository secret
 `GPG_PRIVATE_KEY` and its passphrase as `GPG_PASSPHRASE`; the release workflow imports
 it and signs apt's `Release` (`InRelease` and `Release.gpg`). The passphrase is read
-from a file, so it never reaches a process list. The public key is published as
-`easysb-archive-keyring.asc` at the source root. A run without `GPG_PRIVATE_KEY` fails
-rather than publishing an unsigned index.
+from a file, so it never reaches a process list. The public key is attached as
+`easysb-archive-keyring.asc` alongside the index. A run without `GPG_PRIVATE_KEY` fails
+rather than attaching an unsigned index.
 
 ---
 
@@ -202,10 +204,10 @@ architecture, `easysb_<version>-1_<arch>.deb`:
 | `easysb_6.0.0-1_arm64.deb` | `arm64` |
 
 Only the newest release is kept; the workflow prunes the previous one and its tag
-after every publish. The same `.deb` files are laid out as a signed apt tree and
-published by GitHub Pages at `https://sb.kejizero.xyz`, so the one-command installer
-and `apt upgrade` always have a fixed address to work from. Two repository secrets
-drive it: `GPG_PRIVATE_KEY` and, when the key has one, `GPG_PASSPHRASE`.
+after every publish. Besides the `.deb` files, the release carries a signed, flat apt
+repository built from the same packages, so the one-command installer and `apt
+upgrade` always have a fixed address to work from. Two repository secrets drive it:
+`GPG_PRIVATE_KEY` and, when the key has one, `GPG_PASSPHRASE`.
 
 ---
 
@@ -402,7 +404,7 @@ numbers come from — including why there is no geekbench or fio — is in
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
 | Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make packages-asset`, which read `release/TAGS`) and publishes one release, tagged and named `v<VERSION>`, then prunes the previous one |
 | Packages | `make deb` wraps the same `dist/` binaries and the same staged tree with fpm, reading the arch names and unit text from one place (`ARCHES` / `DEBARCH_MAP` and `sb --print-unit`); `pkg-stage` UPX-compresses the binary, so the release asset and the source put down the same bytes |
-| Sources | `make repo` lays the `.deb` files out as a plain apt tree (`pool/main/e/easysb/` plus one `dists/<suite>/` per suite); `packaging/repo/index.sh` writes the indexes and signs them, and the release workflow deploys the tree through GitHub Pages at `https://sb.kejizero.xyz` |
+| Sources | `make repo` lays the `.deb` files out as a flat apt repository (`Packages`, signed `Release`/`InRelease`, the keyring and `install.sh` all in one directory); `packaging/repo/index.sh` writes the indexes and signs them, and the release workflow attaches that directory to the release at `https://github.com/EasySBTeam/EasySB/releases/latest/download` |
 
 ---
 
@@ -417,7 +419,7 @@ make
 make check
 make dist
 
-# Package the .deb files, then lay out the signed apt tree GitHub Pages serves
+# Package the .deb files, then lay out the signed flat apt repository the release serves
 make deb
 make repo
 

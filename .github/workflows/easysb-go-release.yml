@@ -1,13 +1,15 @@
 name: Build EasySB Go release
 
 # 源码：根目录 Go module（main.go、internal/**）
-# 产物：以 tag `v<VERSION>` 发布的一套资产 —— 每个架构一个 .deb
-#       easysb_<版本>-1_<架构>.deb
-# 软件源：同一批 .deb 摆成一棵标准 apt 树（pool / dists），GPG 签名后由 GitHub Pages
-#         原样发布在站点根，一键安装在 https://sb.kejizero.xyz/install.sh。
-# Assets: one release tagged `v<VERSION>` carrying a .deb per architecture. The same
-# packages are laid out as a plain apt tree, signed with GPG and published verbatim by
-# GitHub Pages, so the one-command install lives at https://sb.kejizero.xyz/install.sh.
+# 产物：以 tag `v<VERSION>` 发布的一套资产：每个架构一个 .deb
+#       easysb_<版本>-1_<架构>.deb，外加同一批 .deb 摆成的扁平 apt 仓库
+#       （Packages / Release / InRelease / 公钥 / install.sh）。
+# 软件源：GitHub Release 本身就是软件源，根地址是
+#         https://github.com/EasySBTeam/EasySB/releases/latest/download
+# Assets: one release tagged `v<VERSION>` carrying a .deb per architecture plus a flat
+# apt repository built from the same packages (Packages / Release / InRelease / keyring /
+# install.sh). The release itself is the apt source, rooted at
+# https://github.com/EasySBTeam/EasySB/releases/latest/download.
 
 on:
   push:
@@ -24,18 +26,16 @@ on:
       - 'packaging/**'
       - 'install.sh'
       - '.github/workflows/easysb-go-release.yml'
-  # A pull request runs the same gate as a push. The jobs that publish - release and
-  # pages - are held back to a push, so nothing is published from a branch, but the
-  # check, the cross-compile and the packaging all run before the merge rather than
-  # after it.
+  # A pull request runs the same gate as a push. The job that publishes - release - is held
+  # back to a push, so nothing is published from a branch, but the check, the cross-compile
+  # and the packaging all run before the merge rather than after it.
   pull_request:
     branches:
       - master
   workflow_dispatch:
 
-# 默认只读：release 作业自己声明 contents: write，pages 作业自己声明 pages / id-token。
-# Read-only by default; the release job declares contents: write and the pages job
-# declares pages / id-token for itself.
+# 默认只读：release 作业自己声明 contents: write。
+# Read-only by default; the release job declares contents: write for itself.
 permissions:
   contents: read
 
@@ -134,113 +134,19 @@ jobs:
           path: dist/*.deb
           if-no-files-found: error
 
-  # 一个 release 装下全部 .deb：tag 与 release 名都是 v<版本>，与 sing-box 一致。
+  # 一个 release 装下全部资产：tag 与 release 名都是 v<版本>，与 sing-box 一致。除了每个
+  # 架构的 .deb，还附上同一批 .deb 摆成的扁平 apt 仓库，release 本身就是软件源。
   # 发布只保留最新一个 release；上传完再把旧的连同 tag 一起收走，Release 页始终只剩当前版本。
-  # One release carries every .deb, tagged and named v<version>, matching sing-box. Only
-  # the newest release is kept: after the upload the stale releases and their tags are
-  # pruned, so the Release page only ever shows the current version.
+  # One release carries every asset, tagged and named v<version>, matching sing-box. Besides
+  # a .deb per architecture it carries a flat apt repository built from the same packages, so
+  # the release is the apt source. Only the newest release is kept: after the upload the stale
+  # releases and their tags are pruned, so the Release page only ever shows the current version.
   release:
     if: github.event_name != 'pull_request'
     needs: [prepare, build]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
-    steps:
-      - name: 下载全部产物
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: easysb-package-*
-          path: dist
-          merge-multiple: true
-
-      - name: 发布到 Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
-        with:
-          token: ${{ github.token }}
-          tag_name: v${{ needs.prepare.outputs.version }}
-          name: v${{ needs.prepare.outputs.version }}
-          make_latest: true
-          body: |
-            > EasySB v${{ needs.prepare.outputs.version }}
-
-            - 项目地址 / Homepage: https://github.com/MinimaxFlora/EasySB
-            - 内核 / Core: sing-box 已编译进面板（来源 https://github.com/SagerNet/sing-box），无需单独安装
-              the sing-box core is compiled into the panel, nothing to install separately
-
-            一键安装 / One-click（Debian 12+ / Ubuntu 24.04+，自动配好签名软件源并安装）:
-
-             ```bash
-            curl -fsSL https://sb.kejizero.xyz/install.sh | sudo bash
-            ```
-
-            手动安装 / Manual: 下载本页对应架构的 `.deb`，或先用 `apt` 配好软件源：
-
-             ```bash
-            sudo apt update && sudo apt install easysb
-            ```
-          files: |
-            dist/*.deb
-
-      # action-gh-release 只覆盖同名文件，改过命名之后旧资产会一直躺在 release 里。
-      # 放在上传之后清理，上传万一失败时上一轮的资产还在。
-      # action-gh-release only overwrites same-named files, so old assets linger after a
-      # rename; pruning after the upload keeps the previous assets if the upload fails.
-      - name: 清理旧资产
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          version="v${{ needs.prepare.outputs.version }}"
-          keep="$(ls -1 dist/*.deb | xargs -n1 basename | sort)"
-          printf '本轮资产 / current assets:\n%s\n' "$keep"
-          while IFS= read -r name; do
-            [ -n "$name" ] || continue
-            if printf '%s\n' "$keep" | grep -qxF "$name"; then
-              continue
-            fi
-            echo "删除 / pruning: $name"
-            gh release delete-asset "$version" "$name" --yes
-          done < <(gh release view "$version" --json assets --jq '.assets[].name')
-
-      # 只留最新一个 release：上一版连同它的 tag 一并收走。tag 是我们自己发布的历史，
-      # 删掉不影响任何仍在使用的软件源（源由 Pages 承载）。
-      # Keep only the newest release: the previous one and its tag go together. The tag is
-      # our own publishing history, and the sources live on Pages, so removing it breaks
-      # nothing that is still in use.
-      - name: 清理旧 release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          current="v${{ needs.prepare.outputs.version }}"
-          while IFS= read -r tag; do
-            [ -n "$tag" ] || continue
-            [ "$tag" = "$current" ] && continue
-            echo "删除旧 release / pruning: $tag"
-            gh release delete "$tag" --yes --cleanup-tag
-          done < <(gh release list --limit 100 --json tagName --jq '.[].tagName')
-
-  # 把同一批 .deb 组装成 apt 树并签名，交给 GitHub Pages 发布：pool 一份、dists/<套件>
-  # 按发行版分，公钥与 install.sh 在站点根。caddy 风格的落点对应
-  # /usr/share/keyrings/easysb-archive-keyring.gpg + /etc/apt/sources.list.d/easysb.list。
-  # Lays the same .deb files out as a signed apt tree and hands it to GitHub Pages: one
-  # shared pool, per-release dists/<suite>, and the public key plus install.sh at the site
-  # root. The caddy-style drop points are /usr/share/keyrings/easysb-archive-keyring.gpg
-  # and /etc/apt/sources.list.d/easysb.list.
-  #
-  # 同样是 push 才发布：分支上的任何一次提交都不该碰生产站点。
-  # Also push-only: nothing on a branch may reach the production site.
-  pages:
-    if: github.event_name != 'pull_request'
-    needs: [prepare, build]
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - name: 检出仓库
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -260,8 +166,10 @@ jobs:
           sudo apt-get install -y -qq apt-utils
 
       # 私钥可以带口令：导入不需要口令，签名时从 GPG_PASSPHRASE_FILE 读，口令不进 argv。
+      # 没有 GPG_PRIVATE_KEY 就直接失败：未签名的源不是 install.sh 能用的源。
       # The private key may be passphrase protected: importing needs no passphrase, and
       # signing reads it from GPG_PASSPHRASE_FILE, so it never reaches the process list.
+      # Missing GPG_PRIVATE_KEY fails the run: an unsigned source is not one install.sh can use.
       - name: 导入签名密钥
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -280,27 +188,79 @@ jobs:
             echo "GPG_PASSPHRASE_FILE=$RUNNER_TEMP/gpg.pass" >> "$GITHUB_ENV"
           fi
 
+      # 把同一批 .deb 摆成扁平 apt 仓库并签名到 dist/repo：Packages、Release、InRelease、
+      # Release.gpg、公钥与 install.sh 全在同一层，release 直接承载，无需 Pages。
+      # Lay the same .deb files out as a flat apt repository and sign it into dist/repo:
+      # Packages, Release, InRelease, Release.gpg, the keyring and install.sh all sit in one
+      # directory that the release serves verbatim, with no Pages involved.
       - name: 组装并签名软件源
         run: make repo GPG_KEY_ID="$GPG_KEY_ID" GPG_PASSPHRASE_FILE="${GPG_PASSPHRASE_FILE:-}"
 
-      # Pages 默认跑 Jekyll，会跳过一些以点或下划线开头的路径；.nojekyll 关掉它。CNAME
-      # 把站点固定在自定义域上，install.sh 里那个地址才成立。
-      # Pages runs Jekyll by default and skips some dot/underscore paths; .nojekyll turns
-      # that off. CNAME pins the site to the custom domain install.sh points at.
-      - name: 站点文件
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          token: ${{ github.token }}
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: v${{ needs.prepare.outputs.version }}
+          make_latest: true
+          body: |
+            > EasySB v${{ needs.prepare.outputs.version }}
+
+            - 项目地址 / Homepage: https://github.com/EasySBTeam/EasySB
+            - 内核 / Core: sing-box 已编译进面板（来源 https://github.com/SagerNet/sing-box），无需单独安装
+              the sing-box core is compiled into the panel, nothing to install separately
+
+            一键安装 / One-click（Debian 12+ / Ubuntu 24.04+，自动配好签名软件源并安装）:
+
+             ```bash
+            curl -fsSL https://github.com/EasySBTeam/EasySB/releases/latest/download/install.sh | sudo bash
+            ```
+
+            手动安装 / Manual: 下载本页对应架构的 `.deb`，或先用 `apt` 配好软件源：
+
+             ```bash
+            sudo apt update && sudo apt install easysb
+            ```
+          files: |
+            dist/repo/*
+
+      # action-gh-release 只覆盖同名文件，改过命名之后旧资产会一直躺在 release 里。
+      # 放在上传之后清理，上传万一失败时上一轮的资产还在。
+      # action-gh-release only overwrites same-named files, so old assets linger after a
+      # rename; pruning after the upload keeps the previous assets if the upload fails.
+      - name: 清理旧资产
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          touch dist/repo/.nojekyll
-          printf 'sb.kejizero.xyz\n' > dist/repo/CNAME
+          version="v${{ needs.prepare.outputs.version }}"
+          keep="$(ls -1 dist/repo/* | xargs -n1 basename | sort)"
+          printf '本轮资产 / current assets:\n%s\n' "$keep"
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            if printf '%s\n' "$keep" | grep -qxF "$name"; then
+              continue
+            fi
+            echo "删除 / pruning: $name"
+            gh release delete-asset "$version" "$name" --yes
+          done < <(gh release view "$version" --json assets --jq '.assets[].name')
 
-      - name: 配置 Pages
-        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
-
-      - name: 上传站点产物
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
-        with:
-          path: dist/repo
-
-      - name: 发布到 Pages
-        id: deploy
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+      # 只留最新一个 release：上一版连同它的 tag 一并收走。tag 是我们自己发布的历史；
+      # 删除旧 release 会同时下架它自己的软件源，但 `latest` 始终指向最新那一个（正是
+      # install.sh 与已有机器上的源配置所用的地址），所以升级路径不受影响。
+      # Keep only the newest release: the previous one and its tag go together. The tag is
+      # our own publishing history; deleting an old release also retires its own apt source,
+      # but `latest` always points at the newest one, which is the address install.sh and
+      # already-configured machines use, so the upgrade path is unaffected.
+      - name: 清理旧 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current="v${{ needs.prepare.outputs.version }}"
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            [ "$tag" = "$current" ] && continue
+            echo "删除旧 release / pruning: $tag"
+            gh release delete "$tag" --yes --cleanup-tag
+          done < <(gh release list --limit 100 --json tagName --jq '.[].tagName')

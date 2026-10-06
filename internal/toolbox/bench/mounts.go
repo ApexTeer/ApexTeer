@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // disksFileName is the file the per-mount pass writes on each filesystem. It is named

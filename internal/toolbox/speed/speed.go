@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
 )
 
 // Group is the toolbox group both entries are filed under.

@@ -12,10 +12,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/icons"
-	"github.com/MinimaxFlora/EasySB/internal/theme"
-	"github.com/MinimaxFlora/EasySB/internal/ui"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/icons"
+	"github.com/EasySBTeam/EasySB/internal/theme"
+	"github.com/EasySBTeam/EasySB/internal/ui"
 )
 
 // taskFunc is one unit of work the panel runs on its own goroutine: it writes lines

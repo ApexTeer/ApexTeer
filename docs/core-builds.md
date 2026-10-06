@@ -23,30 +23,34 @@ configuration the panel accepts is one `sing-box` itself accepts.
 ## The tag set, defined once
 
 Build tags decide what the binary can express, so they are part of the product, not a
-build detail. They live in `release/TAGS` — one line, read by
-`.github/workflows/easysb-go-release.yml` and by `install.sh` when it builds from source:
+build detail. They live in `release/TAGS` — one line, read by the Makefile and by
+`.github/workflows/easysb-go-release.yml`:
 
 ```
-with_acme,with_clash_api,with_dhcp,with_gvisor,with_quic,with_tailscale,with_utls,with_v2ray_api,with_wireguard
+with_clash_api,with_quic,with_utls,with_v2ray_api,with_wireguard
 ```
 
-The panel is a server, but the tag set is not limited to what its own node
-configuration names. Upstream's `release/DEFAULT_BUILD_TAGS` is carried with one
-deliberate exception, so the core inside the panel offers the same capabilities as a
-stock sing-box build:
+The set is deliberately narrower than upstream's `release/DEFAULT_BUILD_TAGS`: the panel
+carries what its node and the profiles it hands out actually name.
 
 - `with_quic` for the Hysteria2 and TUIC inbounds and `with_utls` for the Reality
   inbound: without these the core refuses the whole node configuration.
 - `with_v2ray_api` for the per-account byte counters. It is the one entry upstream's
-  default does not carry, and the panel cannot count traffic without it.
-- `with_acme`, `with_clash_api`, `with_dhcp`, `with_gvisor`, `with_tailscale` and
-  `with_wireguard` for everything else a profile may name: the subscription document
-  carries a TUN inbound and a Clash-compatible API block.
+  default does not carry either, and the panel cannot count traffic without it.
+- `with_clash_api` for the Clash-compatible API block the subscription document names,
+  and `with_wireguard` for a profile that names a WireGuard endpoint.
 
-`with_naive_outbound` stays out: it drags in the cronet/Chromium libraries, which have
-no build for 386, armv7, riscv64 or s390x (see `docs/pitfalls.md`). Every tag that is
-carried was verified to build for all six release architectures. The cost is size: the
-amd64 binary grew from about 43 MB to about 87 MB.
+Upstream carries four more that the panel leaves out, because the node it runs names none
+of them and they only cost binary size: `with_acme` (the panel's certificates come from
+`internal/cert`, which talks to the CA itself), `with_dhcp`, `with_gvisor` and
+`with_tailscale`. One consequence is worth knowing: the WireGuard userspace stack is
+gVisor-backed, so `with_wireguard` alone keeps the endpoint type and the system stack,
+while a userspace-stack endpoint reports `gVisor is not included in this build`. The
+panel's own node never names WireGuard, so this only affects a hand-written profile.
+
+`with_naive_outbound` stays out as well: it drags in the cronet/Chromium libraries, which
+have no build for every release architecture (see `docs/pitfalls.md`). Every tag that is
+carried was verified against the two release builds, `linux/amd64` and `linux/arm64`.
 
 **`with_v2ray_api` is the tag that matters.** It is the only way sing-box counts bytes per
 account, which is what the traffic columns of 账号与流量 read. A tag cannot be probed at run

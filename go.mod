@@ -1,4 +1,4 @@
-module github.com/MinimaxFlora/EasySB
+module github.com/EasySBTeam/EasySB
 
 go 1.27.1
 

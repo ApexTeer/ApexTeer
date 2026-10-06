@@ -15,16 +15,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
-	"github.com/MinimaxFlora/EasySB/internal/toolbox"
-	"github.com/MinimaxFlora/EasySB/internal/toolbox/backtrace"
-	"github.com/MinimaxFlora/EasySB/internal/toolbox/bench"
-	"github.com/MinimaxFlora/EasySB/internal/toolbox/hw"
-	"github.com/MinimaxFlora/EasySB/internal/toolbox/ipquality"
-	"github.com/MinimaxFlora/EasySB/internal/toolbox/portcheck"
-	"github.com/MinimaxFlora/EasySB/internal/toolbox/speed"
-	"github.com/MinimaxFlora/EasySB/internal/unlock"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/sysinfo"
+	"github.com/EasySBTeam/EasySB/internal/toolbox"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/backtrace"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/bench"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/hw"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/ipquality"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/portcheck"
+	"github.com/EasySBTeam/EasySB/internal/toolbox/speed"
+	"github.com/EasySBTeam/EasySB/internal/unlock"
 )
 
 // Group ids, in the order the menu lists them.

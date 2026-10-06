@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 使用文档 / Documentation
-    url: https://github.com/MinimaxFlora/EasySB/blob/master/README.md
+    url: https://github.com/EasySBTeam/EasySB/blob/master/README.md
     about: 安装方式、命令参数、订阅与模板说明
   - name: 安全漏洞报告 / Report a security issue
-    url: https://github.com/MinimaxFlora/EasySB/blob/master/SECURITY.md
+    url: https://github.com/EasySBTeam/EasySB/blob/master/SECURITY.md
     about: 安全问题请按安全策略私下报告，不要开公开 Issue

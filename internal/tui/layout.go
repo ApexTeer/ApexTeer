@@ -3,10 +3,10 @@ package tui
 import (
 	"fmt"
 
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
 
-	"github.com/MinimaxFlora/EasySB/internal/theme"
-	"github.com/MinimaxFlora/EasySB/internal/ui"
+	"github.com/EasySBTeam/EasySB/internal/theme"
+	"github.com/EasySBTeam/EasySB/internal/ui"
 )
 
 // The panel's layout is fixed: the same two boxes, in the same rows, on every page.

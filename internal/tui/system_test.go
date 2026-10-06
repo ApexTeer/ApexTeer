@@ -8,9 +8,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/prefs"
-	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/prefs"
+	"github.com/EasySBTeam/EasySB/internal/theme"
 )
 
 // send feeds one key through the app the way the runtime does.

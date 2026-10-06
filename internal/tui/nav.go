@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/EasySBTeam/EasySB/internal/theme"
 )
 
 // What is left of the former left-hand navigation lives here. Every page of the

@@ -25,5 +25,6 @@ full-screen bubbletea TUI. Persistent state lives in
 `/etc/sing-box/easysb-users.json`, readable config samples live under
 `templates/`, and releases are published by cross-compiling in GitHub Actions
 under the tag `v<VERSION>`. The binaries are wrapped into `.deb` packages and laid
-out as a signed apt tree by `make repo`, then published by GitHub Pages at the
-fixed address `https://sb.kejizero.xyz`.
+out as a signed, flat apt repository by `make repo`, then attached to the release,
+so the source has the fixed address
+`https://github.com/EasySBTeam/EasySB/releases/latest/download`.

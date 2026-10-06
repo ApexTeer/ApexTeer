@@ -1,0 +1,72 @@
+name: Cleanup old workflow runs
+
+# 只做一件事：定期把每个工作流的历史运行记录裁到最近若干个，Actions 页面不会随每次
+# 推送越积越多。运行记录不是产物，删掉不影响软件源与 release；最新的若干条保留，方便
+# 回看最近几次构建。默认每周日跑一次，也可在 Actions 页面手动触发并指定保留条数。
+# One job: periodically trim every workflow's run history down to the newest few so the
+# Actions page does not grow without bound. Runs are history, not artifacts, so trimming
+# them touches neither the apt source nor any release; the newest few are kept for recent
+# build reference. Runs weekly by default and can be dispatched by hand with a keep count.
+
+on:
+  schedule:
+    # 每周日 03:00（Asia/Shanghai）/ Sundays at 03:00 Asia/Shanghai.
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: '每个工作流保留的最近运行条数 / runs to keep per workflow'
+        required: false
+        default: '10'
+
+# 删除运行记录要走 actions: write；其余只读。
+# Deleting runs needs actions: write; everything else stays read-only.
+permissions:
+  actions: write
+  contents: read
+
+# 清理彼此不重叠：一次只跑一个，避免两轮同时删同一条记录。
+# Cleanups must not overlap: one at a time, so two rounds never delete the same run.
+concurrency:
+  group: cleanup-workflow-runs
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: 裁剪历史运行记录 / trim run history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ github.event.inputs.keep || '10' }}
+        run: |
+          set -euo pipefail
+          case "$KEEP" in
+            ''|*[!0-9]*) echo "保留条数必须是数字 / keep must be a number: $KEEP" >&2; exit 1 ;;
+          esac
+
+          # 每个工作流单独统计：清单里包含本工作流，所以它自己的历史也一并裁剪。
+          # Per workflow: the list includes this cleanup workflow, so its own history is
+          # trimmed too.
+          while IFS= read -r workflow; do
+            [ -n "$workflow" ] || continue
+            name="$(gh api "repos/$REPO/actions/workflows/$workflow" --jq '.name' 2>/dev/null || echo "$workflow")"
+            # 只删已结束的运行：进行中的（含本轮自己）永远跳过。
+            # Completed runs only: in-progress ones, including this round, are always kept.
+            stale="$(gh api "repos/$REPO/actions/workflows/$workflow/runs?per_page=100" \
+              --paginate \
+              --jq '.workflow_runs[] | select(.status == "completed") | .id' \
+              | tail -n +"$((KEEP + 1))")"
+            [ -n "$stale" ] || continue
+            count=0
+            while IFS= read -r run; do
+              [ -n "$run" ] || continue
+              gh api -X DELETE "repos/$REPO/actions/runs/$run" >/dev/null
+              count=$((count + 1))
+            done <<< "$stale"
+            printf '删除 / pruned %s: %s runs\n' "$name" "$count"
+          done < <(gh api "repos/$REPO/actions/workflows" --paginate --jq '.workflows[].id')

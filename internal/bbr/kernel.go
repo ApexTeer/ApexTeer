@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MinimaxFlora/EasySB/internal/download"
+	"github.com/EasySBTeam/EasySB/internal/download"
 )
 
 // Release is one published kernel this machine can install.
