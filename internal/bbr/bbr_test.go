@@ -188,7 +188,6 @@ func TestCheckOS(t *testing.T) {
 		{"debian 11", "ID=debian\nVERSION_ID=\"11\"\n", false},
 		{"ubuntu 24.04", "ID=ubuntu\nVERSION_ID=\"24.04\"\n", true},
 		{"ubuntu 22.04", "ID=ubuntu\nVERSION_ID=\"22.04\"\n", false},
-		{"kali", "ID=kali\nID_LIKE=debian\nVERSION_ID=\"2025.1\"\n", true},
 		{"fedora", "ID=fedora\nVERSION_ID=\"41\"\n", false},
 		{"missing", "", false},
 	}

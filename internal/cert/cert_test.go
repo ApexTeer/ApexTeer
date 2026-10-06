@@ -576,9 +576,6 @@ func TestRenewalUnitContract(t *testing.T) {
 		t.Error("service unit does not take the executable path")
 	}
 
-	if !strings.Contains(renewOpenRC, "%s --renew-certs") {
-		t.Error("OpenRC script does not run the renewal command")
-	}
 }
 
 func TestParseTimerStatus(t *testing.T) {

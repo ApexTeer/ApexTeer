@@ -147,8 +147,7 @@ ports, hop range, Reality parameters and `NODE_DEPLOYED` keep their meaning.
 ## Subscription service
 
 `easysb --serve` runs the HTTP service and the accounting loop in one process,
-installed as `easysb.service` (systemd) or an OpenRC init script through
-`internal/service`.
+installed as `easysb.service` (systemd) through `internal/service`.
 
 | Request | Behaviour |
 | :--- | :--- |

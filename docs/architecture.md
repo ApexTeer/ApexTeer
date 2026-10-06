@@ -50,12 +50,12 @@ editing.
 | `/etc/sing-box/config.json` | `internal/config` | rendered server config; carries the same credentials as the account store, so it is `0600` too |
 | `/etc/sing-box/cert/` | `internal/cert` | the self-signed placeholder pair, used until a real certificate is issued |
 | `/etc/sing-box/easysb-users.json` | `internal/user` | accounts: credentials, quotas, expiry and counters (`0600`) |
-| `/etc/systemd/system/easysb.service` or `/etc/init.d/easysb` | `internal/service` | subscription service unit (`easysb --serve`) |
-| `/etc/systemd/system/sing-box.service` or `/etc/init.d/sing-box` | `internal/service` | core service unit |
+| `/etc/systemd/system/easysb.service` | `internal/service` | subscription service unit (`easysb --serve`) |
+| `/etc/systemd/system/sing-box.service` | `internal/service` | core service unit |
 | `/etc/sing-box/acme/` | `internal/cert` | ACME state, overridable with `EASYSB_ACME_DIR`: `account.key` and `account.json` (`0600`), then one directory per domain holding `fullchain.cer` (`0644`) and `private.key` (`0600`) |
 | `/etc/sysctl.d/99-easysb-bbr.conf`, `/etc/modules-load.d/easysb-bbr.conf` | `internal/bbr` | BBR settings EasySB writes itself, so they never collide with the kernel project's own drop-in; the sysctl file carries a comment recording the values it replaced, which is what the clear action restores. The installed kernel packages (`minimaxflora-bbrv3`) belong to dpkg and are removed through apt |
 | `/etc/sing-box/easysb-ui.conf` | `internal/prefs` | interface choices (skin, palette, marker set, language), `0644`, overridable with `EASYSB_UI_CONF` |
-| `/etc/systemd/system/easysb-acme.timer` or `/etc/init.d/easysb-acme` | `internal/cert` | certificate renewal: the panel issues and renews through lego in process, so this unit is the only thing that renews, and `--renew-certs` reloads the services afterwards. The unit names the path of the binary that wrote it, so it is installed from inside the panel (or with `--install-renew-timer`) rather than copied between hosts |
+| `/etc/systemd/system/easysb-acme.timer` | `internal/cert` | certificate renewal: the panel issues and renews through lego in process, so this unit is the only thing that renews, and `--renew-certs` reloads the services afterwards. The unit names the path of the binary that wrote it, so it is installed from inside the panel (or with `--install-renew-timer`) rather than copied between hosts |
 
 ## Packaging
 
@@ -110,7 +110,7 @@ tree.
 | `internal/stats` | gRPC client for the core's `StatsService`, usage accounting, quota enforcement |
 | `internal/subscribe` | subscription URLs, per-protocol share links, QR payloads, and the sing-box JSON, mihomo YAML and v2rayN base64 documents for one account |
 | `internal/secret` | random UUID / password / Reality keypair generation |
-| `internal/service` | systemd and OpenRC detection, install, start/stop, status |
+| `internal/service` | systemd detection, install, start/stop, status |
 | `internal/sysinfo` | host/device/core/service status for the dashboard: local IPv4/IPv6, CPU cores, load, memory, swap, disk and uptime |
 | `internal/netutil` | small network helpers (public IPv4-first IP detection, host resolution) |
 | `internal/uninstall` | remove the deployment while keeping the issued certificates |

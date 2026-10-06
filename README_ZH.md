@@ -129,7 +129,7 @@ sb --language C
 sb --language E
 ```
 
-支持 Debian / Ubuntu（systemd）与 Alpine（OpenRC）；需要 root 权限运行。
+支持 Debian 12+ / Ubuntu 24.04+（systemd）；需要 root 权限运行。
 
 ---
 
@@ -206,7 +206,7 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://sb.kejize
 | 设备面板 | 本机 IPv4/IPv6、交换空间、运行时间、CPU 核心数与负载、内存、磁盘、主机、内核、系统与时区 |
 | 系统信息 | 查看面板运行环境，并能在界面内直接换外观：`↑`/`↓` 加 `Enter` 或 `A`-`D` 选皮肤，`T` 切深浅配色，`I` 在 Unicode 符号与纯 ASCII 之间切换。改完下一帧就生效（主题从此不再跟随终端），字形预览一行可以在其他卡片出问题前先看出终端字体能不能显示这些字形；切换时顶部状态条与底部按键提示保持不动，只有正文换掉 |
 | 复制链接 | 订阅与分享链接以卡片网格呈现在与主菜单同尺寸的固定面板里；订阅卡片显示订阅名（sing-box / mihomo / Base64 订阅）与格式说明，分享链接卡片显示协议名，均不显示主机或完整 URL。`↑`/`↓`/`←`/`→`（或数字键）选择，`Enter` 复制当前项，`C` 复制全部，`Q` 退出程序，`Esc` 返回；复制成功的卡片变成成功色，复制全部在页头提示。窗口变窄变矮时网格自动减少列数并截断内容，面板不溢出。日志页 `C` 复制日志（OSC52） |
-| 证书管理 | 内置 lego 走 HTTP-01 standalone 直接申请 Let's Encrypt 证书：申请、查看、切换激活、删除；申请前先检查域名解析，申请时先停内核腾出 80 端口，全程无需下载任何脚本或额外监听工具。续期按到期时间判断（提前 30 天），由面板自己的 systemd timer / OpenRC 脚本驱动，续期后自动重载 sing-box 与订阅服务 |
+| 证书管理 | 内置 lego 走 HTTP-01 standalone 直接申请 Let's Encrypt 证书：申请、查看、切换激活、删除；申请前先检查域名解析，申请时先停内核腾出 80 端口，全程无需下载任何脚本或额外监听工具。续期按到期时间判断（提前 30 天），由面板自己的 systemd timer 驱动，续期后自动重载 sing-box 与订阅服务 |
 | 订阅生成 | 每个账号一个订阅地址（`/sub/<令牌>`），由内置订阅服务按客户端自动选择格式（`templates/config/tun-fakeip.json`、`templates/config/mihomo.yaml` 或 Base64 分享链接），并通过 `Subscription-Userinfo` 上报用量；面板提供二维码与各协议分享链接 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
 | 服务管理 | 启动、停止、重启、查看状态与开机自启 |
@@ -246,7 +246,7 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://sb.kejize
 | `--skin jade\|aurora\|ember\|graphite` | 选择界面皮肤，也可用 `a`-`d`（默认 `jade`，环境变量 `EASYSB_SKIN`） |
 | `--apply-firewall` | 仅恢复端口跳跃规则，供开机单元调用 |
 | `--renew-certs` | 续期全部证书，仅在确有证书被续期时重载 sing-box 与订阅服务（供续期定时器调用） |
-| `--install-renew-timer` | 安装证书续期定时器（systemd timer / OpenRC），单元内记录本二进制的路径 |
+| `--install-renew-timer` | 安装证书续期定时器（systemd timer），单元内记录本二进制的路径 |
 | `--remove-renew-timer` | 移除证书续期定时器 |
 | `--render --width N --height N` | 渲染一次仪表盘后退出（调试用；加 `--screen system` 可渲染子页面） |
 | `--serve` | 运行订阅服务与流量统计循环（`easysb.service` 使用该模式） |
@@ -324,7 +324,6 @@ nft add rule ip nat prerouting udp dport 2080-3000 redirect to :8001
 NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 
 - systemd：`easysb-firewall.service`（oneshot，早于 `sing-box.service`）。
-- OpenRC：`/etc/init.d/easysb-firewall`。
 
 单元通过 `easysb --apply-firewall` 恢复规则，不使用 Hysteria2 端口跳跃时不会创建该单元。
 

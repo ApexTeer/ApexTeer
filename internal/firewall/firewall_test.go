@@ -70,8 +70,8 @@ func TestUnitActionReportsSuccess(t *testing.T) {
 }
 
 func TestUnitActionErrorFallsBackToTheExitStatus(t *testing.T) {
-	// systemctl and rc-update both stay silent on some failures; the exit status is
-	// then all there is to report, and an empty message would read as "no reason".
+	// systemctl stays silent on some failures; the exit status is then all there is
+	// to report, and an empty message would read as "no reason".
 	err := unitActionError("enable", nil, errors.New("exit status 1"))
 	if !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("error %q dropped the exit status", err)

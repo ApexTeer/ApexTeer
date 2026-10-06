@@ -157,7 +157,7 @@ func main() {
 func runPrintUnit(kind, exe string) {
 	switch kind {
 	case "node":
-		fmt.Print(service.UnitBody(exe, service.Systemd))
+		fmt.Print(service.UnitBody(exe))
 	case "sub":
 		fmt.Print(subd.UnitBody(exe))
 	default:

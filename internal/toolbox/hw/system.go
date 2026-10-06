@@ -35,8 +35,8 @@ const (
 	pathDMIProduct = "/sys/class/dmi/id/product_name"
 )
 
-// External commands the system table may use. Both are optional: an OpenRC or minimal
-// image has neither, and the table then explains what it could not confirm instead of
+// External commands the system table may use. Both are optional: a minimal image may
+// have neither, and the table then explains what it could not confirm instead of
 // reporting a state nobody measured.
 const (
 	toolVirt       = "systemd-detect-virt"

@@ -180,8 +180,8 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   lost `account.json` re-registers with the key it still has and gets the same
   account back. Losing `account.key` means a new account, and on a domain that has
   already spent its five duplicate certificates for the week that means a wait.
-- **Without the timer nothing renews.** `easysb-acme.timer` (or the OpenRC script)
-  runs `easysb --renew-certs`, and it is the only thing that does. A renewal
+- **Without the timer nothing renews.** `easysb-acme.timer` runs
+  `easysb --renew-certs`, and it is the only thing that does. A renewal
   replaces the pair in place, so a certificate that is renewed but not reloaded is
   still the old one in a running core: `--renew-certs` restarts sing-box and the
   subscription service for exactly that reason.

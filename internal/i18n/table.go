@@ -216,7 +216,7 @@ var table = []entry{
 	{"desc_sni_custom", "手动输入偷用域名", "Enter a custom handshake domain"},
 	{"desc_domain_issue", "申请新证书或续期已有证书", "Issue a new certificate or renew one"},
 	{"desc_domain_renew", "立即跑一次续期并重载服务", "Run one renewal pass and reload the services"},
-	{"desc_domain_timer", "安装或移除续期定时器（systemd timer / OpenRC）", "Install or remove the renewal timer (systemd timer / OpenRC)"},
+	{"desc_domain_timer", "安装或移除续期定时器（systemd timer）", "Install or remove the renewal timer (systemd timer)"},
 	{"desc_domain_list", "列出本机已有证书", "List the certificates on this host"},
 	{"desc_domain_switch", "切换当前生效的证书", "Switch the active certificate"},
 	{"desc_domain_remove", "删除不再使用的证书", "Remove a certificate"},

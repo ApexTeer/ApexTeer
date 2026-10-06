@@ -32,7 +32,6 @@ const (
 	LogFile        = WorkDir + "/easysb.log"
 
 	SystemdUnit = "/etc/systemd/system/sing-box.service"
-	OpenRCUnit  = "/etc/init.d/sing-box"
 
 	// UsersFile holds the accounts that replaced the node-wide credential.
 	UsersFile = WorkDir + "/easysb-users.json"
@@ -43,7 +42,6 @@ const (
 	// that the panel can restart it without touching the core.
 	SubServiceName = "easysb"
 	SubSystemdUnit = "/etc/systemd/system/easysb.service"
-	SubOpenRCUnit  = "/etc/init.d/easysb"
 
 	// PanelPath is the preferred location of the panel binary: where the .deb puts it,
 	// which is also where install.sh ends up, since it installs that package.

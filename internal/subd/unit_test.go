@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
@@ -16,7 +15,7 @@ import (
 func TestSubscriptionUnitRunsThePanel(t *testing.T) {
 	reloaded := stubDaemonReload(t)
 	path := filepath.Join(t.TempDir(), "easysb.service")
-	if err := writeUnit(path, "/usr/local/bin/easysb", service.Systemd); err != nil {
+	if err := writeUnit(path, "/usr/local/bin/easysb"); err != nil {
 		t.Fatalf("writeUnit: %v", err)
 	}
 	body, err := os.ReadFile(path)
@@ -55,27 +54,4 @@ func stubDaemonReload(t *testing.T) *int {
 	}
 	t.Cleanup(func() { daemonReload = restore })
 	return count
-}
-
-// The OpenRC form is written with a different shape, so it is checked on its own rather
-// than assumed to follow from the systemd one.
-func TestSubscriptionOpenRCUnit(t *testing.T) {
-	reloaded := stubDaemonReload(t)
-	path := filepath.Join(t.TempDir(), "easysb")
-	if err := writeUnit(path, "/usr/local/bin/easysb", service.OpenRC); err != nil {
-		t.Fatalf("writeUnit: %v", err)
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	text := string(body)
-	if !strings.Contains(text, `command="/usr/local/bin/easysb"`) ||
-		!strings.Contains(text, `command_args="--serve"`) {
-		t.Fatalf("the OpenRC unit does not serve subscriptions:\n%s", text)
-	}
-	// OpenRC has no daemon to reload: the file is the registration.
-	if *reloaded != 0 {
-		t.Fatalf("an OpenRC unit reloaded a daemon %d times, want none", *reloaded)
-	}
 }

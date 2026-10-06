@@ -256,10 +256,7 @@ func checkOS(osRelease string) error {
 		}
 		return fmt.Errorf("Ubuntu %s is too old for these kernels: 24.04 or newer is required", version)
 	}
-	if strings.Contains(osRelease, "debian") {
-		return nil
-	}
-	return fmt.Errorf("%s is not a Debian-based system", id)
+	return fmt.Errorf("%s is not supported: these kernels need Debian 12+ or Ubuntu 24.04+", id)
 }
 
 // parseOSRelease pulls ID and VERSION_ID out of /etc/os-release.

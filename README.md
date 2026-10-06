@@ -129,7 +129,7 @@ sb --language C
 sb --language E
 ```
 
-Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
+Supports Debian 12+ / Ubuntu 24.04+ (systemd); run as root.
 
 ---
 
@@ -221,7 +221,7 @@ drive it: `GPG_PRIVATE_KEY` and, when the key has one, `GPG_PASSPHRASE`.
 | Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
 | System info | The runtime the panel is running on, and the one place the look changes from inside the interface: `↑`/`↓` + `Enter` or `A`-`D` picks a skin, `T` flips dark/light, `I` swaps Unicode markers for ASCII. Every choice lands on the next frame, and the glyph preview row shows before a card anywhere else does whether the terminal font can draw the markers. The status strip and the hints stay put while the body swaps |
 | Copy links | Subscription and share-link results render as a card grid inside the same fixed panel as the main menu. Subscription cards show the subscription name (sing-box / mihomo / Base64) plus a format note, share-link cards show the protocol name, and neither draws the host or the full URL. Select with `↑`/`↓`/`←`/`→` (or a number key), `Enter` copies the card, `C` copies all, `Q` quits the program, `Esc` returns. A copied card turns green and copy-all reports in the header. Narrow or short windows reflow the grid and truncate content, never overflowing the panel. On log screens `C` copies the log (OSC52) |
-| Certificates | Let's Encrypt issuance in process through lego with the HTTP-01 standalone challenge: issue, list, switch active and remove. The preflight check covers DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and nothing is downloaded to do any of it. Renewal is decided by expiry (30 days before it) and driven by the panel's own systemd timer (or OpenRC script), which also reloads sing-box and the subscription service |
+| Certificates | Let's Encrypt issuance in process through lego with the HTTP-01 standalone challenge: issue, list, switch active and remove. The preflight check covers DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and nothing is downloaded to do any of it. Renewal is decided by expiry (30 days before it) and driven by the panel's own systemd timer, which also reloads sing-box and the subscription service |
 | Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (`templates/config/tun-fakeip.json`, `templates/config/mihomo.yaml` or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and per-protocol share links in the panel |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
@@ -261,7 +261,7 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | `--skin jade\|aurora\|ember\|graphite` | Pick the interface skin, also `a`-`d` (default `jade`, env `EASYSB_SKIN`) |
 | `--apply-firewall` | Restore port-hopping rules only, used by the boot unit |
 | `--renew-certs` | Renew every certificate, reloading sing-box and the subscription service only when one was actually renewed (called by the renewal timer) |
-| `--install-renew-timer` | Install the renewal timer (systemd timer / OpenRC); the unit names this binary's own path |
+| `--install-renew-timer` | Install the renewal timer (systemd timer); the unit names this binary's own path |
 | `--remove-renew-timer` | Remove the renewal timer |
 | `--render --width N --height N` | Render the dashboard once and exit (debug; add `--screen system` to draw a subpage) |
 | `--serve` | Run the subscription service and the usage accounting loop (backs `easysb.service`) |
@@ -339,7 +339,6 @@ nft add rule ip nat prerouting udp dport 2080-3000 redirect to :8001
 NAT rules do not survive a reboot, so the script creates a boot restore unit:
 
 - systemd: `easysb-firewall.service` (oneshot, starts before `sing-box.service`).
-- OpenRC: `/etc/init.d/easysb-firewall`.
 
 The unit restores rules via `easysb --apply-firewall`. It is not created when Hysteria2 port hopping is disabled.
 
