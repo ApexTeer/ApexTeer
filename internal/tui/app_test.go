@@ -61,6 +61,16 @@ func newTestApp(t *testing.T) *App {
 	return m.(*App)
 }
 
+// testSelections is a pair of node/protocol selections for the account
+// fixtures. The node ids are arbitrary: the layout tests render the labels the
+// account carries, not the node store behind them.
+func testSelections() []user.Selection {
+	return []user.Selection{
+		{Node: "n-anytls", Protocol: state.ProtoAnyTLS},
+		{Node: "n-vmess", Protocol: state.ProtoVMessWSTLS},
+	}
+}
+
 func TestDashboardFitsTerminal(t *testing.T) {
 	// The inline renderer cannot erase lines that scrolled off the top, so the
 	// boxed dashboard must never be taller than the terminal. This exercises the
@@ -75,7 +85,8 @@ func TestDashboardFitsTerminal(t *testing.T) {
 			t.Fatalf("height %d: dashboard drew %d lines", h, lines)
 		}
 		// The node card is taller than the device card, so exercise it too.
-		a.push(buildNode())
+		a.loadNodes()
+		a.push(a.nodeMenu())
 		if lines := strings.Count(a.dashboard(), "\n") + 1; lines > h {
 			t.Fatalf("height %d: node dashboard drew %d lines", h, lines)
 		}
@@ -107,7 +118,7 @@ func TestRecursiveNavigation(t *testing.T) {
 		t.Fatalf("expected node menu, got %s", a.current().id)
 	}
 
-	// node menu: deploy, protocols, params -> params is the third row.
+	// node menu: list, new, params -> params is the third row.
 	for i := 0; i < 2; i++ {
 		m, _ = a.Update(press(tea.KeyDown))
 		a = m.(*App)
@@ -118,19 +129,6 @@ func TestRecursiveNavigation(t *testing.T) {
 		t.Fatalf("expected params menu, got %s", a.current().id)
 	}
 
-	// ports is the second row of the params menu, right below the hop range.
-	for i := 0; i < 1; i++ {
-		m, _ = a.Update(press(tea.KeyDown))
-		a = m.(*App)
-	}
-	m, _ = a.Update(press(tea.KeyEnter))
-	a = m.(*App)
-	if a.current().id != "ports" {
-		t.Fatalf("expected ports menu, got %s", a.current().id)
-	}
-
-	m, _ = a.Update(press(tea.KeyEscape))
-	a = m.(*App)
 	m, _ = a.Update(press(tea.KeyEscape))
 	a = m.(*App)
 	if a.current().id != "node" {
@@ -641,7 +639,8 @@ func TestDashboardPanelsAndIcons(t *testing.T) {
 	a.closeSystem()
 
 	// The node card lives inside node management instead of the main menu.
-	a.push(buildNode())
+	a.loadNodes()
+	a.push(a.nodeMenu())
 	nodeView := a.View().Content
 	if !strings.Contains(nodeView, i18n.Chinese.T("panel_node")) {
 		t.Fatalf("node menu missing the node card:\n%s", nodeView)
@@ -1189,7 +1188,7 @@ func TestEveryScreenUsesOneFixedFrame(t *testing.T) { // The whole point of the 
 
 		// The account screens carry the longest values in the panel: names,
 		// quotas and subscription URLs.
-		account := user.New("a-very-long-account-name-for-layout", state.Keys, time.Unix(0, 0))
+		account := user.New("a-very-long-account-name-for-layout", testSelections(), time.Unix(0, 0))
 		account.QuotaBytes = 1 << 40
 		account.UsedBytes = 1 << 30
 		account.ExpireAt = time.Unix(0, 0).Add(48 * time.Hour)
@@ -1200,8 +1199,8 @@ func TestEveryScreenUsesOneFixedFrame(t *testing.T) { // The whole point of the 
 		out["account-list"] = a.View().Content
 		a.push(a.userMenu(account.Token))
 		out["account-detail"] = a.View().Content
-		a.push(a.userProtocolsMenu(account.Token))
-		out["account-protocols"] = a.View().Content
+		a.push(a.userNodesMenu(account.Token))
+		out["account-nodes"] = a.View().Content
 		return out
 	}
 	// Every skin has to hold the same frame: a skin that pads, tints or frames
@@ -1404,7 +1403,7 @@ func TestAccountScreensRenderAccount(t *testing.T) {
 	a.status = sysinfo.Collect("test")
 	a.ready = true
 
-	account := user.New("alice", state.Keys, time.Now())
+	account := user.New("alice", testSelections(), time.Now())
 	account.QuotaBytes = 1 << 40
 	account.UsedBytes = 1 << 30
 	a.accounts = []user.User{account}
@@ -1424,7 +1423,7 @@ func TestAccountScreensRenderAccount(t *testing.T) {
 	for _, want := range []string{
 		"alice",
 		i18n.Chinese.T("user_quota"),
-		i18n.Chinese.T("user_protocols"),
+		i18n.Chinese.T("user_nodes"),
 		i18n.Chinese.T("user_sub"),
 	} {
 		if !strings.Contains(view, want) {

@@ -3,10 +3,11 @@
 // shell implementation, but later versions drop the keys whose component is
 // gone: v4 removed the node-wide credential and the nginx subscription keys
 // (credentials belong to the accounts in internal/user, and the endpoint is
-// built from SUB_SERVE_PORT), and v5 removes CORE_CHANNEL, CORE_SOURCE and
-// STATS_API, which described the switchable, downloadable core — the core is
-// compiled into the panel now, so which release it is and whether it carries
-// the V2Ray API are properties of the build (internal/sbcore), not of the host.
+// built from SUB_SERVE_PORT), v5 removed CORE_CHANNEL, CORE_SOURCE and
+// STATS_API, and v6 moves the five protocol enable flags, their ports and their
+// parameters out of the state file into the node store (internal/node): what
+// the host serves is now a list of explicit nodes, so the per-protocol keys are
+// read once to migrate a legacy deployment and then dropped on the next save.
 // A file that still holds those keys loads fine and loses them on the next
 // save.
 package state
@@ -44,6 +45,16 @@ var Labels = map[string]string{
 	ProtoVMessWSTLS:   "VMess-WebSocket-TLS",
 }
 
+// Known reports whether a protocol key is one this build renders.
+func Known(key string) bool {
+	for _, k := range Keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
 // DefaultPorts maps protocol keys to their default listen ports.
 var DefaultPorts = map[string]string{
 	ProtoAnyTLS:       "8000",
@@ -70,6 +81,9 @@ const (
 
 // Config is the persisted node configuration.
 type Config struct {
+	// Enabled, Ports, HopRange and Reality* are the v5 per-protocol fields. They
+	// are read from a legacy file so the node migration can consume them, and are
+	// never written back; internal/node is the source of truth for the host now.
 	Enabled      map[string]bool
 	Ports        map[string]string
 	HopRange     string
@@ -85,6 +99,19 @@ type Config struct {
 	SubSyncSecs  int
 	ServerIP     string
 	raw          map[string]string
+}
+
+// LegacyProtocols reports whether the state file still carries the v5
+// per-protocol keys. It is the trigger for the one-time node migration: a fresh
+// install has no such keys, so it does not mint five nodes from the defaults.
+func (c Config) LegacyProtocols() bool {
+	for k := range c.raw {
+		if strings.HasPrefix(k, "IS_") || strings.HasPrefix(k, "PORT_") ||
+			k == "HY2_HOP_RANGE" || strings.HasPrefix(k, "REALITY_") {
+			return true
+		}
+	}
+	return false
 }
 
 // Default returns a Config populated with built-in defaults.
@@ -227,38 +254,12 @@ func (c Config) Save() error {
 			return err
 		}
 	}
-	enabledKey := map[string]string{
-		ProtoAnyTLS:       "IS_ANYTLS",
-		ProtoHysteria2:    "IS_HYSTERIA2",
-		ProtoTUIC:         "IS_TUIC",
-		ProtoVLESSReality: "IS_VLESS_REALITY",
-		ProtoVMessWSTLS:   "IS_VMESS_WS_TLS",
-	}
-	portKey := map[string]string{
-		ProtoAnyTLS:       "PORT_ANYTLS",
-		ProtoHysteria2:    "PORT_HYSTERIA2",
-		ProtoTUIC:         "PORT_TUIC",
-		ProtoVLESSReality: "PORT_VLESS_REALITY",
-		ProtoVMessWSTLS:   "PORT_VMESS_WS_TLS",
-	}
-
 	lines := []string{"# EasySB state"}
-	for _, k := range Keys {
-		lines = append(lines, fmt.Sprintf("%s=%q", enabledKey[k], boolStr(c.Enabled[k])))
-	}
-	for _, k := range Keys {
-		lines = append(lines, fmt.Sprintf("%s=%q", portKey[k], c.Ports[k]))
-	}
 	deployed := "no"
 	if c.NodeDeployed {
 		deployed = "yes"
 	}
 	pairs := [][2]string{
-		{"HY2_HOP_RANGE", c.HopRange},
-		{"REALITY_SNI", c.RealitySNI},
-		{"REALITY_PRIVATE", c.RealityPriv},
-		{"REALITY_PUBLIC", c.RealityPub},
-		{"REALITY_SHORT_ID", c.RealitySID},
 		{"DOMAIN", c.Domain},
 		{"CERT_DOMAIN", c.CertDomain},
 		{"ACME_EMAIL", c.ACMEEmail},

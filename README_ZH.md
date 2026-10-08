@@ -95,7 +95,7 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 | VLESS + Vision + Reality | TCP | 8003 | 免证书伪装，默认偷用 `apple.com`，抗主动探测 |
 | VMess + WebSocket + TLS | WS over TLS | 8004 | 可穿 CDN 与反向代理，基于标准 TLS |
 
-端口在安装时逐一询问：回车取默认值，输入 `r` 随机，输入数字手动指定；与其他协议冲突时会提示重新设置。除 VLESS + Reality 外的协议都需要一个已解析到本机的域名与有效证书。
+每个节点就是一个协议入站，各自拥有独立端口：回车取该协议默认值，输入 `r` 随机，输入数字手动指定；与其它已启用节点或订阅服务端口冲突时会提示重新设置。除 VLESS + Reality 外的协议都需要一个已解析到本机的域名与有效证书。随后把节点勾选给账号即可，任何节点或账号变动都会重新渲染配置并重启内核，没有单独的「部署」步骤。
 
 ---
 
@@ -198,8 +198,8 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 
 | 能力 | 说明 |
 | :--- | :--- |
-| 五协议部署 | 端口逐一编排；节点只保留不属于账号的材料（Reality 密钥对），账号凭据归各账号所有 |
-| 账号与流量 | 每个账号在每个协议上拥有独立凭据，支持流量限额、有效期、可用协议、启用开关、重置流量与更换令牌；停用、过期、超额账号自动从内核配置中移除 |
+| 节点管理 | 一个节点就是一个协议入站，拥有独立端口与协议参数（Reality 偷用域名 / 密钥对 / 短 ID、Hysteria2 端口跳跃范围）；节点存储是本机对外服务的唯一来源，新增、修改、删除节点都会重新渲染配置并重启内核。删除节点会同时从所有勾选该节点的账号中移除，并提示受影响账号数量 |
+| 账号与流量 | 每个账号在每个节点上拥有独立凭据，支持流量限额、有效期、勾选节点、启用开关、重置流量与更换令牌；停用、过期、超额账号自动从内核配置中移除 |
 | 服务解锁状态 | 检测当前 IP 的真实可用情况：Netflix（含「仅原创」判定）、Disney+、YouTube Premium、Amazon Prime Video、DAZN、TVBAnywhere+、Spotify、Reddit、TikTok、ChatGPT、Gemini、Claude、Steam、Bilibili 中国大陆 / 港澳台 / 台湾、巴哈姆特動畫瘋，共 17 项；每项只发 1-3 个请求，结论分为解锁 / 部分解锁 / 屏蔽 / 检测失败并给出原因，判断不出结论时如实报失败，不猜「解锁」 |
 | 内核在面板里 | sing-box 是 `go.mod` 的直接依赖：节点就是 `easysb core run -c /etc/sing-box/config.json`，版本行直接读面板里编译进的那个版本；`easysb core check` 用同一套引擎校验配置，账号流量统计取决于构建是否带 `with_v2ray_api`（`release/TAGS`），面板会如实显示而不是假定 |
 | 版本面板 | 程序版本与面板内编译的 sing-box 版本，并标明本次构建能否统计流量 |
@@ -207,7 +207,7 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 | 系统信息 | 查看面板运行环境，并能在界面内直接换外观：`↑`/`↓` 加 `Enter` 或 `A`-`D` 选皮肤，`T` 切深浅配色，`I` 在 Unicode 符号与纯 ASCII 之间切换。改完下一帧就生效（主题从此不再跟随终端），字形预览一行可以在其他卡片出问题前先看出终端字体能不能显示这些字形；切换时顶部状态条与底部按键提示保持不动，只有正文换掉 |
 | 复制链接 | 订阅与分享链接以卡片网格呈现在与主菜单同尺寸的固定面板里；订阅卡片显示订阅名（sing-box / mihomo / Base64 订阅）与格式说明，分享链接卡片显示协议名，均不显示主机或完整 URL。`↑`/`↓`/`←`/`→`（或数字键）选择，`Enter` 复制当前项，`C` 复制全部，`Q` 退出程序，`Esc` 返回；复制成功的卡片变成成功色，复制全部在页头提示。窗口变窄变矮时网格自动减少列数并截断内容，面板不溢出。日志页 `C` 复制日志（OSC52） |
 | 证书管理 | 内置 lego 走 HTTP-01 standalone 直接申请 Let's Encrypt 证书：申请、查看、切换激活、删除；申请前先检查域名解析，申请时先停内核腾出 80 端口，全程无需下载任何脚本或额外监听工具。续期按到期时间判断（提前 30 天），由面板自己的 systemd timer 驱动，续期后自动重载 sing-box 与订阅服务 |
-| 订阅生成 | 每个账号一个订阅地址（`/sub/<令牌>`），由内置订阅服务按客户端自动选择格式（`templates/config/tun-fakeip.json`、`templates/config/mihomo.yaml` 或 Base64 分享链接），并通过 `Subscription-Userinfo` 上报用量；面板提供二维码与各协议分享链接 |
+| 订阅生成 | 每个账号一个订阅地址（`/sub/<令牌>`），由内置订阅服务按客户端自动选择格式（`templates/config/tun-fakeip.json`、`templates/config/mihomo.yaml` 或 Base64 分享链接），并通过 `Subscription-Userinfo` 上报用量；面板提供二维码与每个已勾选节点一条分享链接 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
 | 服务管理 | 启动、停止、重启、查看状态与开机自启 |
 | BBR 加速 | 查看运行内核、拥塞算法、队列算法与已装内核；启用 BBR（加载 `tcp_bbr`、写 `net.core.default_qdisc` 与 `net.ipv4.tcp_congestion_control`，并落盘到 `/etc/sysctl.d/99-easysb-bbr.conf`、`/etc/modules-load.d/easysb-bbr.conf`，重启后仍生效）；安装 [Linux-BBR-v3](https://github.com/MinimaxFlora/Linux-BBR-v3) 发布的预编译 BBRv3 内核（标准版 / Max 版，x86_64 与 arm64，直接从 GitHub release 下载），也可以从版本列表里挑任意一个已发布版本安装；卸载内核、清空配置都能在面板里完成。版本号全部来自内核项目本身（`version.ini` 与 release 列表），对面发了新内核，这里打开列表就能看到，不需要面板再发版 |
@@ -221,10 +221,10 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 ```text
 主菜单（整幅卡片内左右两列，共 10 项）
 ├── 服务解锁状态 检测 ChatGPT / Netflix 等服务的解锁情况
-├── 节点管理     一键部署、启用协议、参数设置（端口跳跃 / 端口 / 偷用域名 / Reality 密钥 / 订阅端口 / 统计间隔）
+├── 节点管理     新增 / 编辑 / 启用停用节点，设置端口与协议参数，删除节点（若仍被账号勾选会提示受影响账号数量）
 ├── 域名管理     申请证书（含环境与解析预检）、立即续期、续期定时器、查看、切换激活、删除
 ├── 订阅管理     某账号的订阅地址 / 二维码 / 分享链接（先选账号，再输出订阅地址前缀）、订阅服务的安装 / 重启 / 状态
-├── 账号管理     账号列表、新建、重命名、备注、流量限额、有效期、可用协议、启用 / 停用、重置流量、更换令牌、删除
+├── 账号管理     账号列表、新建、重命名、备注、流量限额、有效期、勾选节点、启用 / 停用、重置流量、更换令牌、删除
 ├── 服务管理     启动 / 停止 / 重启 / 状态 / 开机自启、端口跳跃规则
 ├── 系统信息     运行环境、外观切换（皮肤 / 深浅 / 标记 / 语言）、终端与设备信息
 ├── BBR 管理     查看 BBR 状态、启用加速（fq / fq_codel / fq_pie / cake）、安装标准版或 Max 版 BBRv3 内核、选择版本安装（列出所有已发布版本）、卸载内核、清空配置
@@ -232,7 +232,7 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 └── 卸载脚本     完整卸载 EasySB
 ```
 
-对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，账号 `/etc/sing-box/easysb-users.json`，快捷指令 `/usr/bin/sb`。
+对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，节点 `/etc/sing-box/easysb-nodes.json`，账号 `/etc/sing-box/easysb-users.json`，快捷指令 `/usr/bin/sb`。
 
 ---
 
@@ -283,7 +283,7 @@ sing-box check -c templates/vless-vision-reality/config_server.json
 
 1. 内置订阅服务（面板中的「安装订阅服务」写入 `easysb.service`，以 `easysb --serve` 运行）在 `SUB_SERVE_PORT`（默认 `8443`）上响应 `/sub/<令牌>`。
 2. 各客户端格式的终端二维码，安装 `qrencode` 后可直接扫码导入。
-3. 每个账号五类分享链接，覆盖主流客户端。
+3. 每个账号下每个已勾选节点一条分享链接，覆盖主流客户端。
 
 格式由 User-Agent 协商，因此一个地址通用：
 
@@ -297,7 +297,7 @@ Base64 文档即通用格式。v2rayN 可直接导入，OpenWrt 上的 `passwall
 
 所有分享链接都保留标准的带连字符 UUID。`homeproxy` 会用 LuCI 的 `uuid` 校验节点，32 位无连字符形式会被判为无效，因此不能输出紧凑形式。
 
-订阅地址中的账号令牌即访问密钥，同时也是内核侧统计计数所使用的用户名。要单独收回某人权限，只需更换该账号令牌或停用该账号，其他人不受影响；重命名账号不会改变令牌，客户端导入无需重做。
+订阅地址中的账号令牌即访问密钥。内核侧的用户名是 `<令牌>@<节点 ID>`，因此每个账号的流量按节点分别统计；令牌与节点 ID 都是 ASCII，重命名不受影响，而展示名可能是中文并可能含正则元字符。要单独收回某人权限，只需更换该账号令牌或停用该账号，其他人不受影响；重命名账号不会改变令牌，客户端导入无需重做。
 
 每次响应都会带上 `Subscription-Userinfo: upload=<字节>; download=<字节>; total=<字节>; expire=<unix 秒>`，Clash Verge Rev、Clash Orbit 与 v2rayN 可直接显示剩余流量与剩余天数。停用、过期或超额的账号不会收到「没有节点」的半成品配置，而是收到 `403` 与纯文本原因，并在下一个统计周期从内核配置中移除。流量每 `SUB_SYNC_SECONDS`（默认 `300`）秒采样一次。
 

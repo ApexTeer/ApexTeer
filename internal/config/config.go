@@ -1,6 +1,7 @@
-// Package config renders the sing-box server configuration from the EasySB
-// state and the account list. Every protocol inbound authenticates the accounts
-// that selected it, and the stats API the panel accounts traffic through is
+// Package config renders the sing-box server configuration from the node store
+// and the account list. Every enabled node becomes one inbound; the accounts
+// that selected it authenticate against it under a core user name that is unique
+// per account and node. The stats API the panel accounts traffic through is
 // declared here, because the same member list has to drive both.
 package config
 
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
@@ -18,15 +20,16 @@ import (
 // every account name.
 const StatsListen = "127.0.0.1:10085"
 
+// ErrNoNodes is returned when nothing is enabled, so the core has no inbound to
+// serve. The caller reports it instead of writing a document the core refuses.
+var ErrNoNodes = errors.New("no node enabled")
+
 // Params is the input needed to render config.json.
 type Params struct {
-	Enabled       map[string]bool
-	Ports         map[string]string
+	// Nodes are the nodes to render, in display order. Disabled nodes are
+	// skipped, so a caller may pass the whole store.
+	Nodes         []node.Node
 	Members       []Member
-	HopRange      string
-	RealitySNI    string
-	RealityPriv   string
-	RealitySID    string
 	CertFullchain string
 	CertKey       string
 	// Stats asks for the experimental.v2ray_api block. It is not a host fact: it
@@ -35,80 +38,64 @@ type Params struct {
 	Stats bool
 }
 
-// ParamsFromState maps a persisted config into rendering parameters.
-func ParamsFromState(c state.Config) Params {
-	return Params{
-		Enabled:     c.Enabled,
-		Ports:       c.Ports,
-		HopRange:    c.HopRange,
-		RealitySNI:  c.RealitySNI,
-		RealityPriv: c.RealityPriv,
-		RealitySID:  c.RealitySID,
-	}
-}
-
-// Credentials is one member's secret fields for one protocol.
+// Credentials is one member's secret fields for one node.
 type Credentials struct {
 	UUID     string
 	Password string
 }
 
-// Member is one account as the core sees it. Name is the core user name, which
-// EasySB sets to the account's subscription token: it is the identity the stats
-// service reports, so a renamed account keeps its counters.
+// Member is one account as the core sees it, keyed by node id. Name is not
+// stored here because the core user name is unique per (account, node): it is
+// node.CoreName(Token, nodeID).
 type Member struct {
-	Name      string
-	Protocols map[string]bool
-	Cred      map[string]Credentials
-}
-
-func (m Member) selects(key string) bool {
-	return m.Protocols[key]
-}
-
-func (m Member) credential(key string) Credentials {
-	return m.Cred[key]
+	Token string
+	Nodes map[string]bool
+	Cred  map[string]Credentials
 }
 
 // MembersFrom converts accounts into the renderer's member list.
 func MembersFrom(users []user.User) []Member {
 	out := make([]Member, 0, len(users))
 	for _, u := range users {
-		protocols := make(map[string]bool, len(u.Protocols))
-		cred := make(map[string]Credentials, len(u.Protocols))
-		for _, key := range u.Protocols {
-			protocols[key] = true
-			c := u.Credential(key)
-			cred[key] = Credentials{UUID: c.UUID, Password: c.Password}
+		selected := make(map[string]bool, len(u.Nodes))
+		cred := make(map[string]Credentials, len(u.Nodes))
+		for _, id := range u.Nodes {
+			selected[id] = true
+			c := u.Credential(id)
+			cred[id] = Credentials{UUID: c.UUID, Password: c.Password}
 		}
-		out = append(out, Member{Name: u.Token, Protocols: protocols, Cred: cred})
+		out = append(out, Member{Token: u.Token, Nodes: selected, Cred: cred})
 	}
 	return out
 }
 
-// selectMembers returns the members that may use one protocol, in name order.
-func (p Params) selectMembers(key string) []Member {
-	var out []Member
-	for _, m := range p.Members {
-		if m.selects(key) {
-			out = append(out, m)
-		}
-	}
-	return out
+// binding is one core user entry: one account on one node. Building every
+// binding once and deriving both the inbounds and the stats list from it is what
+// makes the two lists impossible to disagree.
+type binding struct {
+	node  node.Node
+	token string
+	cred  Credentials
 }
 
-// protocolUsers renders the core user list of one protocol: one entry per
-// member that selected it. tweak adjusts the fields a protocol needs beyond the
-// credential itself, such as the VLESS flow.
-func (p Params) protocolUsers(key string, tweak func(*coreUser)) []coreUser {
-	var out []coreUser
-	for _, m := range p.selectMembers(key) {
-		cred := m.credential(key)
-		entry := coreUser{Name: m.Name, UUID: cred.UUID, Password: cred.Password}
-		if tweak != nil {
-			tweak(&entry)
+func (b binding) coreName() string {
+	return node.CoreName(b.token, b.node.ID)
+}
+
+// bindings lists every account that may use every node, in node order then
+// member order.
+func (p Params) bindings() []binding {
+	var out []binding
+	for _, n := range p.Nodes {
+		if !n.Enabled {
+			continue
 		}
-		out = append(out, entry)
+		for _, m := range p.Members {
+			if !m.Nodes[n.ID] {
+				continue
+			}
+			out = append(out, binding{node: n, token: m.Token, cred: m.Cred[n.ID]})
+		}
 	}
 	return out
 }
@@ -125,16 +112,14 @@ var paddingScheme = []string{
 	"7=500-1000",
 }
 
-// NeedsCert reports whether any enabled protocol (other than Reality) requires
-// a TLS certificate.
+// NeedsCert reports whether any enabled node (other than Reality) requires a TLS
+// certificate.
 func (p Params) NeedsCert() bool {
-	for _, k := range state.Keys {
-		if k == state.ProtoVLESSReality {
+	for _, n := range p.Nodes {
+		if !n.Enabled || n.Protocol == state.ProtoVLESSReality {
 			continue
 		}
-		if p.Enabled[k] {
-			return true
-		}
+		return true
 	}
 	return false
 }
@@ -144,7 +129,8 @@ func (p Params) NeedsCert() bool {
 // a core that was not built with that API refuses the whole document, so the
 // block is left out rather than written and rejected.
 func Build(p Params) ([]byte, error) {
-	inbounds, err := buildInbounds(p)
+	bindings := p.bindings()
+	inbounds, err := buildInbounds(p, bindings)
 	if err != nil {
 		return nil, err
 	}
@@ -157,20 +143,20 @@ func Build(p Params) ([]byte, error) {
 		doc.Experimental = &experimental{
 			V2RayAPI: v2rayAPI{
 				Listen: StatsListen,
-				Stats:  statsEntry{Enabled: true, Users: p.memberNames()},
+				Stats:  statsEntry{Enabled: true, Users: coreNames(bindings)},
 			},
 		}
 	}
 	return json.MarshalIndent(doc, "", "  ")
 }
 
-// memberNames lists the core user names the stats service should count. The
-// core counts nothing that is not named here, so this list and the inbounds are
-// always built from the same member slice.
-func (p Params) memberNames() []string {
-	out := make([]string, 0, len(p.Members))
-	for _, m := range p.Members {
-		out = append(out, m.Name)
+// coreNames lists the core user names the stats service should count. The core
+// counts nothing that is not named here, so this list and the inbounds are built
+// from the same binding slice.
+func coreNames(bindings []binding) []string {
+	out := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		out = append(out, b.coreName())
 	}
 	return out
 }
@@ -235,28 +221,14 @@ type handshake struct {
 	Port   int    `json:"server_port"`
 }
 
-func (p Params) port(key string) (int, error) {
-	raw := p.Ports[key]
-	if raw == "" {
-		raw = state.DefaultPorts[key]
+// checkPort refuses a node whose port cannot be a listen_port. The node store
+// validates 1-65535 on save; this is the renderer's own guard so a hand-edited
+// file cannot reach the core.
+func checkPort(n node.Node) error {
+	if n.Port < 1 || n.Port > 65535 {
+		return fmt.Errorf("node %q has invalid port %d", n.Name, n.Port)
 	}
-	var n int
-	if _, err := fmt.Sscanf(raw, "%d", &n); err != nil || n < 1 || n > 65535 {
-		return 0, fmt.Errorf("invalid port %q for %s", raw, key)
-	}
-	return n, nil
-}
-
-func (p Params) base(key string) (map[string]any, error) {
-	port, err := p.port(key)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"tag":         key,
-		"listen":      "::",
-		"listen_port": port,
-	}, nil
+	return nil
 }
 
 func (p Params) certTLS(alpn []string) tlsConfig {
@@ -268,96 +240,98 @@ func (p Params) certTLS(alpn []string) tlsConfig {
 	}
 }
 
-func buildInbounds(p Params) ([]any, error) {
+// buildInbounds renders one inbound per enabled node. The account entries of a
+// node come from the bindings of that node only.
+func buildInbounds(p Params, bindings []binding) ([]any, error) {
+	byNode := make(map[string][]binding, len(p.Nodes))
+	for _, b := range bindings {
+		byNode[b.node.ID] = append(byNode[b.node.ID], b)
+	}
+
 	var out []any
-
-	if p.Enabled[state.ProtoAnyTLS] {
-		m, err := p.base(state.ProtoAnyTLS)
-		if err != nil {
+	for _, n := range p.Nodes {
+		if !n.Enabled {
+			continue
+		}
+		if err := checkPort(n); err != nil {
 			return nil, err
 		}
-		m["type"] = "anytls"
-		m["users"] = p.protocolUsers(state.ProtoAnyTLS, nil)
-		m["padding_scheme"] = paddingScheme
-		m["tls"] = p.certTLS([]string{"h3", "h2", "http/1.1"})
-		out = append(out, m)
-	}
-
-	if p.Enabled[state.ProtoHysteria2] {
-		m, err := p.base(state.ProtoHysteria2)
-		if err != nil {
-			return nil, err
+		users := coreUsers(byNode[n.ID], n.Protocol)
+		m := map[string]any{
+			"tag":         n.ID,
+			"listen":      "::",
+			"listen_port": n.Port,
+			"users":       users,
 		}
-		m["type"] = "hysteria2"
-		m["up_mbps"] = 100
-		m["down_mbps"] = 20
-		m["users"] = p.protocolUsers(state.ProtoHysteria2, nil)
-		tls := p.certTLS([]string{"h3"})
-		m["tls"] = tls
-		out = append(out, m)
-	}
-
-	if p.Enabled[state.ProtoTUIC] {
-		m, err := p.base(state.ProtoTUIC)
-		if err != nil {
-			return nil, err
+		switch n.Protocol {
+		case state.ProtoAnyTLS:
+			m["type"] = "anytls"
+			m["padding_scheme"] = paddingScheme
+			m["tls"] = p.certTLS([]string{"h3", "h2", "http/1.1"})
+		case state.ProtoHysteria2:
+			m["type"] = "hysteria2"
+			m["up_mbps"] = 100
+			m["down_mbps"] = 20
+			m["tls"] = p.certTLS([]string{"h3"})
+		case state.ProtoTUIC:
+			m["type"] = "tuic"
+			m["congestion_control"] = "bbr"
+			m["auth_timeout"] = "3s"
+			m["zero_rtt_handshake"] = false
+			m["heartbeat"] = "10s"
+			m["tls"] = p.certTLS([]string{"h3"})
+		case state.ProtoVLESSReality:
+			sni := n.Param(node.ParamRealitySNI)
+			if sni == "" {
+				sni = state.DefaultSNI
+			}
+			m["type"] = "vless"
+			m["tls"] = tlsConfig{
+				Enabled:    true,
+				ServerName: sni,
+				Reality: &realityConfig{
+					Enabled:   true,
+					Handshake: handshake{Server: sni, Port: 443},
+					Private:   n.Param(node.ParamRealityPrivate),
+					ShortID:   []string{n.Param(node.ParamRealityShortID)},
+				},
+			}
+		case state.ProtoVMessWSTLS:
+			m["type"] = "vmess"
+			m["multiplex"] = map[string]any{"enabled": true, "padding": false}
+			m["transport"] = map[string]any{
+				"type":                   "ws",
+				"path":                   "/vmess",
+				"max_early_data":         2048,
+				"early_data_header_name": "Sec-WebSocket-Protocol",
+			}
+			m["tls"] = p.certTLS(nil)
+		default:
+			return nil, fmt.Errorf("node %q has unknown protocol %q", n.Name, n.Protocol)
 		}
-		m["type"] = "tuic"
-		m["users"] = p.protocolUsers(state.ProtoTUIC, nil)
-		m["congestion_control"] = "bbr"
-		m["auth_timeout"] = "3s"
-		m["zero_rtt_handshake"] = false
-		m["heartbeat"] = "10s"
-		m["tls"] = p.certTLS([]string{"h3"})
-		out = append(out, m)
-	}
-
-	if p.Enabled[state.ProtoVLESSReality] {
-		m, err := p.base(state.ProtoVLESSReality)
-		if err != nil {
-			return nil, err
-		}
-		m["type"] = "vless"
-		m["tag"] = state.ProtoVLESSReality
-		m["users"] = p.protocolUsers(state.ProtoVLESSReality, func(u *coreUser) {
-			u.Flow = "xtls-rprx-vision"
-		})
-		m["tls"] = tlsConfig{
-			Enabled:    true,
-			ServerName: p.RealitySNI,
-			Reality: &realityConfig{
-				Enabled:   true,
-				Handshake: handshake{Server: p.RealitySNI, Port: 443},
-				Private:   p.RealityPriv,
-				ShortID:   []string{p.RealitySID},
-			},
-		}
-		out = append(out, m)
-	}
-
-	if p.Enabled[state.ProtoVMessWSTLS] {
-		m, err := p.base(state.ProtoVMessWSTLS)
-		if err != nil {
-			return nil, err
-		}
-		zero := 0
-		m["type"] = "vmess"
-		m["users"] = p.protocolUsers(state.ProtoVMessWSTLS, func(u *coreUser) {
-			u.AlterID = &zero
-		})
-		m["multiplex"] = map[string]any{"enabled": true, "padding": false}
-		m["transport"] = map[string]any{
-			"type":                   "ws",
-			"path":                   "/vmess",
-			"max_early_data":         2048,
-			"early_data_header_name": "Sec-WebSocket-Protocol",
-		}
-		m["tls"] = p.certTLS(nil)
 		out = append(out, m)
 	}
 
 	if len(out) == 0 {
-		return nil, errors.New("no protocol enabled")
+		return nil, ErrNoNodes
 	}
 	return out, nil
+}
+
+// coreUsers renders one node's user list. The VLESS flow and the VMess alter id
+// are the fields a protocol needs beyond the credential itself.
+func coreUsers(bindings []binding, protocol string) []coreUser {
+	out := make([]coreUser, 0, len(bindings))
+	for _, b := range bindings {
+		entry := coreUser{Name: b.coreName(), UUID: b.cred.UUID, Password: b.cred.Password}
+		switch protocol {
+		case state.ProtoVLESSReality:
+			entry.Flow = "xtls-rprx-vision"
+		case state.ProtoVMessWSTLS:
+			zero := 0
+			entry.AlterID = &zero
+		}
+		out = append(out, entry)
+	}
+	return out
 }

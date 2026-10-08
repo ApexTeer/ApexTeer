@@ -151,12 +151,17 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   the panel issued itself, not the self-signed placeholder. Publishing an
   `https://` URL for a listener that fell back to HTTP (no certificate, or only
   the self-signed one, which clients reject) breaks every import.
-- **The core user name is the subscription token.** The V2Ray counter key is
+- **The core user name is `<token>@<node id>`.** The V2Ray counter key is
   `user>>><name>>>traffic>>>…`, so the name is also a `QueryStats` regex
-  pattern: a token is ASCII by construction and survives a rename, while a display
-  name may be Chinese or contain regex metacharacters. The inbound `users` arrays
-  and `stats.users` must always come from the same predicate
+  pattern: a token and a node id are ASCII by construction and survive a rename,
+  while a display name may be Chinese or contain regex metacharacters. The
+  per-node suffix is what keeps two nodes' counters apart. The inbound `users`
+  arrays and `stats.users` must always come from the same predicate
   (`user.Store.Routable`), or an account is authenticated but never counted.
+- **A node id may not appear twice in one config.** Two nodes with the same id, or
+  an account selected on a node that no longer exists, silently collide on one
+  counter name and on one port. The node store is the only source of inbounds;
+  deleting a node cascades its selection out of every account in the same action.
 - **Counters are deltas, never absolutes.** The counters live in the running core
   and reset on restart, so the accounting loop persists differences and clamps a
   negative delta to zero.

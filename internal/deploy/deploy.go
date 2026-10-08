@@ -1,8 +1,8 @@
-// Package deploy turns the node state and the account list into a running
-// deployment: it renders config.json, validates it with the core, restarts the
-// service and records which accounts are live. The panel and the subscription
-// service both go through it, so a change made in either one produces the same
-// configuration.
+// Package deploy turns the node store and the account list into a running
+// deployment: it renders config.json, validates it with the core, installs and
+// starts the core on first use, restarts it on later changes, and records which
+// accounts are live. The panel and the subscription service both go through it,
+// so a change made in either one produces the same configuration.
 package deploy
 
 import (
@@ -15,6 +15,7 @@ import (
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
 	"github.com/EasySBTeam/EasySB/internal/config"
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/sbcore"
 	"github.com/EasySBTeam/EasySB/internal/service"
 	"github.com/EasySBTeam/EasySB/internal/state"
@@ -29,37 +30,52 @@ var ErrRejected = errors.New("the core rejected the generated configuration")
 // provide them.
 var ErrNoStats = errors.New("this build of the panel carries no V2Ray API")
 
-// ErrNoRealityKey is returned when Reality is enabled but no keypair is recorded.
-// The panel generates one during deployment; rendering without it would produce a
-// document the core refuses as a whole.
-var ErrNoRealityKey = errors.New("the Reality inbound needs a keypair, and none is recorded")
+// ErrNoNodes is returned when nothing is enabled, so there is no inbound to
+// serve. The caller reports it instead of writing a document the core refuses.
+var ErrNoNodes = config.ErrNoNodes
 
-// ServerConfig renders the core configuration for a set of accounts. The
-// listener set is exactly the given accounts, so a caller that leaves an account
-// out also removes its credentials from the core.
+// ErrNoRealityKey is returned when a Reality node carries no keypair. The node
+// store generates one when the node is created; a hand-edited store that lost it
+// is refused here rather than handed to a core that rejects the whole document.
+var ErrNoRealityKey = errors.New("the Reality node needs a keypair, and none is recorded")
+
+// ServerConfig renders the core configuration for a set of nodes and accounts.
+// The listener set is exactly the enabled nodes, and each node authenticates
+// only the accounts that selected it.
 //
 // Whether the document carries the experimental.v2ray_api block is asked of the
 // build, not of the host: with_v2ray_api is a compile-time tag, and a core
 // without it rejects a configuration naming the API whole.
-//
-// The one thing the renderer refuses outright is a Reality inbound without a
-// keypair: sing-box rejects the whole document over it ("invalidate private key"),
-// so returning an error here names the missing piece instead of handing the
-// service something it cannot start.
-func ServerConfig(cfg state.Config, accounts []user.User) ([]byte, error) {
-	if cfg.Enabled[state.ProtoVLESSReality] && cfg.RealityPriv == "" {
-		return nil, ErrNoRealityKey
+func ServerConfig(cfg state.Config, nodes []node.Node, accounts []user.User) ([]byte, error) {
+	if !anyEnabled(nodes) {
+		return nil, ErrNoNodes
+	}
+	for _, n := range nodes {
+		if n.Enabled && n.Protocol == state.ProtoVLESSReality && n.Param(node.ParamRealityPrivate) == "" {
+			return nil, ErrNoRealityKey
+		}
 	}
 	pair, err := cert.ResolveActive(cfg.Domain)
 	if err != nil {
 		return nil, err
 	}
-	params := config.ParamsFromState(cfg)
-	params.CertFullchain = pair.Fullchain
-	params.CertKey = pair.Key
-	params.Members = config.MembersFrom(accounts)
-	params.Stats = sbcore.StatsCapable()
-	return config.Build(params)
+	return config.Build(config.Params{
+		Nodes:         nodes,
+		Members:       config.MembersFrom(accounts),
+		CertFullchain: pair.Fullchain,
+		CertKey:       pair.Key,
+		Stats:         sbcore.StatsCapable(),
+	})
+}
+
+// anyEnabled reports whether at least one node is enabled.
+func anyEnabled(nodes []node.Node) bool {
+	for _, n := range nodes {
+		if n.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // The document lands at these paths. They are variables so that a test can render a
@@ -71,11 +87,11 @@ var (
 )
 
 // WriteServerConfig renders the configuration and writes it to
-// /etc/sing-box/config.json. The document carries every account's credentials — the
-// uuid and password of each enabled protocol — so it is 0600, the same rule the account
-// store follows. Only the core reads it, and the core runs as root.
-func WriteServerConfig(cfg state.Config, accounts []user.User) ([]byte, error) {
-	data, err := ServerConfig(cfg, accounts)
+// /etc/sing-box/config.json. The document carries every account's credentials, so
+// it is 0600, the same rule the account store follows. Only the core reads it, and
+// the core runs as root.
+func WriteServerConfig(cfg state.Config, nodes []node.Node, accounts []user.User) ([]byte, error) {
+	data, err := ServerConfig(cfg, nodes, accounts)
 	if err != nil {
 		return nil, err
 	}
@@ -107,29 +123,32 @@ func writeConfigFile(data []byte) error {
 // document the engine refuses, which would otherwise depend on the build tags.
 var checkConfig = sbcore.Check
 
-// Apply writes the configuration for the given accounts, validates it and
-// restarts the core. A node that was never deployed is left alone: there is no
-// certificate and no service to restart yet, and pre-created accounts must not
-// fail the caller.
-//
-// There is no "is the core installed" gate any more: the core is this binary, so
-// the only question left is whether the core accepts the document, which is
-// answered by running the real engine over it.
-func Apply(ctx context.Context, cfg state.Config, accounts []user.User) error {
-	if !cfg.NodeDeployed {
+// Apply writes the configuration for the given nodes and accounts, validates it
+// and makes it live. A first accepted configuration installs, enables and starts
+// the core unit; a later change restarts it. When the running core already serves
+// the same document, nothing happens, so an edit the core cannot see does not
+// drop every live connection.
+func Apply(ctx context.Context, cfg state.Config, nodes []node.Node, accounts []user.User) error {
+	if !anyEnabled(nodes) {
+		return ErrNoNodes
+	}
+	if live, err := ServerConfig(cfg, nodes, accounts); err == nil && service.Active(ctx) && sameAsLive(live) {
 		return nil
 	}
-	// The core config carries credentials, not quotas, remarks or expiry, so most
-	// account edits render the very same document. Comparing first keeps such an
-	// edit from restarting the core and dropping every live connection for a change
-	// the core never sees.
-	if live, err := ServerConfig(cfg, accounts); err == nil && service.Active(ctx) && sameAsLive(live) {
-		return nil
-	}
-	if _, err := ApplyConfig(ctx, cfg, accounts); err != nil {
+	if _, err := ApplyConfig(ctx, cfg, nodes, accounts); err != nil {
 		return err
 	}
-	return service.Do(ctx, "restart")
+	if service.Active(ctx) {
+		return service.Do(ctx, "restart")
+	}
+	// First accepted configuration: install the unit and start the core. Enabling
+	// is best-effort, because a caller without permission to enable must still be
+	// able to start it.
+	if err := service.WriteUnit(); err != nil {
+		return err
+	}
+	_ = service.Do(ctx, "enable")
+	return service.Do(ctx, "start")
 }
 
 // sameAsLive reports whether data is exactly what the live config file holds.
@@ -145,8 +164,8 @@ func sameAsLive(data []byte) bool {
 // it to the live path. The core is shown a temporary file beside the live one, so a
 // document it refuses leaves the configuration a running node is serving untouched,
 // and the install is a rename within one directory. It returns the accepted document.
-func ApplyConfig(ctx context.Context, cfg state.Config, accounts []user.User) ([]byte, error) {
-	data, err := ServerConfig(cfg, accounts)
+func ApplyConfig(ctx context.Context, cfg state.Config, nodes []node.Node, accounts []user.User) ([]byte, error) {
+	data, err := ServerConfig(cfg, nodes, accounts)
 	if err != nil {
 		return nil, err
 	}
@@ -181,11 +200,15 @@ func ApplyConfig(ctx context.Context, cfg state.Config, accounts []user.User) ([
 	return data, nil
 }
 
-// ApplyStore applies the accounts that may be live right now and records them,
-// which is the single write path for a change made in the panel. The store is
-// reloaded under the account lock, so the set that is applied and marked as such is
-// the one on disk now, not a copy a caller read before another writer committed.
-func ApplyStore(ctx context.Context, cfg state.Config, accountsPath string) error {
+// ApplyStore applies the nodes and the accounts that may be live right now and
+// records the latter, which is the single write path for a change made in the
+// panel. Both stores are reloaded under their locks, so the set that is applied
+// and marked as such is the one on disk now.
+func ApplyStore(ctx context.Context, cfg state.Config, nodesPath, accountsPath string) error {
+	nodes, err := LoadNodes(nodesPath)
+	if err != nil {
+		return err
+	}
 	store, lock, err := user.Locked(accountsPath)
 	if err != nil {
 		return err
@@ -194,10 +217,27 @@ func ApplyStore(ctx context.Context, cfg state.Config, accountsPath string) erro
 	now := time.Now()
 	// A file that predates a credential field is repaired here, on a write path,
 	// and the result is saved with the rest of this change.
-	store.Repair()
-	if err := Apply(ctx, cfg, store.Routable(now)); err != nil {
+	protocols := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		protocols[n.ID] = n.Protocol
+	}
+	store.Repair(protocols)
+	if err := Apply(ctx, cfg, nodes, store.Routable(now)); err != nil {
 		return err
 	}
 	store.MarkApplied(now)
 	return store.Save()
+}
+
+// LoadNodes loads the node store and returns every node. A caller that renders
+// filters enabled nodes; an empty store is not an error here.
+func LoadNodes(path string) ([]node.Node, error) {
+	if path == "" {
+		return nil, nil
+	}
+	store, err := node.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return store.Nodes(), nil
 }

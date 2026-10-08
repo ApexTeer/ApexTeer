@@ -46,10 +46,11 @@ editing.
 
 | Path | Owner | Purpose |
 | :--- | :--- | :--- |
-| `/etc/sing-box/easysb.conf` | `internal/state` | persisted node state, legacy-compatible KV |
+| `/etc/sing-box/easysb.conf` | `internal/state` | persisted host state (domain, certificate, subscription port, sync interval), legacy-compatible KV |
 | `/etc/sing-box/config.json` | `internal/config` | rendered server config; carries the same credentials as the account store, so it is `0600` too |
 | `/etc/sing-box/cert/` | `internal/cert` | the self-signed placeholder pair, used until a real certificate is issued |
 | `/etc/sing-box/easysb-users.json` | `internal/user` | accounts: credentials, quotas, expiry and counters (`0600`) |
+| `/etc/sing-box/easysb-nodes.json` | `internal/node` | nodes: one protocol inbound each (id, name, protocol, port, parameters, enabled) (`0600`) |
 | `/etc/systemd/system/easysb.service` | `internal/service` | subscription service unit (`easysb --serve`) |
 | `/etc/systemd/system/sing-box.service` | `internal/service` | core service unit |
 | `/etc/sing-box/acme/` | `internal/cert` | ACME state, overridable with `EASYSB_ACME_DIR`: `account.key` and `account.json` (`0600`), then one directory per domain holding `fullchain.cer` (`0644`) and `private.key` (`0600`) |
@@ -97,19 +98,20 @@ serves every distribution, so there is no `dists/` split and no `pool/`.
 | Package | Responsibility |
 | :--- | :--- |
 | `internal/tui` | bubbletea model, full-screen dashboard, menu tree, forms, panels, progress |
-| `internal/state` | read/write `easysb.conf`; protocol keys, default ports, default parameters |
-| `internal/config` | render the sing-box server configuration from state |
+| `internal/state` | read/write `easysb.conf`: the host settings and the legacy protocol keys, which are read once to migrate a deployment and then dropped |
+| `internal/node` | the node store: explicit protocol inbounds and the one-time migration from the legacy per-protocol state keys |
+| `internal/config` | render the sing-box server configuration from the nodes and the live accounts |
 | `internal/deploy` | the deploy path both the panel and the subscription service go through: render, write `config.json` (`0600`), have the carried engine accept it, restart the core, record which accounts are live |
 | `internal/sbcore` | the core compiled in: `Run` (the node, `easysb core run`), `Check` (config acceptance by the real engine), `Version`, and the `with_v2ray_api` capability as a tagged file pair |
 | `internal/download` | the one HTTP-to-file path left: the panel's own release and the BBR kernel packages, with progress readings |
 | `internal/cert` | ACME issuance in process through lego (HTTP-01 standalone): the account, issue/renew/remove certificates, expiry decisions, the renewal timer unit, the self-signed fallback |
 | `internal/prefs` | remember and re-apply the interface choices: skin, palette, marker set, language |
-| `internal/firewall` | Hysteria2 port-hopping DNAT rules and the boot restore unit |
+| `internal/firewall` | per-node Hysteria2 port-hopping DNAT rules and the boot restore unit |
 | `internal/bbr` | BBR: read the running kernel's congestion control state, enable it through sysctl drop-ins (recording what they replaced so clearing can undo them), and install the prebuilt BBRv3 kernels published by Linux-BBR-v3 (release/tag discovery, mirror fallback, dpkg) |
-| `internal/user` | account model and store: per-protocol credentials, quota/expiry evaluation, subscription tokens |
+| `internal/user` | account model and store: per-node credentials, node selection, quota/expiry evaluation, subscription tokens |
 | `internal/subd` | subscription HTTP service: TLS, User-Agent negotiation, response headers, accounting loop |
 | `internal/stats` | gRPC client for the core's `StatsService`, usage accounting, quota enforcement |
-| `internal/subscribe` | subscription URLs, per-protocol share links, QR payloads, and the sing-box JSON, mihomo YAML and v2rayN base64 documents for one account |
+| `internal/subscribe` | subscription URLs, per-node share links, QR payloads, and the sing-box JSON, mihomo YAML and v2rayN base64 documents for one account |
 | `internal/secret` | random UUID / password / Reality keypair generation |
 | `internal/service` | systemd detection, install, start/stop, status |
 | `internal/sysinfo` | host/device/core/service status for the dashboard: local IPv4/IPv6, CPU cores, load, memory, swap, disk and uptime |
@@ -201,28 +203,42 @@ graph TD
 unit starts, `core check` validates a configuration with the same engine, and
 `core version` prints the sing-box release this binary carries.
 
+Before either the panel or the service starts, `main.go` runs the one-time store
+migrations (`node.Migrate`, then `user.MigrateV2`): a legacy deployment's enabled
+protocols become one node each and its protocol selection becomes a node
+selection. The migration is idempotent, so a already-migrated store is left
+untouched.
+
 The TUI is a tree of `menu` and `node` values (`internal/tui/menu.go`). Leaves
 carry an `actionFunc`; branches carry a `sub *menu`. Actions call the domain
 packages and report back through the app's log/progress channel.
 
 ## Deploy path
 
-1. `internal/user` loads the accounts and generates the credentials every enabled
-   protocol needs.
+There is no separate "deploy" step. Every node or account change runs the same
+path (`internal/deploy.ApplyStore`), so what the panel shows and what the core
+runs can never drift:
+
+1. `internal/node` loads the node store; `internal/user` loads the accounts and
+   generates the credentials each account's selected nodes need.
 2. `internal/cert` resolves or issues a certificate.
-3. `internal/config` renders `/etc/sing-box/config.json` from the node state, the
-   accounts that may be live and the templates. The `experimental.v2ray_api` block
-   is included only when `sbcore.StatsCapable()` says this build carries the API.
+3. `internal/config` renders `/etc/sing-box/config.json` from the nodes, the
+   accounts that may be live and the templates. Every enabled node becomes one
+   inbound; the core user name is `<token>@<node id>`, so per-node accounting
+   works. The `experimental.v2ray_api` block is included only when
+   `sbcore.StatsCapable()` says this build carries the API.
 4. `internal/sbcore` accepts or refuses the rendered document: the same engine that
-   would serve it builds it and closes it again, so a config the node cannot start
-   never reaches the service.
-5. `internal/service` installs and starts the `sing-box.service` unit, which runs
-   this panel in node mode (`easysb core run -c …`).
+   would serve it builds it and closes it again, so a config the core cannot start
+   never reaches the service. A refusal keeps the running configuration.
+5. `internal/service` installs and starts the `sing-box.service` unit on the first
+   node, which runs this panel in core mode (`easysb core run -c …`); later changes
+   only restart it.
 6. The operator installs `easysb.service` from `订阅管理`; `easysb --serve`
    answers subscriptions and accounts traffic.
 
-State is written after each successful step, so a partial deployment can be
-resumed.
+The node store and the account store are each written under their own lock before
+the core is touched, so a failed render or a refused config leaves the previous
+deployment running.
 
 ## Subscription endpoints
 

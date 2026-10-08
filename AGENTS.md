@@ -61,14 +61,19 @@ make screens    # render every screen and assert the layout (python3)
   distribution; `install.sh` still maps a machine's `/etc/os-release` to a supported
   release, purely to reject one we do not ship for.
 - Keep `/etc/sing-box/easysb.conf` compatible with the legacy shell tool. Add
-  keys, do not rename or repurpose them. The one exception is a key that
-  described a component which no longer exists (v4 dropped `SUB_PORT` and
-  `SUB_PATH` with the nginx site); removing such a key is part of the same
-  change that removes the component, and the docs change with it.
+  keys, do not rename or repurpose them. A key that describes state a package now
+  owns is the exception: v4 dropped `SUB_PORT` and `SUB_PATH` with the nginx site,
+  and v6 dropped the per-protocol keys (`IS_*`, `PORT_*`, `HY2_HOP_RANGE`,
+  `REALITY_*`) once `internal/node` took over what the host serves. The migration
+  reads those keys, the next save drops them, and the docs change in the same
+  commit.
+- The node store `/etc/sing-box/easysb-nodes.json` is the only source of what the
+  host serves: one node is one protocol inbound with its own port and parameters.
+  The rendered config's inbounds come from the enabled nodes and nowhere else.
 - The account store `/etc/sing-box/easysb-users.json` is the only source of
-  credentials. The core user name is the account token, and the inbound `users`
-  arrays and `stats.users` must both come from `user.Store.Routable`, or an
-  account is authenticated but never counted.
+  credentials. The core user name is `<token>@<node id>`, and the inbound `users`
+  arrays and `stats.users` must both come from the account store's routable set,
+  or an account is authenticated but never counted.
 - Every user-facing string goes through `internal/i18n` for both `C` and `E`,
   except the toolbox's own report bodies: a tool's row labels, summaries and notes
   are the tool's own words on purpose (see `docs/toolbox.md`).

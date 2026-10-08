@@ -24,6 +24,7 @@ import (
 	"github.com/EasySBTeam/EasySB/internal/deploy"
 	"github.com/EasySBTeam/EasySB/internal/firewall"
 	"github.com/EasySBTeam/EasySB/internal/i18n"
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/prefs"
 	"github.com/EasySBTeam/EasySB/internal/sbcore"
 	"github.com/EasySBTeam/EasySB/internal/service"
@@ -123,6 +124,7 @@ func main() {
 	}
 
 	if *serve {
+		migrateStores()
 		runSubscribeService()
 		return
 	}
@@ -137,6 +139,10 @@ func main() {
 	applySkin(*skinFlag)
 	lang := i18n.Parse(firstNonEmpty(*langFlag, os.Getenv("EASYSB_LANG")))
 
+	// A v5 deployment is upgraded before the panel reads either store, so the
+	// render, the menus and the first apply all see the explicit node model.
+	migrateStores()
+
 	app := tui.New(resolveVersion(), lang)
 
 	if *render {
@@ -148,6 +154,20 @@ func main() {
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// migrateStores upgrades a v5 single-node deployment to the explicit node model
+// before anything reads the stores. It is idempotent, and on an already migrated
+// host it only completes a pending account-file schema upgrade.
+func migrateStores() {
+	created, err := node.Migrate(state.Load(), sysinfo.NodesFile, sysinfo.UsersFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "migrate: "+err.Error())
+		os.Exit(1)
+	}
+	if created {
+		fmt.Fprintln(os.Stderr, "migrated the v5 deployment to the node model")
 	}
 }
 
@@ -415,9 +435,10 @@ func runSubscribeService() {
 	options := subd.Options{
 		Version:      resolveVersion(),
 		AccountsPath: sysinfo.UsersFile,
+		NodesPath:    sysinfo.NodesFile,
 		Dial:         func() (stats.Counter, error) { return stats.Dial(config.StatsListen) },
-		Apply: func(ctx context.Context, cfg state.Config, accounts []user.User) error {
-			return deploy.Apply(ctx, cfg, accounts)
+		Apply: func(ctx context.Context, cfg state.Config, nodes []node.Node, accounts []user.User) error {
+			return deploy.Apply(ctx, cfg, nodes, accounts)
 		},
 		Log: logf,
 	}
@@ -432,11 +453,16 @@ func runSubscribeService() {
 func runApplyFirewall() {
 	cfg := state.Load()
 	log := func(line string) { fmt.Println(line) }
-	if err := firewall.Apply(context.Background(), cfg, log); err != nil {
+	nodes, err := node.Load(sysinfo.NodesFile)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if err := firewall.WriteUnit(cfg); err != nil {
+	if err := firewall.Apply(context.Background(), cfg, nodes.Nodes(), log); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := firewall.WriteUnit(nodes.Nodes()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

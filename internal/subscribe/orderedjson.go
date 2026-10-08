@@ -27,6 +27,28 @@ type jsonMember struct {
 
 func (v *jsonValue) array() bool { return v != nil && v.kind == '[' }
 
+// clone returns a deep copy, so a per-node outbound can be edited without
+// mutating the shared template block two same-protocol nodes both clone.
+func (v *jsonValue) clone() *jsonValue {
+	if v == nil {
+		return nil
+	}
+	out := &jsonValue{kind: v.kind, str: v.str, num: v.num, boolean: v.boolean}
+	if v.obj != nil {
+		out.obj = make([]jsonMember, len(v.obj))
+		for i, m := range v.obj {
+			out.obj[i] = jsonMember{key: m.key, value: m.value.clone()}
+		}
+	}
+	if v.arr != nil {
+		out.arr = make([]*jsonValue, len(v.arr))
+		for i, e := range v.arr {
+			out.arr[i] = e.clone()
+		}
+	}
+	return out
+}
+
 // get returns the member stored under key, or nil when it is absent.
 func (v *jsonValue) get(key string) *jsonValue {
 	if v == nil || v.kind != '{' {

@@ -8,7 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/EasySBTeam/EasySB/internal/i18n"
-	"github.com/EasySBTeam/EasySB/internal/state"
+	sbnode "github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/theme"
 )
 
@@ -183,12 +183,12 @@ func humanDuration(d time.Duration) string {
 	return b.String()
 }
 
-// portSummary lists the enabled protocol ports for the node card.
-func portSummary(cfg state.Config) string {
+// portSummary lists the enabled node ports for the parameters card.
+func portSummary(nodes []sbnode.Node) string {
 	var out []string
-	for _, k := range state.Keys {
-		if cfg.Enabled[k] && cfg.Ports[k] != "" {
-			out = append(out, state.Labels[k]+":"+cfg.Ports[k])
+	for _, n := range nodes {
+		if n.Enabled {
+			out = append(out, fmt.Sprintf("%s:%d", n.Name, n.Port))
 		}
 	}
 	return strings.Join(out, "  ")

@@ -7,9 +7,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
+
+// testNodeID is the node every fixture account selects. The core reports counters
+// keyed by CoreName, so the fake readings use core(...) as their key.
+const testNodeID = "node-1"
+
+func core(token string) string { return node.CoreName(token, testNodeID) }
 
 // fakeSource is a counter source whose readings the test controls.
 type fakeSource struct {
@@ -39,7 +46,7 @@ func account(t *testing.T, name string, edit func(*user.User)) (*user.Store, str
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	u := user.New(name, state.Keys, now)
+	u := user.New(name, []user.Selection{{Node: testNodeID, Protocol: state.ProtoAnyTLS}}, now)
 	u.Token = "token-" + name
 	edit(&u)
 	if err := store.Add(u); err != nil {
@@ -62,7 +69,7 @@ func newLoop(t *testing.T, path string, source *fakeSource, now time.Time) (*Loo
 		AccountsPath: path,
 		Node:         state.Default,
 		Dial:         func() (Counter, error) { return source, nil },
-		Apply: func(context.Context, state.Config, []user.User) error {
+		Apply: func(context.Context, state.Config, []node.Node, []user.User) error {
 			applied++
 			return nil
 		},
@@ -93,7 +100,7 @@ func TestLoopAccountsDeltas(t *testing.T) {
 
 	// The first cycle only establishes the baseline: the core counters began
 	// before EasySB could observe them.
-	source.readings = Counters{"token-alice": {Upload: 100, Download: 400}}
+	source.readings = Counters{core("token-alice"): {Upload: 100, Download: 400}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("first tick: %v", err)
 	}
@@ -101,7 +108,7 @@ func TestLoopAccountsDeltas(t *testing.T) {
 		t.Fatalf("first cycle should not charge traffic, used = %d", got.UsedBytes)
 	}
 
-	source.readings = Counters{"token-alice": {Upload: 300, Download: 900}}
+	source.readings = Counters{core("token-alice"): {Upload: 300, Download: 900}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("second tick: %v", err)
 	}
@@ -119,12 +126,12 @@ func TestLoopAccountsDeltas(t *testing.T) {
 
 func TestLoopKeepsUsageAcrossCoreRestart(t *testing.T) {
 	_, path, now := account(t, "alice", func(*user.User) {})
-	source := &fakeSource{readings: Counters{"token-alice": {Upload: 0, Download: 0}}}
+	source := &fakeSource{readings: Counters{core("token-alice"): {Upload: 0, Download: 0}}}
 	loop, _ := newLoop(t, path, source, now)
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
-	source.readings = Counters{"token-alice": {Upload: 5000, Download: 5000}}
+	source.readings = Counters{core("token-alice"): {Upload: 5000, Download: 5000}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("charge: %v", err)
 	}
@@ -132,7 +139,7 @@ func TestLoopKeepsUsageAcrossCoreRestart(t *testing.T) {
 	// A core restart resets its counters. The account keeps what it already used,
 	// and the post-restart reading is charged as well: those bytes happened after
 	// the restart and nobody has counted them yet.
-	source.readings = Counters{"token-alice": {Upload: 10, Download: 10}}
+	source.readings = Counters{core("token-alice"): {Upload: 10, Download: 10}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("after restart: %v", err)
 	}
@@ -147,19 +154,19 @@ func TestLoopKeepsUsageAcrossCoreRestart(t *testing.T) {
 // traffic between the last sample and the restart from being swallowed.
 func TestLoopKeepsBaselineAcrossServiceRestart(t *testing.T) {
 	_, path, now := account(t, "alice", func(*user.User) {})
-	source := &fakeSource{readings: Counters{"token-alice": {Upload: 0, Download: 0}}}
+	source := &fakeSource{readings: Counters{core("token-alice"): {Upload: 0, Download: 0}}}
 	loop, _ := newLoop(t, path, source, now)
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
-	source.readings = Counters{"token-alice": {Upload: 1000, Download: 0}}
+	source.readings = Counters{core("token-alice"): {Upload: 1000, Download: 0}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("charge: %v", err)
 	}
 
 	// The service restarts, the core does not.
 	restarted, _ := newLoop(t, path, source, now)
-	source.readings = Counters{"token-alice": {Upload: 1500, Download: 0}}
+	source.readings = Counters{core("token-alice"): {Upload: 1500, Download: 0}}
 	if err := restarted.Tick(context.Background()); err != nil {
 		t.Fatalf("after restart: %v", err)
 	}
@@ -171,13 +178,13 @@ func TestLoopKeepsBaselineAcrossServiceRestart(t *testing.T) {
 
 func TestLoopSuspendsOverQuotaOnce(t *testing.T) {
 	_, path, now := account(t, "alice", func(u *user.User) { u.QuotaBytes = 1000 })
-	source := &fakeSource{readings: Counters{"token-alice": {Upload: 0, Download: 0}}}
+	source := &fakeSource{readings: Counters{core("token-alice"): {Upload: 0, Download: 0}}}
 	loop, applied := newLoop(t, path, source, now)
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
 
-	source.readings = Counters{"token-alice": {Upload: 800, Download: 800}}
+	source.readings = Counters{core("token-alice"): {Upload: 800, Download: 800}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("over quota: %v", err)
 	}
@@ -211,12 +218,12 @@ func TestLoopSuspendsOverQuotaOnce(t *testing.T) {
 func TestLoopResumesAfterReset(t *testing.T) {
 	store, path, now := account(t, "alice", func(u *user.User) { u.QuotaBytes = 1000 })
 	_ = store
-	source := &fakeSource{readings: Counters{"token-alice": {Upload: 0, Download: 0}}}
+	source := &fakeSource{readings: Counters{core("token-alice"): {Upload: 0, Download: 0}}}
 	loop, applied := newLoop(t, path, source, now)
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
-	source.readings = Counters{"token-alice": {Upload: 900, Download: 900}}
+	source.readings = Counters{core("token-alice"): {Upload: 900, Download: 900}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("over quota: %v", err)
 	}
@@ -228,7 +235,7 @@ func TestLoopResumesAfterReset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	source.readings = Counters{"token-alice": {Upload: 900, Download: 900}}
+	source.readings = Counters{core("token-alice"): {Upload: 900, Download: 900}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("after reset: %v", err)
 	}
@@ -242,12 +249,12 @@ func TestLoopResumesAfterReset(t *testing.T) {
 
 func TestLoopMonthlyReset(t *testing.T) {
 	_, path, now := account(t, "alice", func(u *user.User) { u.QuotaBytes = 1000 })
-	source := &fakeSource{readings: Counters{"token-alice": {Upload: 0, Download: 0}}}
+	source := &fakeSource{readings: Counters{core("token-alice"): {Upload: 0, Download: 0}}}
 	loop, applied := newLoop(t, path, source, now)
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
-	source.readings = Counters{"token-alice": {Upload: 900, Download: 900}}
+	source.readings = Counters{core("token-alice"): {Upload: 900, Download: 900}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("over quota: %v", err)
 	}
@@ -290,7 +297,7 @@ func TestLoopReportsSourceFailure(t *testing.T) {
 
 func TestLoopWithoutApplierSkipsRestart(t *testing.T) {
 	_, path, now := account(t, "alice", func(u *user.User) { u.QuotaBytes = 1000 })
-	source := &fakeSource{readings: Counters{"token-alice": {Upload: 0, Download: 0}}}
+	source := &fakeSource{readings: Counters{core("token-alice"): {Upload: 0, Download: 0}}}
 	loop := New(Options{
 		AccountsPath: path,
 		Node:         state.Default,
@@ -301,7 +308,7 @@ func TestLoopWithoutApplierSkipsRestart(t *testing.T) {
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
-	source.readings = Counters{"token-alice": {Upload: 900, Download: 900}}
+	source.readings = Counters{core("token-alice"): {Upload: 900, Download: 900}}
 	if err := loop.Tick(context.Background()); err != nil {
 		t.Fatalf("tick with no applier: %v", err)
 	}

@@ -98,8 +98,6 @@ func TestSaveRoundTripsAndLeavesNothingBehind(t *testing.T) {
 	c := Default()
 	c.Domain = "example.com"
 	c.NodeDeployed = true
-	c.Ports[ProtoAnyTLS] = "9443"
-	c.Enabled[ProtoTUIC] = false
 	c.raw = map[string]string{"UNRECOGNISED_KEY": "keep-me"}
 
 	// The seam has to cover every path Save touches, not only the file it writes, and this
@@ -122,11 +120,10 @@ func TestSaveRoundTripsAndLeavesNothingBehind(t *testing.T) {
 	if got.Domain != "example.com" || !got.NodeDeployed {
 		t.Fatalf("round trip lost the state: %+v", got)
 	}
-	if got.Ports[ProtoAnyTLS] != "9443" {
-		t.Fatalf("round trip lost the port override: %q", got.Ports[ProtoAnyTLS])
-	}
-	if got.Enabled[ProtoTUIC] {
-		t.Fatal("round trip re-enabled a protocol that was turned off")
+	// v6 moved the per-protocol keys into the node store, so the state file no
+	// longer carries them: a value set on the legacy fields is not written back.
+	if got.raw["PORT_ANYTLS"] != "" || got.raw["IS_TUIC"] != "" {
+		t.Fatalf("per-protocol keys were written back: %v", got.raw)
 	}
 	// An unknown key belongs to something newer; losing it on save is data loss.
 	if extra := got.extraKeys(); len(extra) != 1 || extra[0] != "UNRECOGNISED_KEY" {

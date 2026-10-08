@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/stats"
 	"github.com/EasySBTeam/EasySB/internal/subscribe"
@@ -37,10 +38,14 @@ type Options struct {
 	AccountsPath string
 	// Node returns the node state; it defaults to reading the state file.
 	Node func() state.Config
+	// NodesPath is the node store. It is re-read through the account cache's
+	// companion on every request, so a node edit made in the panel takes effect
+	// without restarting this service.
+	NodesPath string
 	// Dial opens the counter source for the accounting loop.
 	Dial func() (stats.Counter, error)
 	// Apply rewrites the core configuration for the accounts that may be live.
-	Apply func(ctx context.Context, cfg state.Config, users []user.User) error
+	Apply func(ctx context.Context, cfg state.Config, nodes []node.Node, users []user.User) error
 	// Interval overrides the accounting interval; zero takes the node's value.
 	Interval time.Duration
 	// Now overrides the clock in tests.
@@ -101,6 +106,7 @@ func (o Options) Run(ctx context.Context) error {
 
 	loop := stats.New(stats.Options{
 		AccountsPath: o.AccountsPath,
+		NodesPath:    o.NodesPath,
 		Node:         o.node,
 		Dial:         o.Dial,
 		Apply:        o.Apply,
@@ -229,13 +235,19 @@ func (o Options) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := o.node()
-	if len(subscribe.ActiveTags(cfg, account)) == 0 {
-		o.refuse(w, noProtocol)
+	nodes, err := o.nodes()
+	if err != nil {
+		o.logf("nodes: " + err.Error())
+		http.Error(w, "node store unavailable", http.StatusInternalServerError)
+		return
+	}
+	if len(subscribe.ActiveNodes(nodes, account)) == 0 {
+		o.refuse(w, noNode)
 		return
 	}
 
 	client := clientFromRequest(r)
-	body, err := subscribe.Document(cfg, account, client)
+	body, err := subscribe.Document(cfg, nodes, account, client)
 	if err != nil {
 		o.logf("render " + string(client) + ": " + err.Error())
 		http.Error(w, "cannot render subscription", http.StatusInternalServerError)
@@ -297,7 +309,7 @@ var (
 	notActive    = refusal{http.StatusForbidden, "账号已停用 / account disabled"}
 	expired      = refusal{http.StatusForbidden, "账号已过期 / account expired"}
 	overQuota    = refusal{http.StatusForbidden, "流量已用尽 / traffic quota exhausted"}
-	noProtocol   = refusal{http.StatusForbidden, "未为该账号启用任何协议 / no protocol enabled for this account"}
+	noNode       = refusal{http.StatusForbidden, "未为该账号选择任何可用节点 / no usable node selected for this account"}
 )
 
 func refusalFor(status user.Status) refusal {
@@ -321,6 +333,19 @@ func (o Options) node() state.Config {
 		return o.Node()
 	}
 	return state.Load()
+}
+
+// nodes loads the node store the request is served from. A missing file is an
+// empty store, which is what node.Load reports.
+func (o Options) nodes() ([]node.Node, error) {
+	if o.NodesPath == "" {
+		return nil, nil
+	}
+	store, err := node.Load(o.NodesPath)
+	if err != nil {
+		return nil, err
+	}
+	return store.Nodes(), nil
 }
 
 func (o Options) now() time.Time {

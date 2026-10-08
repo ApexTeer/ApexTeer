@@ -27,9 +27,6 @@ func TestStripJSONC(t *testing.T) {
 func testConfig() state.Config {
 	cfg := state.Default()
 	cfg.Domain = "node.example.com"
-	cfg.RealityPub = "PUBKEY"
-	cfg.RealitySID = "abcd1234"
-	cfg.RealitySNI = "apple.com"
 	return cfg
 }
 
@@ -37,12 +34,12 @@ func testConfig() state.Config {
 // UUIDs are pinned so the assertions stay readable; the panel always ships
 // generated ones.
 func testAccount() user.User {
-	account := user.New("demo", state.Keys, time.Unix(0, 0))
-	for key, cred := range account.Credentials {
+	account := user.New("demo", selections(sampleNodes()), time.Unix(0, 0))
+	for id, cred := range account.Credentials {
 		if cred.UUID != "" {
 			cred.UUID = testUUID
 		}
-		account.Credentials[key] = cred
+		account.Credentials[id] = cred
 	}
 	return account
 }
@@ -52,10 +49,14 @@ const testUUID = "11111111-2222-3333-4444-555555555555"
 
 func TestGenerateIncludesOnlyEnabled(t *testing.T) {
 	cfg := testConfig()
-	cfg.Enabled[state.ProtoTUIC] = false
-	cfg.Enabled[state.ProtoAnyTLS] = false
+	nodes := sampleNodes()
+	for i := range nodes {
+		if nodes[i].Protocol == state.ProtoTUIC || nodes[i].Protocol == state.ProtoAnyTLS {
+			nodes[i].Enabled = false
+		}
+	}
 
-	data, err := Generate(cfg, testAccount())
+	data, err := Generate(cfg, nodes, testAccount())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,21 +91,21 @@ func TestGenerateIncludesOnlyEnabled(t *testing.T) {
 			proxyList = ob.Outbounds
 		}
 	}
-	// Every node is named after the account and the protocol, so a client that
+	// Every node is named after the account and the node, so a client that
 	// imports several accounts can tell them apart.
 	name := func(tag string) string { return NodeName("demo", tag) }
 	if tags[name("tuic")] || tags[name("anytls")] {
-		t.Fatalf("disabled protocols leaked into subscription: %v", tags)
+		t.Fatalf("disabled nodes leaked into subscription: %v", tags)
 	}
-	if !tags[name("hysteria2")] || !tags[name("vmess-ws-tls")] || !tags[name("vless-vision-reality")] {
-		t.Fatalf("enabled protocols missing: %v", tags)
+	if !tags[name("hysteria2")] || !tags[name("vmess-ws-tls")] || !tags[name("vless-reality")] {
+		t.Fatalf("enabled nodes missing: %v", tags)
 	}
 	if len(proxyList) == 0 || proxyList[0] != "auto" {
 		t.Fatalf("proxy selector list not rewritten: %v", proxyList)
 	}
 
 	for _, ob := range doc.Outbounds {
-		if ob.Tag == name("vless-vision-reality") {
+		if ob.Tag == name("vless-reality") {
 			if ob.Server != "node.example.com" || ob.ServerP.String() != "8003" {
 				t.Fatalf("vless server fields wrong: %+v", ob)
 			}
@@ -121,7 +122,7 @@ func TestGenerateIncludesOnlyEnabled(t *testing.T) {
 }
 
 func TestGeneratePreservesTemplateOrder(t *testing.T) {
-	data, err := Generate(testConfig(), testAccount())
+	data, err := Generate(testConfig(), sampleNodes(), testAccount())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestGenerateRequiresHost(t *testing.T) {
 	cfg := testConfig()
 	cfg.Domain = ""
 	cfg.ServerIP = ""
-	if _, err := Generate(cfg, testAccount()); err == nil {
+	if _, err := Generate(cfg, sampleNodes(), testAccount()); err == nil {
 		t.Fatal("expected error without a server address")
 	}
 }

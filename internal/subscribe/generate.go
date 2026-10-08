@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
@@ -17,15 +17,15 @@ import (
 var templateJSON []byte
 
 // Generate renders the sing-box client profile for one account.
-func Generate(cfg state.Config, u user.User) ([]byte, error) {
+func Generate(cfg state.Config, nodes []node.Node, u user.User) ([]byte, error) {
 	if cfg.Host() == "" {
 		return nil, fmt.Errorf("no server address")
 	}
-	active := ActiveTags(cfg, u)
+	active := ActiveNodes(nodes, u)
 	if len(active) == 0 {
-		return nil, fmt.Errorf("no protocol enabled for %q", u.Name)
+		return nil, fmt.Errorf("no node available for %q", u.Name)
 	}
-	if err := checkPorts(cfg, active); err != nil {
+	if err := checkPorts(active); err != nil {
 		return nil, err
 	}
 
@@ -38,41 +38,42 @@ func Generate(cfg state.Config, u user.User) ([]byte, error) {
 	if !outbounds.array() {
 		return nil, fmt.Errorf("subscription template has no outbounds")
 	}
-	hop := cfg.HopRange
-	if hop == "" {
-		hop = state.DefaultHopRange
-	}
-	rsni := cfg.RealitySNI
-	if rsni == "" {
-		rsni = state.DefaultSNI
+	// The template holds one outbound block per protocol. Two nodes of the same
+	// protocol share a block, so each node gets its own clone.
+	index := make(map[string]*jsonValue, len(outbounds.arr))
+	for _, ob := range outbounds.arr {
+		index[ob.get("tag").asString()] = ob
 	}
 
-	// The template tags become the per-account node names. The selector and the
-	// urltest group are rewritten from the same list, so a profile never
-	// references a node it dropped.
-	names := make(map[string]string, len(active))
 	display := make([]string, 0, len(active))
-	for _, tag := range active {
-		names[tag] = NodeName(u.Name, tag)
-		display = append(display, names[tag])
+	var nodeOutbounds []*jsonValue
+	for _, n := range active {
+		tmpl := index[tagFor[n.Protocol]]
+		if tmpl == nil {
+			continue
+		}
+		ob := tmpl.clone()
+		applyNode(ob, n, cfg, u)
+		name := NodeName(u.Name, n.Name)
+		ob.setString("tag", name)
+		display = append(display, name)
+		nodeOutbounds = append(nodeOutbounds, ob)
+	}
+	if len(nodeOutbounds) == 0 {
+		return nil, fmt.Errorf("no node available for %q", u.Name)
 	}
 
+	// Keep the proxy/auto/direct groups, then the per-node outbounds, and rewrite
+	// the two groups from the same display list so a profile never references a
+	// node it dropped.
 	var kept []*jsonValue
 	for _, ob := range outbounds.arr {
-		tag := ob.get("tag").asString()
-		switch tag {
+		switch ob.get("tag").asString() {
 		case "proxy", "auto", "direct":
 			kept = append(kept, ob)
-			continue
 		}
-		if !contains(active, tag) {
-			continue
-		}
-		applyNode(ob, tag, cfg, u, hop, rsni)
-		ob.setString("tag", names[tag])
-		kept = append(kept, ob)
 	}
-
+	kept = append(kept, nodeOutbounds...)
 	for _, ob := range kept {
 		switch ob.get("tag").asString() {
 		case "proxy":
@@ -93,36 +94,46 @@ func Generate(cfg state.Config, u user.User) ([]byte, error) {
 	return json.MarshalIndent(root, "", "  ")
 }
 
-func applyNode(ob *jsonValue, tag string, cfg state.Config, u user.User, hop, rsni string) {
+// applyNode fills one outbound clone with a node's address, port, credential and
+// protocol parameters.
+func applyNode(ob *jsonValue, n node.Node, cfg state.Config, u user.User) {
 	host := cfg.Host()
+	cred := u.Credential(n.ID)
 	ob.setString("server", host)
-	switch tag {
-	case "anytls":
-		ob.setNumber("server_port", portInt(cfg, state.ProtoAnyTLS))
-		ob.setString("password", u.Credential(state.ProtoAnyTLS).Password)
+	switch n.Protocol {
+	case state.ProtoAnyTLS:
+		ob.setNumber("server_port", n.Port)
+		ob.setString("password", cred.Password)
 		setServerName(ob, host)
-	case "hysteria2":
+	case state.ProtoHysteria2:
+		hop := n.Param(node.ParamHopRange)
+		if hop == "" {
+			hop = state.DefaultHopRange
+		}
 		ob.setStrings("server_ports", []string{hop})
-		ob.setString("password", u.Credential(state.ProtoHysteria2).Password)
+		ob.setString("password", cred.Password)
 		setServerName(ob, host)
-	case "tuic":
-		cred := u.Credential(state.ProtoTUIC)
-		ob.setNumber("server_port", portInt(cfg, state.ProtoTUIC))
+	case state.ProtoTUIC:
+		ob.setNumber("server_port", n.Port)
 		ob.setString("uuid", cred.UUID)
 		ob.setString("password", cred.Password)
 		setServerName(ob, host)
-	case "vmess-ws-tls":
-		ob.setNumber("server_port", portInt(cfg, state.ProtoVMessWSTLS))
-		ob.setString("uuid", u.Credential(state.ProtoVMessWSTLS).UUID)
+	case state.ProtoVMessWSTLS:
+		ob.setNumber("server_port", n.Port)
+		ob.setString("uuid", cred.UUID)
 		setServerName(ob, host)
-	case "vless-vision-reality":
-		ob.setNumber("server_port", portInt(cfg, state.ProtoVLESSReality))
-		ob.setString("uuid", u.Credential(state.ProtoVLESSReality).UUID)
-		setServerName(ob, rsni)
+	case state.ProtoVLESSReality:
+		sni := n.Param(node.ParamRealitySNI)
+		if sni == "" {
+			sni = state.DefaultSNI
+		}
+		ob.setNumber("server_port", n.Port)
+		ob.setString("uuid", cred.UUID)
+		setServerName(ob, sni)
 		if tls := ob.get("tls"); tls != nil {
 			if reality := tls.get("reality"); reality != nil {
-				reality.setString("public_key", cfg.RealityPub)
-				reality.setString("short_id", cfg.RealitySID)
+				reality.setString("public_key", n.Param(node.ParamRealityPublic))
+				reality.setString("short_id", n.Param(node.ParamRealityShortID))
 			}
 		}
 	}
@@ -137,37 +148,13 @@ func setServerName(ob *jsonValue, name string) {
 // checkPorts refuses a document whose server_port would be invalid. Emitting
 // server_port: 0 instead only reached the user as "cannot connect", with nothing
 // in the panel naming the real cause.
-func checkPorts(cfg state.Config, tags []string) error {
-	for _, tag := range tags {
-		if _, err := portNumber(cfg, keyForTag[tag]); err != nil {
-			return err
+func checkPorts(nodes []node.Node) error {
+	for _, n := range nodes {
+		if n.Port < 1 || n.Port > 65535 {
+			return fmt.Errorf("node %q has invalid port %d", n.Name, n.Port)
 		}
 	}
 	return nil
-}
-
-// portNumber resolves one protocol's listen port, falling back to the compiled
-// default when the state file carries nothing.
-func portNumber(cfg state.Config, key string) (int, error) {
-	raw := strings.TrimSpace(cfg.Ports[key])
-	if raw == "" {
-		raw = strings.TrimSpace(state.DefaultPorts[key])
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 || n > 65535 {
-		return 0, fmt.Errorf("invalid port %q for %s", raw, key)
-	}
-	return n, nil
-}
-
-// portInt is portOf for the renderers, which validate every port up front with
-// checkPorts before any of these calls run.
-func portInt(cfg state.Config, key string) int {
-	n, err := portNumber(cfg, key)
-	if err != nil {
-		return 0
-	}
-	return n
 }
 
 // stripJSONC removes // line comments that appear outside string literals.
@@ -197,15 +184,6 @@ func stripJSONC(in []byte) []byte {
 		out = append(out, '\n')
 	}
 	return out
-}
-
-func contains(list []string, v string) bool {
-	for _, item := range list {
-		if item == v {
-			return true
-		}
-	}
-	return false
 }
 
 // clashSecret derives the client's local management API secret from the account

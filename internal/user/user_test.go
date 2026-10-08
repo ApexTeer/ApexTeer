@@ -11,12 +11,12 @@ import (
 var testNow = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
 func TestNewGeneratesCredentialFields(t *testing.T) {
-	u := New("alice", []string{
-		state.ProtoTUIC,
-		state.ProtoAnyTLS,
-		state.ProtoVLESSReality,
-		state.ProtoHysteria2,
-		state.ProtoVMessWSTLS,
+	u := New("alice", []Selection{
+		{Node: "n-tuic", Protocol: state.ProtoTUIC},
+		{Node: "n-anytls", Protocol: state.ProtoAnyTLS},
+		{Node: "n-vless", Protocol: state.ProtoVLESSReality},
+		{Node: "n-hy2", Protocol: state.ProtoHysteria2},
+		{Node: "n-vmess", Protocol: state.ProtoVMessWSTLS},
 	}, testNow)
 
 	if u.Token == "" || len(u.Token) != 16 {
@@ -28,58 +28,65 @@ func TestNewGeneratesCredentialFields(t *testing.T) {
 	if !u.LastReset.Equal(testNow) {
 		t.Fatalf("last_reset = %v, want %v", u.LastReset, testNow)
 	}
-	if got := strings.Join(u.Protocols, ","); got != "anytls,hysteria2,tuic,vless-reality,vmess-ws-tls" {
-		t.Fatalf("protocols not in canonical order: %s", got)
+	if got := strings.Join(u.Nodes, ","); got != "n-anytls,n-hy2,n-tuic,n-vless,n-vmess" {
+		t.Fatalf("nodes not in stable order: %s", got)
 	}
 
 	cases := map[string]struct {
+		protocol     string
 		wantUUID     bool
 		wantPassword bool
 	}{
-		state.ProtoAnyTLS:       {wantPassword: true},
-		state.ProtoHysteria2:    {wantPassword: true},
-		state.ProtoTUIC:         {wantUUID: true, wantPassword: true},
-		state.ProtoVLESSReality: {wantUUID: true},
-		state.ProtoVMessWSTLS:   {wantUUID: true},
+		"n-anytls": {protocol: state.ProtoAnyTLS, wantPassword: true},
+		"n-hy2":    {protocol: state.ProtoHysteria2, wantPassword: true},
+		"n-tuic":   {protocol: state.ProtoTUIC, wantUUID: true, wantPassword: true},
+		"n-vless":  {protocol: state.ProtoVLESSReality, wantUUID: true},
+		"n-vmess":  {protocol: state.ProtoVMessWSTLS, wantUUID: true},
 	}
-	for key, want := range cases {
-		cred := u.Credential(key)
+	for nodeID, want := range cases {
+		cred := u.Credential(nodeID)
+		if cred.Protocol != want.protocol {
+			t.Fatalf("%s protocol = %q, want %q", nodeID, cred.Protocol, want.protocol)
+		}
 		if (cred.UUID != "") != want.wantUUID {
-			t.Fatalf("%s uuid = %q, want set=%v", key, cred.UUID, want.wantUUID)
+			t.Fatalf("%s uuid = %q, want set=%v", nodeID, cred.UUID, want.wantUUID)
 		}
 		if (cred.Password != "") != want.wantPassword {
-			t.Fatalf("%s password = %q, want set=%v", key, cred.Password, want.wantPassword)
+			t.Fatalf("%s password = %q, want set=%v", nodeID, cred.Password, want.wantPassword)
 		}
 	}
 }
 
 func TestSelectKeepsExistingCredentials(t *testing.T) {
-	u := New("alice", []string{state.ProtoTUIC}, testNow)
-	original := u.Credential(state.ProtoTUIC)
+	u := New("alice", []Selection{{Node: "n1", Protocol: state.ProtoTUIC}}, testNow)
+	original := u.Credential("n1")
 
-	if !u.Deselect(state.ProtoTUIC) {
+	if !u.Deselect("n1") {
 		t.Fatal("deselect reported no change")
 	}
-	if u.Selects(state.ProtoTUIC) {
-		t.Fatal("protocol still selected after deselect")
+	if u.Selects("n1") {
+		t.Fatal("node still selected after deselect")
 	}
-	if !u.Select(state.ProtoTUIC) {
-		t.Fatal("re-selecting a deselected protocol reported no change")
+	if !u.Select("n1", state.ProtoTUIC) {
+		t.Fatal("re-selecting a deselected node reported no change")
 	}
-	if got := u.Credential(state.ProtoTUIC); got != original {
+	if got := u.Credential("n1"); got != original {
 		t.Fatalf("credential rotated on re-select: %+v, want %+v", got, original)
 	}
-	if u.Select(state.ProtoTUIC) {
+	if u.Select("n1", state.ProtoTUIC) {
 		t.Fatal("selecting twice must report no change")
 	}
-	if u.Select("nonsense") {
+	if u.Select("n2", "nonsense") {
 		t.Fatal("an unknown protocol key must be rejected")
+	}
+	if u.Select("", state.ProtoAnyTLS) {
+		t.Fatal("an empty node id must be rejected")
 	}
 }
 
 func TestStatus(t *testing.T) {
 	base := func() User {
-		return User{Name: "a", Token: "t", Enabled: true, Protocols: []string{state.ProtoAnyTLS}}
+		return User{Name: "a", Token: "t", Enabled: true, Nodes: []string{"n1"}}
 	}
 	cases := []struct {
 		name string
@@ -138,10 +145,13 @@ func TestQuotaArithmetic(t *testing.T) {
 
 func TestAddUsageIgnoresNegativeDeltas(t *testing.T) {
 	u := User{}
-	u.AddUsage(100, 50)
-	u.AddUsage(-1, -1)
+	u.AddNodeUsage("n1", 100, 50)
+	u.AddNodeUsage("n1", -1, -1)
 	if u.UploadBytes != 100 || u.DownloadBytes != 50 || u.UsedBytes != 150 {
 		t.Fatalf("counters = %d/%d/%d, want 100/50/150", u.UploadBytes, u.DownloadBytes, u.UsedBytes)
+	}
+	if usage := u.Usage["n1"]; usage.UsedBytes != 150 {
+		t.Fatalf("per-node counters = %+v, want 150 used", usage)
 	}
 }
 
@@ -201,18 +211,20 @@ func TestValidate(t *testing.T) {
 
 func TestEnsureCredentialsDropsUnknownProtocols(t *testing.T) {
 	u := User{
-		Name:      "alice",
-		Token:     "abc",
-		Protocols: []string{state.ProtoAnyTLS},
+		Name:  "alice",
+		Token: "abc",
+		Nodes: []string{"n1"},
 		Credentials: map[string]Credentials{
 			"leaked-protocol": {Password: "x"},
 		},
 	}
-	u.EnsureCredentials()
+	u.EnsureCredentials(nil)
 	if _, ok := u.Credentials["leaked-protocol"]; ok {
 		t.Fatal("an unknown protocol key survived EnsureCredentials")
 	}
-	if u.Credential(state.ProtoAnyTLS).Password == "" {
-		t.Fatal("the selected protocol has no password")
+	u.Credentials["n1"] = Credentials{Protocol: state.ProtoAnyTLS}
+	u.EnsureCredentials(nil)
+	if u.Credential("n1").Password == "" {
+		t.Fatal("the selected node has no password")
 	}
 }

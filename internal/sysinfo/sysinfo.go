@@ -35,6 +35,9 @@ const (
 
 	// UsersFile holds the accounts that replaced the node-wide credential.
 	UsersFile = WorkDir + "/easysb-users.json"
+	// NodesFile holds the explicit protocol inbounds this host serves, which in
+	// v6 replaced the single implicit node in the state file.
+	NodesFile = WorkDir + "/easysb-nodes.json"
 	// SubLogFile collects the subscription service log.
 	SubLogFile = WorkDir + "/easysb-sub.log"
 
@@ -110,14 +113,6 @@ type PortInfo struct {
 	Enabled  bool
 }
 
-var protocolOrder = []struct{ key, label string }{
-	{"anytls", "AnyTLS"},
-	{"hysteria2", "Hysteria2"},
-	{"tuic", "TUIC v5"},
-	{"vless_reality", "VLESS-Reality"},
-	{"vmess_ws_tls", "VMess-WS-TLS"},
-}
-
 // Collect reads the whole snapshot: the state file, the two services' state, and the
 // device readings. Everything it returns is read rather than remembered, so a page
 // refreshed after a change shows the change.
@@ -143,30 +138,15 @@ func Collect(scriptVersion string) Status {
 	st.SubSyncSecs, _ = strconv.Atoi(state["SUB_SYNC_SECONDS"])
 	st.Hop = state["HY2_HOP_RANGE"]
 
-	inbounds := readInbounds()
-	if len(inbounds) > 0 {
+	// The nodes are the source of truth for what is listening: one row per node,
+	// with its own name so two nodes on the same protocol stay distinguishable.
+	if ports := readNodePorts(); len(ports) > 0 {
 		st.Deployed = true
-		for _, p := range protocolOrder {
-			port := inbounds[p.key]
-			if port == "" {
-				port = state[portKey(p.key)]
-			}
-			st.Ports = append(st.Ports, PortInfo{Protocol: p.label, Port: port, Enabled: port != ""})
-		}
-	} else {
-		for _, p := range protocolOrder {
-			port := state[portKey(p.key)]
-			st.Ports = append(st.Ports, PortInfo{Protocol: p.label, Port: port, Enabled: port != ""})
-		}
-		if _, err := os.Stat(ConfigJSON); err == nil {
-			st.Deployed = true
-		}
+		st.Ports = ports
+	} else if _, err := os.Stat(ConfigJSON); err == nil {
+		st.Deployed = true
 	}
 	return st
-}
-
-func portKey(proto string) string {
-	return "PORT_" + strings.ToUpper(proto)
 }
 
 // collectDevice fills the host description shown on the dashboard: hostname,
@@ -450,50 +430,33 @@ func unquoteValue(v string) string {
 	return strings.Trim(v, `"'`)
 }
 
-func readInbounds() map[string]string {
-	result := map[string]string{}
-	data, err := os.ReadFile(ConfigJSON)
+// readNodePorts reads the node file the panel writes. It parses the small
+// document directly rather than importing internal/node, because the state
+// package this one feeds already imports it and the two would form a cycle.
+func readNodePorts() []PortInfo {
+	data, err := os.ReadFile(NodesFile)
 	if err != nil {
-		return result
+		return nil
 	}
-	var cfg struct {
-		Inbounds []struct {
-			Type       string `json:"type"`
-			Tag        string `json:"tag"`
-			ListenPort int    `json:"listen_port"`
-		} `json:"inbounds"`
+	var doc struct {
+		Nodes []struct {
+			Name    string `json:"name"`
+			Port    int    `json:"port"`
+			Enabled bool   `json:"enabled"`
+		} `json:"nodes"`
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return result
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil
 	}
-	for _, in := range cfg.Inbounds {
-		if in.ListenPort <= 0 {
-			continue
+	out := make([]PortInfo, 0, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		port := ""
+		if n.Enabled {
+			port = strconv.Itoa(n.Port)
 		}
-		key := normalizeType(in.Type)
-		if key == "" {
-			continue
-		}
-		result[key] = strconv.Itoa(in.ListenPort)
+		out = append(out, PortInfo{Protocol: n.Name, Port: port, Enabled: n.Enabled})
 	}
-	return result
-}
-
-func normalizeType(t string) string {
-	switch strings.ToLower(t) {
-	case "anytls":
-		return "anytls"
-	case "hysteria2", "hysteria":
-		return "hysteria2"
-	case "tuic":
-		return "tuic"
-	case "vless":
-		return "vless_reality"
-	case "vmess":
-		return "vmess_ws_tls"
-	default:
-		return ""
-	}
+	return out
 }
 
 func run(timeout time.Duration, name string, args ...string) (string, error) {

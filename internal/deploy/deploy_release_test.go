@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/EasySBTeam/EasySB/internal/sbcore"
-	"github.com/EasySBTeam/EasySB/internal/secret"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
@@ -27,14 +26,10 @@ func TestEveryProtocolIsAcceptedByTheCarriedCore(t *testing.T) {
 
 	cfg := state.Default()
 	cfg.Domain = domain
-	for _, key := range state.Keys {
-		cfg.Enabled[key] = true
-	}
-	cfg.RealityPriv, cfg.RealityPub = secret.RealityKeypair()
-	cfg.RealitySID = secret.ShortID()
 
-	account := testAccount(t)
-	document, err := ServerConfig(cfg, []user.User{account})
+	nodes := allProtocolNodes()
+	account := testAccount(t, nodes)
+	document, err := ServerConfig(cfg, nodes, []user.User{account})
 	if err != nil {
 		t.Fatalf("ServerConfig: %v", err)
 	}

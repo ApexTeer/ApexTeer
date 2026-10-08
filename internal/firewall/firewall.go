@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/service"
 	"github.com/EasySBTeam/EasySB/internal/state"
 )
@@ -42,29 +43,35 @@ func Detect() Backend {
 	return None
 }
 
-// Apply adds the port-hopping redirect and opens the enabled protocol ports.
-func Apply(ctx context.Context, cfg state.Config, log func(string)) error {
+// Apply adds the port-hopping redirect of every enabled Hysteria2 node and opens
+// the port of every enabled node.
+func Apply(ctx context.Context, cfg state.Config, nodes []node.Node, log func(string)) error {
 	backend := Detect()
 	if backend == None {
 		log("no firewall backend detected, skipped")
-	} else if cfg.Enabled[state.ProtoHysteria2] {
-		start, end, err := hopRange(cfg)
-		if err != nil {
-			return err
-		}
-		to := cfg.Ports[state.ProtoHysteria2]
-		if backend == IPTables {
-			if err := iptablesAdd(ctx, start, end, to); err != nil {
+	} else {
+		for _, n := range enabledNodes(nodes) {
+			if n.Protocol != state.ProtoHysteria2 {
+				continue
+			}
+			start, end, err := hopRange(n)
+			if err != nil {
 				return err
 			}
-		} else {
-			if err := nftAdd(ctx, start, end, to); err != nil {
-				return err
+			to := fmt.Sprint(n.Port)
+			if backend == IPTables {
+				if err := iptablesAdd(ctx, start, end, to); err != nil {
+					return err
+				}
+			} else {
+				if err := nftAdd(ctx, start, end, to); err != nil {
+					return err
+				}
 			}
+			log("port hopping " + start + ":" + end + " -> " + to)
 		}
-		log("port hopping " + start + ":" + end + " -> " + to)
 	}
-	OpenPorts(ctx, cfg, log)
+	OpenPorts(ctx, cfg, nodes, log)
 	return nil
 }
 
@@ -72,23 +79,33 @@ func Apply(ctx context.Context, cfg state.Config, log func(string)) error {
 // The rule is deleted whenever it might exist: keying this on the protocol
 // switch left a live redirect behind when the operator turned Hysteria2 off
 // first and then asked to remove the rules, while the panel reported success.
-func Remove(ctx context.Context, cfg state.Config) error {
-	start, end, err := hopRange(cfg)
-	if err != nil {
-		return err
-	}
-	to := cfg.Ports[state.ProtoHysteria2]
-	switch Detect() {
-	case IPTables:
-		return iptablesDelete(ctx, start, end, to)
-	case NFTables:
-		return nftDelete(ctx, start, end, to)
+func Remove(ctx context.Context, nodes []node.Node) error {
+	for _, n := range nodes {
+		if n.Protocol != state.ProtoHysteria2 {
+			continue
+		}
+		start, end, err := hopRange(n)
+		if err != nil {
+			return err
+		}
+		to := fmt.Sprint(n.Port)
+		switch Detect() {
+		case IPTables:
+			if err := iptablesDelete(ctx, start, end, to); err != nil {
+				return err
+			}
+		case NFTables:
+			if err := nftDelete(ctx, start, end, to); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
-func hopRange(cfg state.Config) (string, string, error) {
-	raw := cfg.HopRange
+// hopRange reads one node's port range, falling back to the compiled default.
+func hopRange(n node.Node) (string, string, error) {
+	raw := n.Param(node.ParamHopRange)
 	if raw == "" {
 		raw = state.DefaultHopRange
 	}
@@ -99,23 +116,16 @@ func hopRange(cfg state.Config) (string, string, error) {
 	return start, end, nil
 }
 
-// OpenPorts opens the enabled protocol ports with ufw or firewalld when present.
-func OpenPorts(ctx context.Context, cfg state.Config, log func(string)) {
+// OpenPorts opens the enabled node ports with ufw or firewalld when present.
+func OpenPorts(ctx context.Context, cfg state.Config, nodes []node.Node, log func(string)) {
 	var tcp, udp []string
-	if cfg.Enabled[state.ProtoAnyTLS] {
-		tcp = append(tcp, cfg.Ports[state.ProtoAnyTLS])
-	}
-	if cfg.Enabled[state.ProtoTUIC] {
-		udp = append(udp, cfg.Ports[state.ProtoTUIC])
-	}
-	if cfg.Enabled[state.ProtoVLESSReality] {
-		tcp = append(tcp, cfg.Ports[state.ProtoVLESSReality])
-	}
-	if cfg.Enabled[state.ProtoVMessWSTLS] {
-		tcp = append(tcp, cfg.Ports[state.ProtoVMessWSTLS])
-	}
-	if cfg.Enabled[state.ProtoHysteria2] {
-		udp = append(udp, cfg.Ports[state.ProtoHysteria2])
+	for _, n := range enabledNodes(nodes) {
+		switch n.Protocol {
+		case state.ProtoAnyTLS, state.ProtoVLESSReality, state.ProtoVMessWSTLS:
+			tcp = append(tcp, fmt.Sprint(n.Port))
+		case state.ProtoHysteria2, state.ProtoTUIC:
+			udp = append(udp, fmt.Sprint(n.Port))
+		}
 	}
 	if cfg.SubServePort > 0 {
 		tcp = append(tcp, fmt.Sprint(cfg.SubServePort))
@@ -161,6 +171,17 @@ func OpenPorts(ctx context.Context, cfg state.Config, log func(string)) {
 	if len(failed) > 0 {
 		log("firewall: could not open " + strings.Join(failed, ", "))
 	}
+}
+
+// enabledNodes filters the list to the nodes that are switched on.
+func enabledNodes(nodes []node.Node) []node.Node {
+	out := make([]node.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Enabled {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func iptablesAdd(ctx context.Context, start, end, to string) error {
@@ -235,8 +256,15 @@ func nftHandles(ctx context.Context, spec string) []string {
 }
 
 // WriteUnit installs a boot service that reapplies the NAT rules.
-func WriteUnit(cfg state.Config) error {
-	if !cfg.Enabled[state.ProtoHysteria2] {
+func WriteUnit(nodes []node.Node) error {
+	hop := false
+	for _, n := range enabledNodes(nodes) {
+		if n.Protocol == state.ProtoHysteria2 {
+			hop = true
+			break
+		}
+	}
+	if !hop {
 		return nil
 	}
 	exe, err := service.PanelExecutable()

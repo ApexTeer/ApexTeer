@@ -36,7 +36,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	alice := New("alice", []string{state.ProtoAnyTLS, state.ProtoTUIC}, testNow)
+	alice := New("alice", []Selection{
+		{Node: "n1", Protocol: state.ProtoAnyTLS},
+		{Node: "n2", Protocol: state.ProtoTUIC},
+	}, testNow)
 	alice.QuotaBytes = 1 << 30
 	alice.ExpireAt = testNow.Add(24 * time.Hour)
 	if err := s.Add(alice); err != nil {
@@ -60,7 +63,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.Token != alice.Token || got.QuotaBytes != alice.QuotaBytes {
 		t.Fatalf("scalar fields changed: %+v", got)
 	}
-	if got.Credential(state.ProtoTUIC) != alice.Credential(state.ProtoTUIC) {
+	if got.Credential("n2") != alice.Credential("n2") {
 		t.Fatal("credentials changed across a reload")
 	}
 	if !got.ExpireAt.Equal(alice.ExpireAt) {
@@ -76,14 +79,14 @@ func TestAddRejectsDuplicates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	alice := New("alice", []string{state.ProtoAnyTLS}, testNow)
+	alice := New("alice", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)
 	if err := s.Add(alice); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if err := s.Add(New("alice", []string{state.ProtoAnyTLS}, testNow)); err == nil {
+	if err := s.Add(New("alice", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)); err == nil {
 		t.Fatal("duplicate name accepted")
 	}
-	bob := New("bob", []string{state.ProtoAnyTLS}, testNow)
+	bob := New("bob", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)
 	bob.Token = alice.Token
 	if err := s.Add(bob); err == nil {
 		t.Fatal("duplicate token accepted")
@@ -98,22 +101,22 @@ func TestUpdateRenameAndErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if err := s.Add(New("alice", []string{state.ProtoAnyTLS}, testNow)); err != nil {
+	if err := s.Add(New("alice", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if err := s.Add(New("bob", []string{state.ProtoAnyTLS}, testNow)); err != nil {
+	if err := s.Add(New("bob", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
 	if err := s.Update("alice", func(u *User) error {
 		u.QuotaBytes = 42
-		u.Select(state.ProtoTUIC)
+		u.Select("n2", state.ProtoTUIC)
 		return nil
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	got, _ := s.Find("alice")
-	if got.QuotaBytes != 42 || !got.Selects(state.ProtoTUIC) {
+	if got.QuotaBytes != 42 || !got.Selects("n2") {
 		t.Fatalf("update not applied: %+v", got)
 	}
 	if got.Remark != "" {
@@ -145,7 +148,7 @@ func TestRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if err := s.Add(New("alice", []string{state.ProtoAnyTLS}, testNow)); err != nil {
+	if err := s.Add(New("alice", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 	if err := s.Remove("nobody"); err == nil {
@@ -171,7 +174,7 @@ func TestByToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	alice := New("alice", []string{state.ProtoAnyTLS}, testNow)
+	alice := New("alice", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)
 	if err := s.Add(alice); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -191,12 +194,12 @@ func TestRoutable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	active := New("active", []string{state.ProtoAnyTLS}, testNow)
-	disabled := New("disabled", []string{state.ProtoAnyTLS}, testNow)
+	active := New("active", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)
+	disabled := New("disabled", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)
 	disabled.Enabled = false
-	expired := New("expired", []string{state.ProtoAnyTLS}, testNow)
+	expired := New("expired", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)
 	expired.ExpireAt = testNow.Add(-time.Minute)
-	overQuota := New("over-quota", []string{state.ProtoAnyTLS}, testNow)
+	overQuota := New("over-quota", []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)
 	overQuota.QuotaBytes, overQuota.UsedBytes = 10, 10
 	noProtocol := New("no-protocol", nil, testNow)
 	for _, u := range []User{active, disabled, expired, overQuota, noProtocol} {
@@ -213,8 +216,8 @@ func TestRoutable(t *testing.T) {
 
 func TestLoadLeavesMissingCredentialsAlone(t *testing.T) {
 	path := storePath(t)
-	body := `{"version":1,"users":[{"name":"alice","token":"tok","enabled":true,
-		"protocols":["anytls"],"quota_bytes":1000,"used_bytes":10,
+	body := `{"version":2,"users":[{"name":"alice","token":"tok","enabled":true,
+		"nodes":["n1"],"quota_bytes":1000,"used_bytes":1000,
 		"upload_bytes":400,"download_bytes":600,"applied":true}]}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
@@ -233,17 +236,17 @@ func TestLoadLeavesMissingCredentialsAlone(t *testing.T) {
 	// Load must not invent a credential: every read would then produce a
 	// different one, and the core config and the subscription document would
 	// disagree about a password neither of them persisted.
-	if got.Credential(state.ProtoAnyTLS).Password != "" {
+	if got.Credential("n1").Password != "" {
 		t.Fatal("Load must not generate a missing credential")
 	}
 	if got.CredentialsReady() {
 		t.Fatal("an account with no credential is not ready")
 	}
-	if !s.Repair() {
+	if !s.Repair(map[string]string{"n1": state.ProtoAnyTLS}) {
 		t.Fatal("Repair must report the account it healed")
 	}
 	healed, _ := s.Find("alice")
-	if healed.Credential(state.ProtoAnyTLS).Password == "" {
+	if healed.Credential("n1").Password == "" {
 		t.Fatal("Repair must fill the missing credential")
 	}
 	if !healed.CredentialsReady() {
@@ -261,12 +264,12 @@ func TestMutateAndSavePersistEveryAccount(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	for _, name := range []string{"alice", "bob"} {
-		if err := s.Add(New(name, []string{state.ProtoAnyTLS}, testNow)); err != nil {
+		if err := s.Add(New(name, []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)); err != nil {
 			t.Fatalf("Add %s: %v", name, err)
 		}
 	}
 	s.Mutate(func(u *User) {
-		u.AddUsage(10, 20)
+		u.AddNodeUsage("n1", 10, 20)
 		u.Applied = true
 	})
 	if err := s.Save(); err != nil {
@@ -312,7 +315,7 @@ func TestLockedKeepsConcurrentWriters(t *testing.T) {
 			}
 			defer lock.Unlock()
 			name := fmt.Sprintf("user-%d", i)
-			if err := store.Add(New(name, []string{state.ProtoAnyTLS}, testNow)); err != nil {
+			if err := store.Add(New(name, []Selection{{Node: "n1", Protocol: state.ProtoAnyTLS}}, testNow)); err != nil {
 				errs <- err
 			}
 		}(i)

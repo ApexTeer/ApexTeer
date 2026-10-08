@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/sbcore"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
@@ -25,11 +26,34 @@ func writeInto(t *testing.T, dir string) {
 	configPath = filepath.Join(dir, "config.json")
 }
 
-// testAccount returns one account that selected every protocol, with credentials.
-func testAccount(t *testing.T) user.User {
+// testNodes are the protocols whose code needs no build tag, so the acceptance
+// test runs in every build.
+func testNodes() []node.Node {
+	return []node.Node{
+		node.New(state.ProtoAnyTLS, state.ProtoAnyTLS, 8000, nil),
+		node.New(state.ProtoVMessWSTLS, state.ProtoVMessWSTLS, 8004, nil),
+	}
+}
+
+// allProtocolNodes returns one node per protocol, which only a build carrying
+// every tag can render.
+func allProtocolNodes() []node.Node {
+	nodes := make([]node.Node, 0, len(state.Keys))
+	for i, key := range state.Keys {
+		nodes = append(nodes, node.New(key, key, 8000+i, nil))
+	}
+	return nodes
+}
+
+// testAccount returns one account that selected every given node, with credentials.
+func testAccount(t *testing.T, nodes []node.Node) user.User {
 	t.Helper()
-	account := user.New("alice", state.Keys, time.Now())
-	account.EnsureCredentials()
+	selections := make([]user.Selection, 0, len(nodes))
+	for _, n := range nodes {
+		selections = append(selections, user.Selection{Node: n.ID, Protocol: n.Protocol})
+	}
+	account := user.New("alice", selections, time.Now())
+	account.EnsureCredentials(nil)
 	if account.Token == "" {
 		t.Fatal("the test account has no token: the stats user list is keyed by it")
 	}
@@ -51,17 +75,6 @@ func installTestCertificate(t *testing.T, dir, domain string) {
 	}
 }
 
-// taggedProtocols are the protocols whose code sits behind a build tag: Hysteria2 and
-// TUIC need with_quic, and the Reality inbound needs with_utls. The release tag set
-// (release/TAGS) carries both, so their documents are checked in
-// deploy_release_test.go; the tests here run in every build.
-func taggedProtocols() map[string]bool {
-	return map[string]bool{
-		state.ProtoAnyTLS:     true,
-		state.ProtoVMessWSTLS: true,
-	}
-}
-
 // TestGeneratedConfigIsAcceptedByTheCarriedCore is the acceptance test for the whole
 // arrangement: the document the panel renders has to be accepted by the core compiled
 // into this binary. There is no second core to fall back on and no sing-box in PATH — a
@@ -73,10 +86,10 @@ func TestGeneratedConfigIsAcceptedByTheCarriedCore(t *testing.T) {
 
 	cfg := state.Default()
 	cfg.Domain = domain
-	cfg.Enabled = taggedProtocols()
 
-	account := testAccount(t)
-	document, err := ServerConfig(cfg, []user.User{account})
+	nodes := testNodes()
+	account := testAccount(t, nodes)
+	document, err := ServerConfig(cfg, nodes, []user.User{account})
 	if err != nil {
 		t.Fatalf("ServerConfig: %v", err)
 	}
@@ -108,8 +121,7 @@ func TestServerConfigNeedsNoCoreOnDisk(t *testing.T) {
 
 	cfg := state.Default()
 	cfg.Domain = domain
-	cfg.Enabled = taggedProtocols()
-	document, err := ServerConfig(cfg, nil)
+	document, err := ServerConfig(cfg, testNodes(), nil)
 	if err != nil {
 		t.Fatalf("ServerConfig with no accounts: %v", err)
 	}
@@ -138,9 +150,15 @@ func TestServerConfigRefusesRealityWithoutKeypair(t *testing.T) {
 
 	cfg := state.Default()
 	cfg.Domain = domain
-	cfg.Enabled = map[string]bool{state.ProtoVLESSReality: true}
-	cfg.RealityPriv, cfg.RealityPub = "", ""
-	if _, err := ServerConfig(cfg, nil); !errors.Is(err, ErrNoRealityKey) {
+	reality := node.Node{
+		ID:       "reality",
+		Name:     "reality",
+		Protocol: state.ProtoVLESSReality,
+		Port:     8003,
+		Enabled:  true,
+		Params:   map[string]string{node.ParamRealityPrivate: ""},
+	}
+	if _, err := ServerConfig(cfg, []node.Node{reality}, nil); !errors.Is(err, ErrNoRealityKey) {
 		t.Fatalf("ServerConfig without a keypair = %v, want %v", err, ErrNoRealityKey)
 	}
 }
@@ -159,9 +177,9 @@ func TestWriteServerConfigKeepsCredentialsRootOnly(t *testing.T) {
 
 	cfg := state.Default()
 	cfg.Domain = domain
-	cfg.Enabled = taggedProtocols()
 
-	document, err := WriteServerConfig(cfg, []user.User{testAccount(t)})
+	nodes := testNodes()
+	document, err := WriteServerConfig(cfg, nodes, []user.User{testAccount(t, nodes)})
 	if err != nil {
 		t.Fatalf("WriteServerConfig: %v", err)
 	}
@@ -179,7 +197,7 @@ func TestWriteServerConfigKeepsCredentialsRootOnly(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatalf("widen the mode: %v", err)
 	}
-	if _, err := WriteServerConfig(cfg, []user.User{testAccount(t)}); err != nil {
+	if _, err := WriteServerConfig(cfg, nodes, []user.User{testAccount(t, nodes)}); err != nil {
 		t.Fatalf("WriteServerConfig over an existing file: %v", err)
 	}
 
@@ -197,17 +215,15 @@ func TestWriteServerConfigKeepsCredentialsRootOnly(t *testing.T) {
 	}
 }
 
-// TestApplyLeavesAnUndeployedNodeAlone pins the early return: a host that has accounts
-// but no node yet must not be made to fail on a configuration there is no certificate
-// for.
-func TestApplyLeavesAnUndeployedNodeAlone(t *testing.T) {
+// TestApplyWithNoNodesIsNoop pins the early return: a host whose node set is still
+// empty must not be made to fail on a configuration there is no certificate for.
+func TestApplyWithNoNodesIsNoop(t *testing.T) {
 	writeInto(t, t.TempDir())
 
 	cfg := state.Default()
-	cfg.NodeDeployed = false
 
-	if err := Apply(context.Background(), cfg, []user.User{testAccount(t)}); err != nil {
-		t.Fatalf("Apply on a node that was never deployed = %v, want nil", err)
+	if err := Apply(context.Background(), cfg, nil, []user.User{testAccount(t, testNodes())}); !errors.Is(err, ErrNoNodes) {
+		t.Fatalf("Apply with no node = %v, want %v", err, ErrNoNodes)
 	}
 }
 
@@ -227,10 +243,9 @@ func TestApplyKeepsTheCoreRejectionReason(t *testing.T) {
 
 	cfg := state.Default()
 	cfg.Domain = domain
-	cfg.Enabled = taggedProtocols()
-	cfg.NodeDeployed = true
 
-	err := Apply(context.Background(), cfg, []user.User{testAccount(t)})
+	nodes := testNodes()
+	err := Apply(context.Background(), cfg, nodes, []user.User{testAccount(t, nodes)})
 	if !errors.Is(err, ErrRejected) {
 		t.Fatalf("Apply = %v, want an error that wraps %v", err, ErrRejected)
 	}
