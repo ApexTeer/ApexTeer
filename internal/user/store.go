@@ -13,8 +13,9 @@ import (
 	"time"
 )
 
-// CurrentVersion is the on-disk format version of the account file.
-const CurrentVersion = 1
+// CurrentVersion is the on-disk format version of the account file. Version 2
+// re-keys the selection and the credentials from protocol keys to node ids.
+const CurrentVersion = 2
 
 type fileFormat struct {
 	Version int    `json:"version"`
@@ -46,6 +47,13 @@ func Load(path string) (*Store, error) {
 	var f fileFormat
 	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	// A version-1 file describes protocol selections, which the current model
+	// cannot resolve without the node store. It must be upgraded by
+	// user.MigrateV2 first; refusing it here is safer than serving half-parsed
+	// accounts whose selections and credentials look empty.
+	if f.Version != CurrentVersion {
+		return nil, fmt.Errorf("parse %s: account store version %d needs migration", path, f.Version)
 	}
 	s.users = f.Users
 	seen := make(map[string]bool, len(s.users))
@@ -99,7 +107,7 @@ func (s *Store) Routable(now time.Time) []User {
 		// out entirely: handing the core a member with an empty uuid or password is
 		// rejected as a whole, and handing the client one is a node that cannot
 		// authenticate.
-		if !u.Usable(now) || len(u.Protocols) == 0 || !u.CredentialsReady() {
+		if !u.Usable(now) || len(u.Nodes) == 0 || !u.CredentialsReady() {
 			continue
 		}
 		out = append(out, u)
@@ -108,15 +116,18 @@ func (s *Store) Routable(now time.Time) []User {
 }
 
 // Repair fills in the credentials a hand-edited or legacy file is missing and
-// reports whether anything changed. Only writers call it, so the values it
-// generates are the ones persisted, and every later read sees the same pair.
-func (s *Store) Repair() bool {
+// reports whether anything changed. known maps a node id to the protocol its
+// node serves, so a selection whose credential is missing entirely can be
+// healed; without it only the credentials already present could be completed.
+// Only writers call it, so the values it generates are the ones persisted, and
+// every later read sees the same pair.
+func (s *Store) Repair(known map[string]string) bool {
 	changed := false
 	for i := range s.users {
 		if !s.users[i].CredentialsReady() {
 			changed = true
 		}
-		s.users[i].EnsureCredentials()
+		s.users[i].EnsureCredentials(known)
 	}
 	return changed
 }
@@ -159,7 +170,7 @@ func (s *Store) Add(u User) error {
 			return fmt.Errorf("user %q already uses this token", other.Name)
 		}
 	}
-	u.EnsureCredentials()
+	u.EnsureCredentials(nil)
 	s.users = append(s.users, u)
 	return s.Save()
 }
@@ -182,7 +193,7 @@ func (s *Store) Update(name string, fn func(*User) error) error {
 				return fmt.Errorf("user %q already exists", edited.Name)
 			}
 		}
-		edited.EnsureCredentials()
+		edited.EnsureCredentials(nil)
 		s.users[i] = edited
 		return s.Save()
 	}

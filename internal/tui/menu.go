@@ -5,7 +5,6 @@ import (
 
 	"github.com/EasySBTeam/EasySB/internal/i18n"
 	"github.com/EasySBTeam/EasySB/internal/icons"
-	"github.com/EasySBTeam/EasySB/internal/state"
 )
 
 type actionFunc func(a *App) tea.Cmd
@@ -45,7 +44,7 @@ func buildRoot() *menu {
 		title: tk("menu_main"),
 		nodes: []*node{
 			{id: "toolbox", label: tk("toolbox_title"), desc: tk("menu_toolbox"), icon: func(s icons.Set) string { return s.Globe }, sub: buildToolbox()},
-			{id: "node", label: tk("node_title"), desc: tk("menu_node"), icon: func(s icons.Set) string { return s.Rocket }, sub: buildNode()},
+			{id: "node", label: tk("node_title"), desc: tk("menu_node"), icon: func(s icons.Set) string { return s.Rocket }, action: enterNode()},
 			{id: "domain", label: tk("domain_title"), desc: tk("menu_domain"), icon: func(s icons.Set) string { return s.Globe }, sub: buildDomain()},
 			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Subscribe }, sub: buildSubscribe()},
 			{id: "users", label: tk("users_title"), desc: tk("menu_users"), icon: func(s icons.Set) string { return s.Account }, action: enterUsers()},
@@ -61,90 +60,18 @@ func buildRoot() *menu {
 	}
 }
 
-func buildNode() *menu {
-	return &menu{
-		id:    "node",
-		title: tk("node_title"),
-		nodes: []*node{
-			iconLeaf("node-deploy", "node_deploy", "desc_node_deploy", func(s icons.Set) string { return s.Rocket }, deployNode()),
-			{id: "node-protocols", label: tk("node_protocols"), desc: tk("desc_node_protocols"), icon: func(s icons.Set) string { return s.Service }, sub: buildProtocols()},
-			iconLeaf("node-params", "node_params", "desc_node_params", func(s icons.Set) string { return s.Tool }, func(a *App) tea.Cmd {
-				a.push(buildParams())
-				return nil
-			}),
-		},
-	}
-}
-
-// buildProtocols renders the protocol enable/disable list. Labels read the live
-// state so the checkbox reflects the latest toggle.
-func buildProtocols() *menu {
-	nodes := make([]*node, 0, len(state.Keys))
-	for _, key := range state.Keys {
-		key := key
-		nodes = append(nodes, &node{
-			id: "proto-" + key,
-			label: func(i18n.Lang) string {
-				mark := "[ ]"
-				if state.Load().Enabled[key] {
-					mark = "[x]"
-				}
-				return mark + " " + state.Labels[key]
-			},
-			desc:   tk("desc_proto_toggle"),
-			action: toggleProtocol(key),
-		})
-	}
-	return &menu{id: "protocols", title: tk("node_protocols"), nodes: nodes}
-}
-
+// buildParams renders the global parameters: the ones that describe the host
+// rather than one node. Per-node ports and protocol parameters live on the
+// node's own page.
 func buildParams() *menu {
 	return &menu{
 		id:    "params",
 		title: tk("node_params"),
 		nodes: []*node{
-			leaf("param-hop", "param_hop", "desc_param_hop", editHop()),
-			{id: "param-ports", label: tk("param_ports"), desc: tk("desc_param_ports"), sub: buildPorts()},
-			{id: "param-sni", label: tk("param_sni"), desc: tk("desc_param_sni"), sub: buildSNI()},
-			leaf("param-privkey", "param_privkey", "desc_param_privkey", regenRealityKeys()),
-			leaf("param-shortid", "param_shortid", "desc_param_shortid", regenShortID()),
 			leaf("param-sub-port", "param_sub_port", "desc_param_sub_port", editSubPort()),
 			leaf("param-sub-sync", "param_sub_sync", "desc_param_sub_sync", editSubSync()),
 		},
 	}
-}
-
-func buildPorts() *menu {
-	nodes := make([]*node, 0, len(state.Keys))
-	for _, key := range state.Keys {
-		key := key
-		nodes = append(nodes, &node{
-			id: "port-" + key,
-			label: func(i18n.Lang) string {
-				port := state.Load().Ports[key]
-				return state.Labels[key] + " : " + port
-			},
-			desc:   tk("desc_port_edit"),
-			action: editPort(key),
-		})
-	}
-	return &menu{id: "ports", title: tk("param_ports"), nodes: nodes}
-}
-
-func buildSNI() *menu {
-	presets := []string{"academy.nvidia.com", "apple.com", "bing.com", "microsoft.com", "cloudflare.com"}
-	nodes := make([]*node, 0, len(presets)+1)
-	for _, preset := range presets {
-		preset := preset
-		nodes = append(nodes, &node{
-			id:     "sni-" + preset,
-			label:  func(i18n.Lang) string { return preset },
-			desc:   tk("desc_sni_use"),
-			action: setSNI(preset),
-		})
-	}
-	nodes = append(nodes, leaf("sni-custom", "param_sni_custom", "desc_sni_custom", editSNI()))
-	return &menu{id: "sni", title: tk("param_sni"), nodes: nodes}
 }
 
 func buildDomain() *menu {

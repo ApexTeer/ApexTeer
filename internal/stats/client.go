@@ -21,7 +21,7 @@ type Usage struct {
 }
 
 // Counters is the traffic of every account since the core started, keyed by the
-// core user name, which EasySB sets to the account's subscription token.
+// core user name, which EasySB sets to <token>@<node id>.
 type Counters map[string]Usage
 
 // Counter is a source of absolute counters; *Reader is the production

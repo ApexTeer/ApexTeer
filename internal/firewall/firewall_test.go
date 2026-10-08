@@ -6,12 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 )
 
 func TestHopRange(t *testing.T) {
-	cfg := state.Default()
-	start, end, err := hopRange(cfg)
+	n := node.New(state.ProtoHysteria2, "hy2", 8443, nil)
+	start, end, err := hopRange(n)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,9 +22,8 @@ func TestHopRange(t *testing.T) {
 }
 
 func TestHopRangeInvalid(t *testing.T) {
-	cfg := state.Default()
-	cfg.HopRange = "3000"
-	if _, _, err := hopRange(cfg); err == nil {
+	n := node.New(state.ProtoHysteria2, "hy2", 8443, map[string]string{node.ParamHopRange: "3000"})
+	if _, _, err := hopRange(n); err == nil {
 		t.Fatal("expected error for malformed hop range")
 	}
 }

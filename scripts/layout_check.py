@@ -15,7 +15,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 SCREENS = [
     "", "node", "domain", "subscribe", "service", "bbr",
     "bbr-qdisc", "bbr-versions", "script-update", "uninstall", "system", "form",
-    "task", "toolbox-report", "node-protocols", "params", "ports", "sni",
+    "task", "toolbox-report", "node-list", "params",
 ]
 SIZES = [(80, 24), (100, 30), (100, 33), (120, 40), (160, 50), (60, 20)]
 BIN = sys.argv[1] if len(sys.argv) > 1 else "./easysb.exe"

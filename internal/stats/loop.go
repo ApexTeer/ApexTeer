@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/sbcore"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
@@ -26,6 +27,9 @@ const DefaultInterval = 5 * time.Minute
 type Options struct {
 	// AccountsPath is the account file the loop reads and rewrites.
 	AccountsPath string
+	// NodesPath is the node store, which the loop passes to Apply so a restart
+	// renders the same nodes the accounts selected.
+	NodesPath string
 	// Node returns the node state, which carries the ports and the sync interval.
 	Node func() state.Config
 	// Dial opens a counter source. It is called once per cycle, so a restarted
@@ -33,7 +37,7 @@ type Options struct {
 	Dial func() (Counter, error)
 	// Apply renders the node configuration for the given accounts, validates it
 	// and restarts the core.
-	Apply func(ctx context.Context, cfg state.Config, users []user.User) error
+	Apply func(ctx context.Context, cfg state.Config, nodes []node.Node, users []user.User) error
 	// Interval overrides the node's sync interval when non-zero.
 	Interval time.Duration
 	// StatsCapable reports whether this build carries the V2Ray API the counters
@@ -125,9 +129,11 @@ func (l *Loop) Tick(ctx context.Context) error {
 		return nil
 	}
 
-	names := make([]string, 0, peek.Len())
+	var names []string
 	for _, u := range peek.Users() {
-		names = append(names, u.Token)
+		for _, id := range u.Nodes {
+			names = append(names, node.CoreName(u.Token, id))
+		}
 	}
 	counters, err := l.counters(ctx, names)
 	if err != nil {
@@ -144,9 +150,11 @@ func (l *Loop) Tick(ctx context.Context) error {
 	}
 	changed := false
 	store.Mutate(func(u *user.User) {
-		if d, ok := deltas[u.Token]; ok {
-			u.AddUsage(d.Upload, d.Download)
-			changed = true
+		for _, id := range u.Nodes {
+			if d, ok := deltas[node.CoreName(u.Token, id)]; ok {
+				u.AddNodeUsage(id, d.Upload, d.Download)
+				changed = true
+			}
 		}
 		if u.ResetIfNewMonth(now) {
 			changed = true
@@ -157,7 +165,12 @@ func (l *Loop) Tick(ctx context.Context) error {
 	// change; accounting itself never touches the running core. A loop without an
 	// applier only keeps the counters correct, which is what tests exercise.
 	if l.opts.Apply != nil && transitions(store, now) {
-		if err := l.opts.Apply(ctx, l.opts.Node(), store.Routable(now)); err != nil {
+		nodes, err := l.nodes()
+		if err != nil {
+			lock.Unlock()
+			return err
+		}
+		if err := l.opts.Apply(ctx, l.opts.Node(), nodes, store.Routable(now)); err != nil {
 			lock.Unlock()
 			return err
 		}
@@ -178,6 +191,19 @@ func (l *Loop) Tick(ctx context.Context) error {
 	l.sample, l.sampled = counters, true
 	l.saveSample()
 	return nil
+}
+
+// nodes loads the node store the applier should render. A loop without a node
+// path keeps only the counters correct, which is what text fixtures exercise.
+func (l *Loop) nodes() ([]node.Node, error) {
+	if l.opts.NodesPath == "" {
+		return nil, nil
+	}
+	store, err := node.Load(l.opts.NodesPath)
+	if err != nil {
+		return nil, err
+	}
+	return store.Nodes(), nil
 }
 
 // counters opens a source and reads the absolute counters of the given users.

@@ -15,12 +15,38 @@ import (
 	"time"
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
 // endpointNow is the clock every endpoint test runs on.
 var endpointNow = time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+
+// testNodeID is the node every fixture account selects. The endpoint resolves a
+// subscription's entries against the node store, so the fixtures share one node.
+const testNodeID = "node-vless"
+
+// testNode is the single Reality node the fixture endpoints serve.
+func testNode() node.Node {
+	n := node.New(state.ProtoVLESSReality, "vless", 8443, nil)
+	n.ID = testNodeID
+	return n
+}
+
+// nodePath writes the test node to a fresh file and returns its path.
+func nodePath(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "nodes.json")
+	store, err := node.Load(path)
+	if err != nil {
+		t.Fatalf("load nodes: %v", err)
+	}
+	if err := store.Add(testNode()); err != nil {
+		t.Fatalf("add node: %v", err)
+	}
+	return path
+}
 
 // nodeConfig is the node the subscription documents are rendered for.
 func nodeConfig() state.Config {
@@ -66,6 +92,7 @@ func newEndpoint(t *testing.T, accounts ...user.User) *endpoint {
 	}
 	o := Options{
 		AccountsPath: path,
+		NodesPath:    nodePath(t),
 		Node:         nodeConfig,
 		Now:          func() time.Time { return endpointNow },
 		Log:          func(string) {},
@@ -75,7 +102,7 @@ func newEndpoint(t *testing.T, accounts ...user.User) *endpoint {
 
 // account builds one active account whose token is derived from its name.
 func account(name string, edit func(*user.User)) user.User {
-	u := user.New(name, state.Keys, endpointNow)
+	u := user.New(name, []user.Selection{{Node: testNodeID, Protocol: state.ProtoVLESSReality}}, endpointNow)
 	u.Token = "token-" + name
 	if edit != nil {
 		edit(&u)
@@ -195,11 +222,9 @@ func TestEndpointRefusesInactiveAccounts(t *testing.T) {
 			u.QuotaBytes = 100
 			u.UsedBytes = 100
 		}), http.StatusForbidden, "quota"},
-		{"no protocol", account("bare", func(u *user.User) {
-			for _, key := range state.Keys {
-				u.Deselect(key)
-			}
-		}), http.StatusForbidden, "protocol"},
+		{"no node", account("bare", func(u *user.User) {
+			u.Deselect(testNodeID)
+		}), http.StatusForbidden, "node"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -427,6 +452,7 @@ func TestRunServesAndStops(t *testing.T) {
 	go func() {
 		done <- Options{
 			AccountsPath: path,
+			NodesPath:    nodePath(t),
 			Node:         func() state.Config { return cfg },
 			Now:          func() time.Time { return endpointNow },
 			Log:          func(string) {},
@@ -480,6 +506,7 @@ func TestRunAnnouncesTheVersion(t *testing.T) {
 		done <- Options{
 			Version:      "9.9.9",
 			AccountsPath: path,
+			NodesPath:    nodePath(t),
 			Node:         func() state.Config { return cfg },
 			Log: func(line string) {
 				mu.Lock()

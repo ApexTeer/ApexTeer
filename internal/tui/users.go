@@ -10,7 +10,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/EasySBTeam/EasySB/internal/deploy"
 	"github.com/EasySBTeam/EasySB/internal/i18n"
 	"github.com/EasySBTeam/EasySB/internal/secret"
 	"github.com/EasySBTeam/EasySB/internal/state"
@@ -99,20 +98,11 @@ func accountsChange(lang i18n.Lang, change func(*user.Store, time.Time) error) t
 	}
 }
 
-// applyAccounts pushes the account list to the core. A node that was never
-// deployed has no certificate and no service yet, so the change is only stored
-// and the operator is told.
+// applyAccounts pushes the account list to the core. A node change and an
+// account change take the same path, so a new account is live without a
+// separate deploy step.
 func applyAccounts(ctx context.Context, lang i18n.Lang, log func(string)) error {
-	cfg := state.Load()
-	if !cfg.NodeDeployed {
-		log(lang.T("users_need_deploy"))
-		return nil
-	}
-	if err := deploy.ApplyStore(ctx, cfg, sysinfo.UsersFile); err != nil {
-		return err
-	}
-	log(lang.T("users_applied"))
-	return nil
+	return applyDeployment(ctx, lang, log)
 }
 
 // accountsAction turns an account change into a menu action.
@@ -126,6 +116,7 @@ func accountsAction(titleKey string, change func(*user.Store, time.Time) error) 
 func enterUsers() actionFunc {
 	return func(a *App) tea.Cmd {
 		a.loadAccounts()
+		a.loadNodes()
 		a.push(a.usersMenu())
 		return nil
 	}
@@ -259,7 +250,7 @@ func (a *App) userMenu(token string) *menu {
 		leaf("user-remark", "user_remark", "desc_user_remark", editUserRemark(token)),
 		{id: "user-quota", label: field("user_quota", quotaText), desc: tk("desc_user_quota"), action: editUserQuota(token)},
 		{id: "user-expiry", label: field("user_expiry", expiryText), desc: tk("desc_user_expiry"), action: editUserExpiry(token)},
-		{id: "user-protocols", label: field("user_protocols", protocolText), desc: tk("desc_user_protocols"), sub: a.userProtocolsMenu(token)},
+		{id: "user-nodes", label: field("user_nodes", a.nodesText), desc: tk("desc_user_nodes"), sub: a.userNodesMenu(token)},
 		{id: "user-toggle", label: field("user_toggle", statusText), desc: tk("desc_user_toggle"), action: toggleUser(token)},
 		leaf("user-reset", "user_reset", "desc_user_reset", resetUserUsage(token)),
 		leaf("user-rotate", "user_rotate", "desc_user_rotate", rotateUserToken(token)),
@@ -286,43 +277,61 @@ func statusText(account user.User, l i18n.Lang) string {
 	return l.T(statusKey(account.Status(time.Now())))
 }
 
-func protocolText(account user.User, l i18n.Lang) string {
-	names := make([]string, 0, len(account.Protocols))
-	for _, key := range state.Keys {
-		if account.Selects(key) {
-			names = append(names, state.Labels[key])
+// nodesText names the nodes an account may use.
+func (a *App) nodesText(account user.User, l i18n.Lang) string {
+	names := make([]string, 0, len(account.Nodes))
+	for _, id := range account.Nodes {
+		if n, ok := a.node(id); ok {
+			names = append(names, n.Name)
 		}
 	}
 	if len(names) == 0 {
-		return l.T("user_protocols_none")
+		return l.T("user_nodes_none")
 	}
 	return strings.Join(names, ", ")
 }
 
-// userProtocolsMenu chooses which nodes one account may use. The selection is
-// stored per account and the core configuration is rebuilt from it, so a
-// protocol switched off stops accepting that account's credentials.
-func (a *App) userProtocolsMenu(token string) *menu {
-	nodes := make([]*node, 0, len(state.Keys))
-	for _, key := range state.Keys {
-		key := key
+// userNodesMenu chooses which nodes one account may use. The selection is stored
+// per account and the core configuration is rebuilt from it, so a node switched
+// off stops accepting that account's credentials.
+func (a *App) userNodesMenu(token string) *menu {
+	nodes := make([]*node, 0, len(a.nodes))
+	for _, candidate := range a.nodes {
+		id := candidate.ID
 		nodes = append(nodes, &node{
-			id: "user-proto-" + key,
+			id: "user-node-" + id,
 			label: func(i18n.Lang) string {
 				mark := "[ ]"
-				if account, ok := a.account(token); ok && account.Selects(key) {
+				if account, ok := a.account(token); ok && account.Selects(id) {
 					mark = "[x]"
 				}
-				return mark + " " + state.Labels[key]
+				return mark + " " + a.nodeDisplayName(id)
 			},
-			desc:   tk("desc_user_proto_toggle"),
-			action: toggleUserProtocol(token, key),
+			desc:   tk("desc_user_node_toggle"),
+			action: toggleUserNode(token, id),
 		})
 	}
-	return &menu{id: "user-protocols", title: tk("user_protocols"), nodes: nodes}
+	if len(nodes) == 0 {
+		nodes = append(nodes, &node{
+			id:     "user-node-none",
+			label:  tk("user_nodes_none"),
+			desc:   tk("desc_node_new"),
+			action: newNodeAction(),
+		})
+	}
+	return &menu{id: "user-nodes", title: tk("user_nodes"), nodes: nodes}
 }
 
-// newUserAction creates an account with every protocol the node offers, no quota
+// nodeDisplayName is the name a node is listed under, falling back to its id for
+// a selection that outlived the node.
+func (a *App) nodeDisplayName(id string) string {
+	if n, ok := a.node(id); ok {
+		return n.Name
+	}
+	return id
+}
+
+// newUserAction creates an account with every enabled node selected, no quota
 // and no expiry: the operator narrows it afterwards.
 func newUserAction() actionFunc {
 	return func(a *App) tea.Cmd {
@@ -332,23 +341,24 @@ func newUserAction() actionFunc {
 			if name == "" {
 				return nil, errors.New(lang.T("users_name_required"))
 			}
-			cfg := state.Load()
 			return a.startTask(lang.T("users_new"), accountsChange(lang, func(store *user.Store, now time.Time) error {
-				return store.Add(user.New(name, enabledProtocols(cfg), now))
+				return store.Add(user.New(name, enabledSelections(), now))
 			})), nil
 		})
 		return nil
 	}
 }
 
-// enabledProtocols lists the protocols the node offers, which is the default
-// selection of a new account.
-func enabledProtocols(cfg state.Config) []string {
-	var out []string
-	for _, key := range state.Keys {
-		if cfg.Enabled[key] {
-			out = append(out, key)
-		}
+// enabledSelections is the default node set of a new account: every enabled node.
+func enabledSelections() []user.Selection {
+	store, err := loadNodeStore()
+	if err != nil {
+		return nil
+	}
+	nodes := store.Enabled()
+	out := make([]user.Selection, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, user.Selection{Node: n.ID, Protocol: n.Protocol})
 	}
 	return out
 }
@@ -515,17 +525,21 @@ func rotateUserToken(token string) actionFunc {
 	})
 }
 
-func toggleUserProtocol(token, key string) actionFunc {
+func toggleUserNode(token, id string) actionFunc {
 	return accountsAction("user_protocols", func(store *user.Store, _ time.Time) error {
 		account, ok := store.ByToken(token)
 		if !ok {
 			return errors.New("account not found")
 		}
+		n, ok := nodeByID(id)
+		if !ok {
+			return errors.New("node not found")
+		}
 		return store.Update(account.Name, func(u *user.User) error {
-			if u.Selects(key) {
-				u.Deselect(key)
+			if u.Selects(id) {
+				u.Deselect(id)
 			} else {
-				u.Select(key)
+				u.Select(id, n.Protocol)
 			}
 			return nil
 		})
@@ -636,15 +650,19 @@ func showUserLinks(token string) actionFunc {
 			a.setToast(lang.T("sub_need_domain"), true)
 			return nil
 		}
-		links := subscribe.ShareLinks(cfg, account)
+		nodes, err := loadNodes()
+		if err != nil {
+			a.setToast(err.Error(), true)
+			return nil
+		}
+		links := subscribe.ShareLinks(cfg, nodes, account)
 		if len(links) == 0 {
 			a.setToast(lang.T("users_link_empty"), true)
 			return nil
 		}
 		items := make([]linkItem, 0, len(links))
 		for _, link := range links {
-			label := state.Labels[link.Key]
-			items = append(items, linkItem{label: label, desc: account.Name + " · " + label, value: link.URI})
+			items = append(items, linkItem{label: link.Name, desc: account.Name + " · " + link.Name, value: link.URI})
 		}
 		a.links = newLinksModel(lang.T("user_links")+" · "+account.Name, items)
 		return nil

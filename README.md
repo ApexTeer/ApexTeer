@@ -95,7 +95,7 @@ The protocol samples under `templates/` are readable JSONC; strip the comments a
 | VLESS + Vision + Reality | TCP | 8003 | Certificate-free disguise, borrows `apple.com` by default |
 | VMess + WebSocket + TLS | WS over TLS | 8004 | CDN and reverse-proxy friendly, standard TLS |
 
-Ports are prompted one by one: Enter takes the default, `r` picks a random port, a number sets it manually. Conflicts with another protocol are rejected and re-prompted. Every protocol except VLESS + Reality requires a domain that already resolves to this host plus a valid certificate.
+Each node is one protocol inbound with its own port: Enter takes the protocol default, `r` picks a random port, a number sets it manually. A port already used by another enabled node, or by the subscription service, is rejected and re-prompted. Every protocol except VLESS + Reality needs a domain that already resolves to this host plus a valid certificate. An account is then granted access to the nodes it selects, and every node change re-renders the config and restarts the core, so there is no separate deploy step.
 
 ---
 
@@ -215,8 +215,8 @@ upgrade` always have a fixed address to work from. Two repository secrets drive 
 
 | Capability | Description |
 | :--- | :--- |
-| 5-in-1 deployment | Ports allocated one by one; the node keeps only what no account owns (the Reality keypair), because credentials belong to accounts |
-| Accounts and traffic | Per-account credentials for every protocol, traffic quota, expiry date, protocol selection, enable switch, usage reset and token rotation; disabled, expired and over-quota accounts drop out of the core automatically |
+| Nodes | One node is one protocol inbound with its own port and its own parameters (Reality SNI / keypair / short id, Hysteria2 hop range); the node store is the only source of what the host serves, so adding, editing or removing a node re-renders the config and restarts the core. Deleting a node also drops it from every account that selected it, and the panel reports how many were affected |
+| Accounts and traffic | Per-account, per-node credentials, traffic quota, expiry date, node selection, enable switch, usage reset and token rotation; disabled, expired and over-quota accounts drop out of the core automatically |
 | Service unlock status | Probes what this IP can really use: Netflix (including the originals-only case), Disney+, YouTube Premium, Amazon Prime Video, DAZN, TVBAnywhere+, Spotify, Reddit, TikTok, ChatGPT, Gemini, Claude, Steam, BiliBili (mainland / HK-Macau-Taiwan / Taiwan) and 巴哈姆特動畫瘋 — 17 services, one to three HTTP requests each, classified as unlocked / partially unlocked / blocked / failed with a reason. A probe that cannot read the answer reports a failure instead of claiming the service works |
 | Core inside the panel | sing-box is a `go.mod` requirement, so the node is `easysb core run -c /etc/sing-box/config.json` and the version line reads the compiled-in release. `easysb core check` validates a configuration with the same engine the node uses, and the per-account counters exist when the build carries `with_v2ray_api` (`release/TAGS`), which the panel reports rather than assumes |
 | Version panel | Program version and the sing-box release inside it, with whether this build can count traffic |
@@ -224,7 +224,7 @@ upgrade` always have a fixed address to work from. Two repository secrets drive 
 | System info | The runtime the panel is running on, and the one place the look changes from inside the interface: `↑`/`↓` + `Enter` or `A`-`D` picks a skin, `T` flips dark/light, `I` swaps Unicode markers for ASCII. Every choice lands on the next frame, and the glyph preview row shows before a card anywhere else does whether the terminal font can draw the markers. The status strip and the hints stay put while the body swaps |
 | Copy links | Subscription and share-link results render as a card grid inside the same fixed panel as the main menu. Subscription cards show the subscription name (sing-box / mihomo / Base64) plus a format note, share-link cards show the protocol name, and neither draws the host or the full URL. Select with `↑`/`↓`/`←`/`→` (or a number key), `Enter` copies the card, `C` copies all, `Q` quits the program, `Esc` returns. A copied card turns green and copy-all reports in the header. Narrow or short windows reflow the grid and truncate content, never overflowing the panel. On log screens `C` copies the log (OSC52) |
 | Certificates | Let's Encrypt issuance in process through lego with the HTTP-01 standalone challenge: issue, list, switch active and remove. The preflight check covers DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and nothing is downloaded to do any of it. Renewal is decided by expiry (30 days before it) and driven by the panel's own systemd timer, which also reloads sing-box and the subscription service |
-| Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (`templates/config/tun-fakeip.json`, `templates/config/mihomo.yaml` or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and per-protocol share links in the panel |
+| Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (`templates/config/tun-fakeip.json`, `templates/config/mihomo.yaml` or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and one share link per selected node in the panel |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
 | BBR acceleration | Shows the running kernel, congestion control, queue discipline and installed kernels; enabling BBR loads `tcp_bbr`, writes `net.core.default_qdisc` and `net.ipv4.tcp_congestion_control` and persists them in `/etc/sysctl.d/99-easysb-bbr.conf` and `/etc/modules-load.d/easysb-bbr.conf` so the choice survives a reboot; installs a prebuilt BBRv3 kernel published by [Linux-BBR-v3](https://github.com/MinimaxFlora/Linux-BBR-v3) (standard or Max, x86_64 and arm64, downloaded straight from the release), or lists every published version to pick one from; the kernel and its settings can be removed from the panel again. Versions come from the kernel project itself — its version stamp and release list — so a kernel published there shows up here without a release of this panel |
@@ -238,10 +238,10 @@ upgrade` always have a fixed address to work from. Two repository secrets drive 
 ```text
 Main menu (one card, two columns, ten entries)
 ├── Service unlock      Check what this IP can use: streaming, AI, game stores, mainland-China and Taiwan catalogues
-├── Node management      One-click deploy, enable protocols, parameters (UUID / password / hop / ports / SNI / Reality keys)
+├── Node management      Add, edit, enable / disable, set the port and protocol parameters, and delete a node (deleting one with accounts assigned warns how many are affected)
 ├── Domain management    Issue (with preflight checks), renew now, renewal timer, list, switch active and remove certificates
 ├── Subscription         One account's URL, QR code and share links (pick the account first, then the panel prints the endpoint prefix); install / restart / status of the subscription service
-├── Accounts             List, create, rename, remark, quota, expiry, protocol selection, enable / disable, usage reset, token rotation, delete
+├── Accounts             List, create, rename, remark, quota, expiry, node selection, enable / disable, usage reset, token rotation, delete
 ├── Service management   Start, stop, restart, status, enable / disable and port-hopping rules
 ├── System info          Runtime, and the one place the look changes from inside the interface: skin / palette / markers / language, terminal and host details
 ├── BBR                  Status (kernel, congestion control, queue discipline, installed kernels), enable BBR with fq / fq_codel / fq_pie / cake, install the standard or Max BBRv3 kernel, pick any published version from a list, remove it, clear the settings
@@ -249,7 +249,7 @@ Main menu (one card, two columns, ten entries)
 └── Uninstall script     Remove EasySB completely
 ```
 
-Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, accounts `/etc/sing-box/easysb-users.json`, shortcut `/usr/bin/sb`.
+Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, nodes `/etc/sing-box/easysb-nodes.json`, accounts `/etc/sing-box/easysb-users.json`, shortcut `/usr/bin/sb`.
 
 ---
 
@@ -300,7 +300,7 @@ Every account has one subscription URL, and the document behind it is rendered f
 
 1. The built-in subscription service (`easysb --serve`, installed as `easysb.service` from the panel) answers `/sub/<token>` on `SUB_SERVE_PORT` (default `8443`).
 2. A terminal QR code per client format, scannable once `qrencode` is installed.
-3. Five per-protocol share links per account.
+3. One share link per node the account selected.
 
 The format is negotiated from the User-Agent, so one URL works everywhere:
 
@@ -314,7 +314,7 @@ The Base64 document is the universal format. v2rayN imports it directly, and the
 
 Every share link keeps the canonical hyphenated UUID. `homeproxy` validates the node UUID with the LuCI `uuid` check and rejects the 32-character hyphen-less form, so the compact form must not be emitted.
 
-The account token in the URL is the access secret, and it is also the core user name the usage counters are keyed by. Revoke for one person by rotating that account's token or disabling it; nobody else is affected. Renaming an account leaves its token and client imports alone.
+The account token in the URL is the access secret. The core user name is `<token>@<node id>`, so each account's traffic is counted per node; the token and a node id are ASCII by construction and survive a rename, while a display name may not. Revoke for one person by rotating that account's token or disabling it; nobody else is affected. Renaming an account leaves its token and client imports alone.
 
 Each response carries `Subscription-Userinfo: upload=<bytes>; download=<bytes>; total=<bytes>; expire=<unix seconds>`, which Clash Verge Rev, Clash Orbit and v2rayN display as remaining traffic and days. An account that is disabled, expired or over quota gets `403` with a plain-text reason instead of a profile with no nodes in it, and the core stops accepting its credentials on the next accounting cycle. Traffic is sampled every `SUB_SYNC_SECONDS` (default `300`).
 

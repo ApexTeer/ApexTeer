@@ -6,22 +6,49 @@ import (
 	"testing"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
+// newNode builds one node per protocol, with the Reality node carrying a known
+// keypair so the rendered document can be asserted on.
+func newNode(protocol string, port int) node.Node {
+	return node.New(protocol, protocol, port, nil)
+}
+
+func newNodeReality(port int, priv, sid, sni string) node.Node {
+	return node.New(state.ProtoVLESSReality, state.ProtoVLESSReality, port, map[string]string{
+		node.ParamRealityPrivate: priv,
+		node.ParamRealityPublic:  "pub",
+		node.ParamRealityShortID: sid,
+		node.ParamRealitySNI:     sni,
+	})
+}
+
+func selectionsFor(nodes []node.Node) []user.Selection {
+	out := make([]user.Selection, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, user.Selection{Node: n.ID, Protocol: n.Protocol})
+	}
+	return out
+}
+
 func fullParams() Params {
-	c := state.Default()
-	c.RealityPriv = "priv"
-	c.RealityPub = "pub"
-	c.RealitySID = "abcd1234"
-	c.RealitySNI = "apple.com"
-	account := user.New("demo", state.Keys, time.Unix(0, 0))
-	p := ParamsFromState(c)
-	p.CertFullchain = "/etc/sing-box/cert/fullchain.cer"
-	p.CertKey = "/etc/sing-box/cert/private.key"
-	p.Members = MembersFrom([]user.User{account})
-	return p
+	nodes := []node.Node{
+		newNode(state.ProtoAnyTLS, 8000),
+		newNode(state.ProtoHysteria2, 8001),
+		newNode(state.ProtoTUIC, 8002),
+		newNodeReality(8003, "priv", "abcd1234", "apple.com"),
+		newNode(state.ProtoVMessWSTLS, 8004),
+	}
+	account := user.New("demo", selectionsFor(nodes), time.Unix(0, 0))
+	return Params{
+		Nodes:         nodes,
+		Members:       MembersFrom([]user.User{account}),
+		CertFullchain: "/etc/sing-box/cert/fullchain.cer",
+		CertKey:       "/etc/sing-box/cert/private.key",
+	}
 }
 
 type parsedConfig struct {
@@ -34,7 +61,8 @@ type parsedConfig struct {
 }
 
 func TestBuildAllProtocols(t *testing.T) {
-	data, err := Build(fullParams())
+	p := fullParams()
+	data, err := Build(p)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -53,26 +81,46 @@ func TestBuildAllProtocols(t *testing.T) {
 	for _, in := range parsed.Inbounds {
 		byTag[in["tag"].(string)] = in
 	}
-	for _, tag := range state.Keys {
-		if _, ok := byTag[tag]; !ok {
-			t.Fatalf("missing inbound %s", tag)
+	for _, n := range p.Nodes {
+		if _, ok := byTag[n.ID]; !ok {
+			t.Fatalf("missing inbound for node %s", n.Name)
 		}
 	}
-	if p := byTag[state.ProtoAnyTLS]["listen_port"].(float64); p != 8000 {
-		t.Fatalf("anytls port = %v", p)
+	anytls := inboundFor(t, p.Nodes, state.ProtoAnyTLS, byTag)
+	if port := anytls["listen_port"].(float64); port != 8000 {
+		t.Fatalf("anytls port = %v", port)
 	}
-	if p := byTag[state.ProtoVMessWSTLS]["listen_port"].(float64); p != 8004 {
-		t.Fatalf("vmess port = %v", p)
+	vmess := inboundFor(t, p.Nodes, state.ProtoVMessWSTLS, byTag)
+	if port := vmess["listen_port"].(float64); port != 8004 {
+		t.Fatalf("vmess port = %v", port)
 	}
-	reality := byTag[state.ProtoVLESSReality]["tls"].(map[string]any)["reality"].(map[string]any)
+	realityIn := inboundFor(t, p.Nodes, state.ProtoVLESSReality, byTag)
+	reality := realityIn["tls"].(map[string]any)["reality"].(map[string]any)
 	if reality["private_key"] != "priv" {
 		t.Fatalf("reality private key = %v", reality["private_key"])
 	}
 }
 
+// inboundFor finds the rendered inbound of the first node on a protocol.
+func inboundFor(t *testing.T, nodes []node.Node, protocol string, byTag map[string]map[string]any) map[string]any {
+	t.Helper()
+	for _, n := range nodes {
+		if n.Protocol != protocol {
+			continue
+		}
+		in, ok := byTag[n.ID]
+		if !ok {
+			t.Fatalf("no inbound for node %s", n.Name)
+		}
+		return in
+	}
+	t.Fatalf("no node on protocol %s", protocol)
+	return nil
+}
+
 func TestBuildRespectsDisabled(t *testing.T) {
 	p := fullParams()
-	p.Enabled = map[string]bool{state.ProtoAnyTLS: true}
+	p.Nodes = p.Nodes[:1]
 	data, err := Build(p)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -91,7 +139,7 @@ func TestBuildRespectsDisabled(t *testing.T) {
 
 func TestBuildNoProtocol(t *testing.T) {
 	p := fullParams()
-	p.Enabled = map[string]bool{}
+	p.Nodes = nil
 	if _, err := Build(p); err == nil {
 		t.Fatal("expected error when no protocol is enabled")
 	}
@@ -99,8 +147,8 @@ func TestBuildNoProtocol(t *testing.T) {
 
 func TestBuildInvalidPort(t *testing.T) {
 	p := fullParams()
-	p.Enabled = map[string]bool{state.ProtoAnyTLS: true}
-	p.Ports = map[string]string{state.ProtoAnyTLS: "70000"}
+	p.Nodes = p.Nodes[:1]
+	p.Nodes[0].Port = 70000
 	if _, err := Build(p); err == nil {
 		t.Fatal("expected error for out-of-range port")
 	}
@@ -111,7 +159,13 @@ func TestNeedsCert(t *testing.T) {
 	if !p.NeedsCert() {
 		t.Fatal("expected cert requirement with TLS protocols enabled")
 	}
-	p.Enabled = map[string]bool{state.ProtoVLESSReality: true}
+	var reality node.Node
+	for _, n := range p.Nodes {
+		if n.Protocol == state.ProtoVLESSReality {
+			reality = n
+		}
+	}
+	p.Nodes = []node.Node{reality}
 	if p.NeedsCert() {
 		t.Fatal("reality alone should not require a cert")
 	}
@@ -145,15 +199,5 @@ func TestBuildStatsBlockFollowsCore(t *testing.T) {
 	}
 	if !strings.Contains(string(without), `"inbounds"`) {
 		t.Fatal("the rest of the config should still be there")
-	}
-}
-
-// TestParamsFromStateLeavesStatsToTheCaller pins the split of responsibility: the state
-// file describes the host, so it cannot say whether this build counts traffic. The deploy
-// path asks the build (internal/sbcore) and sets Params.Stats itself, which is why a state
-// file maps to a params value with the block switched off.
-func TestParamsFromStateLeavesStatsToTheCaller(t *testing.T) {
-	if ParamsFromState(state.Default()).Stats {
-		t.Fatal("ParamsFromState must not claim the counters: the build decides that")
 	}
 }

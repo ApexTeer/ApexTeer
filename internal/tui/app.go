@@ -17,6 +17,7 @@ import (
 	"github.com/EasySBTeam/EasySB/internal/bbr"
 	"github.com/EasySBTeam/EasySB/internal/i18n"
 	"github.com/EasySBTeam/EasySB/internal/icons"
+	sbnode "github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/prefs"
 	"github.com/EasySBTeam/EasySB/internal/subscribe"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
@@ -80,6 +81,8 @@ type App struct {
 	// accounts is the snapshot the account menus render from; it is refreshed
 	// when the section is entered and after every task.
 	accounts []user.User
+	// nodes is the snapshot the node menus render from, refreshed the same way.
+	nodes []sbnode.Node
 	// bbrVersions is the published kernel list the BBR section renders from, with
 	// bbrStatus as the local half of the reading: fetched when the list is opened.
 	bbrVersions        []bbr.Release
@@ -292,6 +295,19 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 		return a.Snapshot(width, height)
 	}
 	switch screen {
+	case "node":
+		a.loadNodes()
+		a.push(a.nodeMenu())
+		a.section = "node"
+	case "node-list":
+		a.loadNodes()
+		a.push(a.nodeMenu())
+		a.push(a.nodeListMenu())
+		a.section = "node"
+	case "params":
+		a.push(a.nodeMenu())
+		a.push(buildParams())
+		a.section = "node"
 	case "system":
 		a.openSystem()
 	case "form":
@@ -711,6 +727,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 看板 reads the machine (BBR) takes its reading again too, or the
 				// page would keep showing what it said before the task ran.
 				a.refreshAccountMenus()
+				a.refreshNodeMenus()
 				a.adoptTaskResult()
 				return a, tea.Batch(cmd, collectStatus(a.scriptVersion), a.sectionRefresh())
 			}

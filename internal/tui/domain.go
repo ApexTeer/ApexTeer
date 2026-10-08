@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
-	"github.com/EasySBTeam/EasySB/internal/deploy"
 	"github.com/EasySBTeam/EasySB/internal/i18n"
 	"github.com/EasySBTeam/EasySB/internal/netutil"
 	"github.com/EasySBTeam/EasySB/internal/service"
@@ -146,7 +145,7 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 		}
 
 		if cfg.NodeDeployed {
-			if err := deploy.ApplyStore(ctx, cfg, sysinfo.UsersFile); err != nil {
+			if err := applyDeployment(ctx, lang, r.Log); err != nil {
 				return err
 			}
 			r.Log(lang.T("domain_applied"))
@@ -317,7 +316,7 @@ func switchCert(a *App, domain string) tea.Cmd {
 		return nil
 	}
 	return a.startTask(lang.T("domain_switch"), func(ctx context.Context, r *taskReporter) error {
-		if err := deploy.ApplyStore(ctx, cfg, sysinfo.UsersFile); err != nil {
+		if err := applyDeployment(ctx, lang, r.Log); err != nil {
 			return err
 		}
 		r.Log(lang.T("domain_switched") + ": " + domain)

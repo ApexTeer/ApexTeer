@@ -7,23 +7,60 @@ import (
 	"testing"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
-// sampleNode is the node state the client documents are derived from.
-func sampleNode() state.Config {
+// sampleConfig is the node state the client documents are derived from. Protocol
+// parameters live on the nodes now, so only the host fields remain here.
+func sampleConfig() state.Config {
 	c := state.Default()
 	c.ServerIP = "203.0.113.10"
-	c.RealityPub = "PUBKEY"
-	c.RealitySID = "abcd1234"
-	c.RealitySNI = "apple.com"
 	return c
 }
 
-// sampleAccount is one subscriber, with a credential for every protocol.
+// sampleNodes is one node per protocol, named after the protocol so the display
+// names stay readable. The Reality parameters are pinned.
+func sampleNodes() []node.Node {
+	return []node.Node{
+		{ID: "n-anytls", Name: state.ProtoAnyTLS, Protocol: state.ProtoAnyTLS, Port: 8000, Enabled: true},
+		{ID: "n-hysteria2", Name: state.ProtoHysteria2, Protocol: state.ProtoHysteria2, Port: 8001, Enabled: true,
+			Params: map[string]string{node.ParamHopRange: state.DefaultHopRange}},
+		{ID: "n-tuic", Name: state.ProtoTUIC, Protocol: state.ProtoTUIC, Port: 8002, Enabled: true},
+		{ID: "n-vless", Name: state.ProtoVLESSReality, Protocol: state.ProtoVLESSReality, Port: 8003, Enabled: true,
+			Params: map[string]string{
+				node.ParamRealitySNI:     "apple.com",
+				node.ParamRealityPrivate: "PRIV",
+				node.ParamRealityPublic:  "PUBKEY",
+				node.ParamRealityShortID: "abcd1234",
+			}},
+		{ID: "n-vmess", Name: state.ProtoVMessWSTLS, Protocol: state.ProtoVMessWSTLS, Port: 8004, Enabled: true},
+	}
+}
+
+// selections turns nodes into the account selection set.
+func selections(nodes []node.Node) []user.Selection {
+	out := make([]user.Selection, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, user.Selection{Node: n.ID, Protocol: n.Protocol})
+	}
+	return out
+}
+
+// nodeID maps a protocol to the fixture node that serves it.
+func nodeID(protocol string) string {
+	for _, n := range sampleNodes() {
+		if n.Protocol == protocol {
+			return n.ID
+		}
+	}
+	return ""
+}
+
+// sampleAccount is one subscriber that selected every fixture node.
 func sampleAccount() user.User {
-	return user.New("demo", state.Keys, time.Unix(0, 0))
+	return user.New("demo", selections(sampleNodes()), time.Unix(0, 0))
 }
 
 // uris flattens share links into the URIs a client would read.
@@ -49,9 +86,10 @@ func TestDeepLinkEncodesURL(t *testing.T) {
 }
 
 func TestShareLinks(t *testing.T) {
-	c := sampleNode()
+	c := sampleConfig()
+	nodes := sampleNodes()
 	account := sampleAccount()
-	links := ShareLinks(c, account)
+	links := ShareLinks(c, nodes, account)
 	joined := strings.Join(uris(links), "\n")
 	for _, prefix := range []string{"anytls://", "hysteria2://", "tuic://", "vmess://", "vless://"} {
 		if !strings.Contains(joined, prefix) {
@@ -73,7 +111,7 @@ func TestShareLinks(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatalf("vmess json decode: %v", err)
 	}
-	if payload["add"] != "203.0.113.10" || payload["id"] != account.Credential(state.ProtoVMessWSTLS).UUID {
+	if payload["add"] != "203.0.113.10" || payload["id"] != account.Credential(nodeID(state.ProtoVMessWSTLS)).UUID {
 		t.Fatalf("unexpected vmess payload: %v", payload)
 	}
 	// Some parsers read only "security"; v2rayN and mihomo read "scy".
@@ -83,81 +121,89 @@ func TestShareLinks(t *testing.T) {
 }
 
 func TestShareLinksCoverEveryProtocol(t *testing.T) {
-	c := sampleNode()
-	links := ShareLinks(c, sampleAccount())
-	if len(links) != len(state.Keys) {
-		t.Fatalf("expected one link per protocol, got %d", len(links))
+	c := sampleConfig()
+	nodes := sampleNodes()
+	links := ShareLinks(c, nodes, sampleAccount())
+	if len(links) != len(nodes) {
+		t.Fatalf("expected one link per node, got %d", len(links))
 	}
-	for i, key := range state.Keys {
-		if links[i].Key != key {
-			t.Fatalf("link %d belongs to %s, want %s", i, links[i].Key, key)
+	for i, n := range nodes {
+		if links[i].Key != n.ID {
+			t.Fatalf("link %d belongs to %s, want %s", i, links[i].Key, n.ID)
 		}
 	}
 }
 
 func TestShareLinksRespectsDisabled(t *testing.T) {
-	c := sampleNode()
-	for _, k := range state.Keys {
-		c.Enabled[k] = k == state.ProtoVLESSReality
+	c := sampleConfig()
+	nodes := sampleNodes()
+	for i := range nodes {
+		nodes[i].Enabled = nodes[i].Protocol == state.ProtoVLESSReality
 	}
-	links := ShareLinks(c, sampleAccount())
+	links := ShareLinks(c, nodes, sampleAccount())
 	if len(links) != 1 || !strings.HasPrefix(links[0].URI, "vless://") {
 		t.Fatalf("expected only vless link, got %v", uris(links))
 	}
 }
 
 func TestShareLinksRespectsAccountSelection(t *testing.T) {
-	c := sampleNode()
+	c := sampleConfig()
+	nodes := sampleNodes()
 	account := sampleAccount()
-	for _, key := range state.Keys {
-		if key != state.ProtoHysteria2 {
-			account.Deselect(key)
+	for _, n := range nodes {
+		if n.Protocol != state.ProtoHysteria2 {
+			account.Deselect(n.ID)
 		}
 	}
-	links := ShareLinks(c, account)
-	if len(links) != 1 || links[0].Key != state.ProtoHysteria2 {
+	links := ShareLinks(c, nodes, account)
+	if len(links) != 1 || links[0].Key != nodeID(state.ProtoHysteria2) {
 		t.Fatalf("expected only the hysteria2 link, got %v", uris(links))
 	}
 }
 
-func TestActiveTagsFollowNodeAndAccount(t *testing.T) {
-	c := sampleNode()
+func TestActiveNodesFollowNodeAndAccount(t *testing.T) {
+	nodes := sampleNodes()
 	account := sampleAccount()
-	if got := len(ActiveTags(c, account)); got != len(state.Keys) {
-		t.Fatalf("active tags = %d, want %d", got, len(state.Keys))
+	if got := len(ActiveNodes(nodes, account)); got != len(nodes) {
+		t.Fatalf("active nodes = %d, want %d", got, len(nodes))
 	}
 
-	c.Enabled[state.ProtoTUIC] = false
-	account.Deselect(state.ProtoAnyTLS)
-	tags := ActiveTags(c, account)
-	for _, tag := range tags {
-		if tag == "tuic" || tag == "anytls" {
-			t.Fatalf("inactive tag leaked: %v", tags)
+	for i := range nodes {
+		if nodes[i].Protocol == state.ProtoTUIC {
+			nodes[i].Enabled = false
 		}
 	}
-	if len(tags) != len(state.Keys)-2 {
-		t.Fatalf("active tags = %v", tags)
+	account.Deselect(nodeID(state.ProtoAnyTLS))
+	active := ActiveNodes(nodes, account)
+	for _, n := range active {
+		if n.Protocol == state.ProtoTUIC || n.Protocol == state.ProtoAnyTLS {
+			t.Fatalf("inactive node leaked: %v", active)
+		}
+	}
+	if len(active) != len(nodes)-2 {
+		t.Fatalf("active nodes = %v", active)
 	}
 }
 
 func TestVLESSShareLinkKeepsCanonicalUUID(t *testing.T) {
-	c := sampleNode()
+	c := sampleConfig()
+	nodes := sampleNodes()
 	account := sampleAccount()
 	var vless string
-	for _, l := range uris(ShareLinks(c, account)) {
+	for _, l := range uris(ShareLinks(c, nodes, account)) {
 		if strings.HasPrefix(l, "vless://") {
 			vless = l
 		}
 	}
 	// homeproxy validates the node UUID with the LuCI uuid check and rejects
 	// the 32 character form, so the share link must keep the canonical UUID.
-	if !strings.HasPrefix(vless, "vless://"+account.Credential(state.ProtoVLESSReality).UUID+"@") {
+	if !strings.HasPrefix(vless, "vless://"+account.Credential(nodeID(state.ProtoVLESSReality)).UUID+"@") {
 		t.Fatalf("vless link should carry the canonical UUID: %s", vless)
 	}
 }
 
 func TestSubscriptionEndpoint(t *testing.T) {
-	c := sampleNode()
+	c := sampleConfig()
 	account := sampleAccount()
 	want := "http://203.0.113.10:8443/sub/" + account.Token
 	if got := Endpoint(c); got != "http://203.0.113.10:8443/sub/" {
@@ -181,14 +227,16 @@ func TestSubscriptionEndpoint(t *testing.T) {
 }
 
 func TestShareLinksEncodeCredentials(t *testing.T) {
-	c := sampleNode()
+	c := sampleConfig()
+	nodes := sampleNodes()
 	account := sampleAccount()
-	for _, key := range []string{state.ProtoAnyTLS, state.ProtoHysteria2} {
-		cred := account.Credential(key)
+	for _, protocol := range []string{state.ProtoAnyTLS, state.ProtoHysteria2} {
+		id := nodeID(protocol)
+		cred := account.Credential(id)
 		cred.Password = "p@ss/word"
-		account.Credentials[key] = cred
+		account.Credentials[id] = cred
 	}
-	joined := strings.Join(uris(ShareLinks(c, account)), "\n")
+	joined := strings.Join(uris(ShareLinks(c, nodes, account)), "\n")
 	if strings.Contains(joined, "p@ss/word") {
 		t.Fatalf("password not percent-encoded:\n%s", joined)
 	}
@@ -203,9 +251,10 @@ func TestShareLinksEncodeCredentials(t *testing.T) {
 }
 
 func TestV2RayDocument(t *testing.T) {
-	c := sampleNode()
+	c := sampleConfig()
+	nodes := sampleNodes()
 	account := sampleAccount()
-	raw, err := base64.StdEncoding.DecodeString(V2RayDocument(c, account))
+	raw, err := base64.StdEncoding.DecodeString(V2RayDocument(c, nodes, account))
 	if err != nil {
 		t.Fatalf("decode v2ray document: %v", err)
 	}
@@ -218,8 +267,8 @@ func TestV2RayDocument(t *testing.T) {
 }
 
 func TestNodeNameIncludesAccount(t *testing.T) {
-	name := NodeName("alice", "vless-vision-reality")
-	if !strings.Contains(name, "alice") || !strings.Contains(name, "VLESS") {
+	name := NodeName("alice", "vless-reality")
+	if !strings.Contains(name, "alice") || !strings.Contains(name, "vless-reality") {
 		t.Fatalf("node name = %q", name)
 	}
 }

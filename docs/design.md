@@ -16,10 +16,12 @@ The binary is invoked as `sb` after `install.sh` links it.
 `/etc/sing-box/easysb.conf` keeps the KV layout of the old bash tool. A Go build
 and a shell build can inspect the same deployment. Do not change existing keys;
 add new ones instead. The exception is a key that only described a component
-which no longer exists: v4 dropped `SUB_PORT` and `SUB_PATH` in the same change
-that deleted the nginx site they configured, because an unread key is dead
-weight. Removing a key requires removing its component and updating every doc
-that mentions it.
+which no longer exists, or state another package now owns: v4 dropped `SUB_PORT`
+and `SUB_PATH` in the same change that deleted the nginx site they configured,
+and v6 dropped the per-protocol keys (`IS_*`, `PORT_*`, `HY2_HOP_RANGE`,
+`REALITY_*`) once `internal/node` became the source of what the host serves. The
+migration reads the old keys, the next save drops them, and every doc that
+mentions them changes in the same commit. An unread key is dead weight.
 
 ## Templates are readable first
 

@@ -9,11 +9,15 @@ import (
 
 func TestGenerateMihomo(t *testing.T) {
 	cfg := testConfig()
-	cfg.Enabled[state.ProtoTUIC] = false
-	cfg.Enabled[state.ProtoAnyTLS] = false
+	nodes := sampleNodes()
+	for i := range nodes {
+		if nodes[i].Protocol == state.ProtoTUIC || nodes[i].Protocol == state.ProtoAnyTLS {
+			nodes[i].Enabled = false
+		}
+	}
 
 	acct := testAccount()
-	data, err := GenerateMihomo(cfg, acct)
+	data, err := GenerateMihomo(cfg, nodes, acct)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,16 +54,12 @@ func TestGenerateMihomo(t *testing.T) {
 
 func TestGenerateMihomoAnyTLS(t *testing.T) {
 	cfg := testConfig()
-	for _, tag := range []string{
-		state.ProtoHysteria2,
-		state.ProtoTUIC,
-		state.ProtoVLESSReality,
-		state.ProtoVMessWSTLS,
-	} {
-		cfg.Enabled[tag] = false
+	nodes := sampleNodes()
+	for i := range nodes {
+		nodes[i].Enabled = nodes[i].Protocol == state.ProtoAnyTLS
 	}
 	acct := testAccount()
-	data, err := GenerateMihomo(cfg, acct)
+	data, err := GenerateMihomo(cfg, nodes, acct)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestGenerateMihomoRequiresHost(t *testing.T) {
 	cfg := testConfig()
 	cfg.Domain = ""
 	cfg.ServerIP = ""
-	if _, err := GenerateMihomo(cfg, testAccount()); err == nil {
+	if _, err := GenerateMihomo(cfg, sampleNodes(), testAccount()); err == nil {
 		t.Fatal("expected error without a server address")
 	}
 }
@@ -91,7 +91,7 @@ func TestGenerateMihomoRequiresHost(t *testing.T) {
 func TestGenerateMihomoTemplateActionsNotInComments(t *testing.T) {
 	cfg := testConfig()
 	acct := testAccount()
-	data, err := GenerateMihomo(cfg, acct)
+	data, err := GenerateMihomo(cfg, sampleNodes(), acct)
 	if err != nil {
 		t.Fatal(err)
 	}

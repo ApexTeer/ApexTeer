@@ -129,13 +129,17 @@ func firewallApply() actionFunc {
 		lang := a.lang
 		return a.startTask(lang.T("fw_configuring"), func(ctx context.Context, r *taskReporter) error {
 			cfg := state.Load()
-			if !cfg.AnyEnabled() {
-				return errors.New(lang.T("node_all_disabled"))
-			}
-			if err := firewall.Apply(ctx, cfg, r.Log); err != nil {
+			nodes, err := loadNodes()
+			if err != nil {
 				return err
 			}
-			if err := firewall.WriteUnit(cfg); err != nil {
+			if !anyNodeEnabled(nodes) {
+				return errors.New(lang.T("node_all_disabled"))
+			}
+			if err := firewall.Apply(ctx, cfg, nodes, r.Log); err != nil {
+				return err
+			}
+			if err := firewall.WriteUnit(nodes); err != nil {
 				return err
 			}
 			if err := firewall.UnitAction(ctx, "enable"); err != nil {
@@ -152,8 +156,11 @@ func firewallRemove() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		return a.startTask(lang.T("fw_remove"), func(ctx context.Context, r *taskReporter) error {
-			cfg := state.Load()
-			if err := firewall.Remove(ctx, cfg); err != nil {
+			nodes, err := loadNodes()
+			if err != nil {
+				return err
+			}
+			if err := firewall.Remove(ctx, nodes); err != nil {
 				return err
 			}
 			if err := firewall.UnitAction(ctx, "disable"); err != nil {

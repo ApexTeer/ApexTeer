@@ -1,7 +1,8 @@
 // Package subscribe renders one account's client documents: the sing-box JSON
 // profile, the mihomo YAML profile, the base64 share-link document and the
-// share links themselves. Every document is derived from the node state plus a
-// single account, because v4 gives each account its own credentials.
+// share links themselves. Every document is derived from the node store plus a
+// single account: an account owns one credential per node it selected, so two
+// nodes of the same protocol produce two independent entries.
 package subscribe
 
 import (
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
@@ -47,7 +49,8 @@ const ImportScheme = "sing-box://import-remote-profile?url="
 // is chosen from the client's User-Agent, so one URL works in every client.
 const SubPathPrefix = "/sub/"
 
-// tagFor maps a state protocol key to the tag used inside the client templates.
+// tagFor maps a protocol key to the tag of its outbound block in the client
+// templates.
 var tagFor = map[string]string{
 	state.ProtoAnyTLS:       "anytls",
 	state.ProtoHysteria2:    "hysteria2",
@@ -56,51 +59,25 @@ var tagFor = map[string]string{
 	state.ProtoVLESSReality: "vless-vision-reality",
 }
 
-// keyForTag is the reverse of tagFor.
-var keyForTag = map[string]string{
-	"anytls":               state.ProtoAnyTLS,
-	"hysteria2":            state.ProtoHysteria2,
-	"tuic":                 state.ProtoTUIC,
-	"vmess-ws-tls":         state.ProtoVMessWSTLS,
-	"vless-vision-reality": state.ProtoVLESSReality,
+// NodeName is the display name of one node in a client: the account name and
+// the node name are both part of it, so a user who imports several
+// subscriptions can tell them apart and two same-protocol nodes never collide.
+func NodeName(username, nodeName string) string {
+	return "EasySB-" + username + "-" + nodeName
 }
 
-// tagOrder is the canonical template node order.
-var tagOrder = []string{"anytls", "hysteria2", "tuic", "vmess-ws-tls", "vless-vision-reality"}
-
-// nodeLabels maps a client template tag to the suffix used in client node
-// names.
-var nodeLabels = map[string]string{
-	"anytls":               "AnyTLS",
-	"hysteria2":            "Hysteria2",
-	"tuic":                 "TUIC",
-	"vmess-ws-tls":         "VMess-WS-TLS",
-	"vless-vision-reality": "VLESS-Reality",
-}
-
-// NodeName is the display name of one node in a client: the account name is
-// part of it so a user who imports several subscriptions can tell them apart,
-// and so a screenshot of a connected client identifies who is connected.
-func NodeName(username, tag string) string {
-	return "EasySB-" + username + "-" + nodeLabels[tag]
-}
-
-// ActiveTags returns the client template tags an account may use, in canonical
-// template order: the intersection of what the node serves and what the account
-// selected. It is the single predicate behind the documents, the share links
-// and the node names, so the profile never advertises a node the core does not
-// accept credentials for.
-func ActiveTags(cfg state.Config, u user.User) []string {
-	var out []string
-	for _, tag := range tagOrder {
-		key := keyForTag[tag]
-		if !cfg.Enabled[key] || !u.Selects(key) {
+// ActiveNodes returns the nodes an account may use, in the store's name order:
+// every enabled node the account selected and whose credential is complete. It
+// is the single predicate behind the documents, the share links and the node
+// names, so the profile never advertises a node the core does not accept
+// credentials for.
+func ActiveNodes(nodes []node.Node, u user.User) []node.Node {
+	var out []node.Node
+	for _, n := range nodes {
+		if !n.Enabled || !u.Selects(n.ID) || !u.CredentialReady(n.ID) {
 			continue
 		}
-		if !u.CredentialReady(key) {
-			continue
-		}
-		out = append(out, tag)
+		out = append(out, n)
 	}
 	return out
 }
@@ -118,14 +95,14 @@ func ContentType(client Client) string {
 }
 
 // Document renders the document one client format fetches.
-func Document(cfg state.Config, u user.User, client Client) ([]byte, error) {
+func Document(cfg state.Config, nodes []node.Node, u user.User, client Client) ([]byte, error) {
 	switch client {
 	case ClientMihomo:
-		return GenerateMihomo(cfg, u)
+		return GenerateMihomo(cfg, nodes, u)
 	case ClientV2Ray:
-		return []byte(V2RayDocument(cfg, u)), nil
+		return []byte(V2RayDocument(cfg, nodes, u)), nil
 	default:
-		return Generate(cfg, u)
+		return Generate(cfg, nodes, u)
 	}
 }
 
@@ -176,39 +153,38 @@ func DeepLink(subURL string) string {
 	return ImportScheme + url.QueryEscape(subURL)
 }
 
-// ShareLink is one share URI together with the protocol it encodes, so a caller
-// can label it without re-deriving which node it belongs to.
+// ShareLink is one share URI together with the node it encodes, so a caller can
+// label it without re-deriving which node it belongs to.
 type ShareLink struct {
-	Key string
-	URI string
+	Key  string
+	Name string
+	URI  string
 }
 
-// ShareLinks returns the account's share links in canonical order. Every URI
-// follows the de-facto scheme each client parses, so the same link works in
-// sing-box, mihomo, v2rayN and friends.
-func ShareLinks(cfg state.Config, u user.User) []ShareLink {
+// ShareLinks returns the account's share links in node order. Every URI follows
+// the de-facto scheme each client parses, so the same link works in sing-box,
+// mihomo, v2rayN and friends.
+func ShareLinks(cfg state.Config, nodes []node.Node, u user.User) []ShareLink {
 	host := cfg.Host()
 	var links []ShareLink
-	for _, key := range state.Keys {
-		if !cfg.Enabled[key] || !u.Selects(key) {
-			continue
-		}
-		cred := u.Credential(key)
+	for _, n := range ActiveNodes(nodes, u) {
+		cred := u.Credential(n.ID)
+		name := NodeName(u.Name, n.Name)
 		var link string
-		switch key {
+		switch n.Protocol {
 		case state.ProtoAnyTLS:
-			link = anytlsLink(cfg, u.Name, cred, host)
+			link = anytlsLink(n, cred, host, name)
 		case state.ProtoHysteria2:
-			link = hysteria2Link(cfg, u.Name, cred, host)
+			link = hysteria2Link(n, cred, host, name)
 		case state.ProtoTUIC:
-			link = tuicLink(cfg, u.Name, cred, host)
+			link = tuicLink(n, cred, host, name)
 		case state.ProtoVMessWSTLS:
-			link = vmessLink(cfg, u.Name, cred, host)
+			link = vmessLink(n, cred, host, name)
 		case state.ProtoVLESSReality:
-			link = vlessLink(cfg, u.Name, cred, host)
+			link = vlessLink(n, cred, host, name)
 		}
 		if link != "" {
-			links = append(links, ShareLink{Key: key, URI: link})
+			links = append(links, ShareLink{Key: n.ID, Name: name, URI: link})
 		}
 	}
 	return links
@@ -216,8 +192,8 @@ func ShareLinks(cfg state.Config, u user.User) []ShareLink {
 
 // V2RayDocument encodes the share links as one base64 document, the
 // subscription format v2rayN and similar clients import.
-func V2RayDocument(cfg state.Config, u user.User) string {
-	links := ShareLinks(cfg, u)
+func V2RayDocument(cfg state.Config, nodes []node.Node, u user.User) string {
+	links := ShareLinks(cfg, nodes, u)
 	uris := make([]string, 0, len(links))
 	for _, link := range links {
 		uris = append(uris, link.URI)
@@ -231,39 +207,37 @@ func fragment(name string) string {
 	return url.PathEscape(name)
 }
 
-func anytlsLink(cfg state.Config, username string, cred user.Credentials, host string) string {
+func anytlsLink(n node.Node, cred user.Credentials, host, name string) string {
 	if cred.Password == "" {
 		return ""
 	}
 	q := url.Values{}
 	q.Set("sni", host)
 	q.Set("insecure", "0")
-	port := portOf(cfg, state.ProtoAnyTLS)
 	// The trailing slash before the query is required by the AnyTLS URI spec;
 	// omitting it makes clients reject the link.
 	return fmt.Sprintf("anytls://%s@%s/?%s#%s",
-		url.User(cred.Password).String(), net.JoinHostPort(host, port), q.Encode(),
-		fragment(NodeName(username, tagFor[state.ProtoAnyTLS])))
+		url.User(cred.Password).String(), net.JoinHostPort(host, strconv.Itoa(n.Port)), q.Encode(),
+		fragment(name))
 }
 
-func hysteria2Link(cfg state.Config, username string, cred user.Credentials, host string) string {
+func hysteria2Link(n node.Node, cred user.Credentials, host, name string) string {
 	if cred.Password == "" {
 		return ""
 	}
 	q := url.Values{}
 	q.Set("sni", host)
 	q.Set("insecure", "0")
-	if cfg.HopRange != "" {
+	if hop := n.Param(node.ParamHopRange); hop != "" {
 		// hysteria2 share links carry the hopping range as mport.
-		q.Set("mport", strings.ReplaceAll(cfg.HopRange, ":", "-"))
+		q.Set("mport", strings.ReplaceAll(hop, ":", "-"))
 	}
-	port := portOf(cfg, state.ProtoHysteria2)
 	return fmt.Sprintf("hysteria2://%s@%s/?%s#%s",
-		url.User(cred.Password).String(), net.JoinHostPort(host, port), q.Encode(),
-		fragment(NodeName(username, tagFor[state.ProtoHysteria2])))
+		url.User(cred.Password).String(), net.JoinHostPort(host, strconv.Itoa(n.Port)), q.Encode(),
+		fragment(name))
 }
 
-func tuicLink(cfg state.Config, username string, cred user.Credentials, host string) string {
+func tuicLink(n node.Node, cred user.Credentials, host, name string) string {
 	if cred.UUID == "" || cred.Password == "" {
 		return ""
 	}
@@ -273,17 +247,16 @@ func tuicLink(cfg state.Config, username string, cred user.Credentials, host str
 	q.Set("alpn", "h3")
 	q.Set("sni", host)
 	q.Set("insecure", "0")
-	port := portOf(cfg, state.ProtoTUIC)
 	return fmt.Sprintf("tuic://%s@%s?%s#%s",
-		url.UserPassword(cred.UUID, cred.Password).String(), net.JoinHostPort(host, port), q.Encode(),
-		fragment(NodeName(username, tagFor[state.ProtoTUIC])))
+		url.UserPassword(cred.UUID, cred.Password).String(), net.JoinHostPort(host, strconv.Itoa(n.Port)), q.Encode(),
+		fragment(name))
 }
 
-func vlessLink(cfg state.Config, username string, cred user.Credentials, host string) string {
+func vlessLink(n node.Node, cred user.Credentials, host, name string) string {
 	if cred.UUID == "" {
 		return ""
 	}
-	sni := cfg.RealitySNI
+	sni := n.Param(node.ParamRealitySNI)
 	if sni == "" {
 		sni = state.DefaultSNI
 	}
@@ -294,32 +267,22 @@ func vlessLink(cfg state.Config, username string, cred user.Credentials, host st
 	q.Set("security", "reality")
 	q.Set("sni", sni)
 	q.Set("fp", "chrome")
-	q.Set("pbk", cfg.RealityPub)
-	q.Set("sid", cfg.RealitySID)
-	port := portOf(cfg, state.ProtoVLESSReality)
+	q.Set("pbk", n.Param(node.ParamRealityPublic))
+	q.Set("sid", n.Param(node.ParamRealityShortID))
 	return fmt.Sprintf("vless://%s@%s?%s#%s",
-		url.User(cred.UUID).String(), net.JoinHostPort(host, port), q.Encode(),
-		fragment(NodeName(username, tagFor[state.ProtoVLESSReality])))
+		url.User(cred.UUID).String(), net.JoinHostPort(host, strconv.Itoa(n.Port)), q.Encode(),
+		fragment(name))
 }
 
-func portOf(cfg state.Config, key string) string {
-	port := cfg.Ports[key]
-	if port == "" {
-		port = state.DefaultPorts[key]
-	}
-	return port
-}
-
-func vmessLink(cfg state.Config, username string, cred user.Credentials, host string) string {
+func vmessLink(n node.Node, cred user.Credentials, host, name string) string {
 	if cred.UUID == "" {
 		return ""
 	}
-	name := NodeName(username, tagFor[state.ProtoVMessWSTLS])
 	payload := map[string]any{
 		"v":        "2",
 		"ps":       name,
 		"add":      host,
-		"port":     portOf(cfg, state.ProtoVMessWSTLS),
+		"port":     strconv.Itoa(n.Port),
 		"id":       cred.UUID,
 		"aid":      "0",
 		"scy":      "auto",

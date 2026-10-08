@@ -393,15 +393,14 @@ func (a *App) nodeBody(w int) []string {
 	s := a.style()
 	cfg := state.Load()
 	inner := ui.InnerWidth(s, w)
+	nodes, _ := loadNodes()
 	left := [][2]string{
 		a.kv("param_sub_port", fmt.Sprint(cfg.SubPort()), ui.KindPlain),
 		a.kv("param_sub_sync", cfg.SyncInterval().String(), ui.KindPlain),
-		a.kv("param_hop", a.panelValue(cfg.HopRange), ui.KindPlain),
 	}
 	right := [][2]string{
-		a.kv("param_ports", a.panelValue(portSummary(cfg)), ui.KindPlain),
-		a.kv("param_sni", a.panelValue(cfg.RealitySNI), ui.KindPlain),
-		a.kv("node_shortid", a.panelValue(cfg.RealitySID), ui.KindPlain),
+		a.kv("param_ports", a.panelValue(portSummary(nodes)), ui.KindPlain),
+		a.kv("node_list", fmt.Sprintf("%d", len(nodes)), ui.KindPlain),
 	}
 	return ui.TwoCol(s, left, right, inner)
 }

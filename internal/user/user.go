@@ -1,7 +1,8 @@
 // Package user stores the accounts that replaced the node-wide credential in
-// v4. An account owns one credential set per protocol, a traffic quota, an
-// expiry date, the protocols it may use and the token its subscription URL is
-// built from.
+// v4. An account owns one credential set per node it may use, a traffic quota,
+// an expiry date and the token its subscription URL is built from. In v5 the
+// selection is a set of node ids rather than a set of protocols, because the
+// host can now run several nodes of the same protocol.
 package user
 
 import (
@@ -40,10 +41,33 @@ var credentialFields = map[string][]string{
 	state.ProtoVMessWSTLS:   {"uuid"},
 }
 
-// Credentials holds one protocol's secret fields for one account.
+// KnownProtocol reports whether a protocol key is one this build renders.
+func KnownProtocol(key string) bool {
+	_, ok := credentialFields[key]
+	return ok
+}
+
+// Selection pairs a node with the protocol it serves. The account package
+// cannot resolve a node id on its own, so callers that know the node store hand
+// the protocol in when a selection is made.
+type Selection struct {
+	Node     string
+	Protocol string
+}
+
+// Credentials holds one node's secret fields for one account. Protocol is
+// stored so a credential can be regenerated and checked without the node store.
 type Credentials struct {
+	Protocol string `json:"protocol,omitempty"`
 	UUID     string `json:"uuid,omitempty"`
 	Password string `json:"password,omitempty"`
+}
+
+// NodeUsage is the traffic one account moved through one node.
+type NodeUsage struct {
+	UsedBytes     int64 `json:"used_bytes"`
+	UploadBytes   int64 `json:"upload_bytes"`
+	DownloadBytes int64 `json:"download_bytes"`
 }
 
 // User is one account.
@@ -52,8 +76,9 @@ type User struct {
 	Remark        string                 `json:"remark,omitempty"`
 	Token         string                 `json:"token"`
 	Enabled       bool                   `json:"enabled"`
-	Protocols     []string               `json:"protocols,omitempty"`
+	Nodes         []string               `json:"nodes,omitempty"`
 	Credentials   map[string]Credentials `json:"credentials,omitempty"`
+	Usage         map[string]NodeUsage   `json:"usage,omitempty"`
 	QuotaBytes    int64                  `json:"quota_bytes"`
 	UsedBytes     int64                  `json:"used_bytes"`
 	UploadBytes   int64                  `json:"upload_bytes"`
@@ -66,81 +91,76 @@ type User struct {
 	Applied bool `json:"applied"`
 }
 
-// Known reports whether a protocol key is one this build renders.
-func Known(key string) bool {
-	_, ok := credentialFields[key]
-	return ok
-}
-
 // New returns an enabled account with a fresh token and the credential fields
-// every requested protocol needs.
-func New(name string, protocols []string, now time.Time) User {
+// every selected node needs.
+func New(name string, selections []Selection, now time.Time) User {
 	u := User{
 		Name:        name,
 		Token:       secret.Token(),
 		Enabled:     true,
 		Credentials: map[string]Credentials{},
+		Usage:       map[string]NodeUsage{},
 		CreatedAt:   now.UTC(),
 		LastReset:   now.UTC(),
 	}
-	for _, key := range protocols {
-		u.Select(key)
+	for _, sel := range selections {
+		u.Select(sel.Node, sel.Protocol)
 	}
 	return u
 }
 
-// Select adds a protocol and generates the credential fields it needs. Fields
-// that already exist are kept, so re-selecting a protocol never invalidates a
-// configuration a client has already imported.
-func (u *User) Select(key string) bool {
-	if !Known(key) || u.Selects(key) {
+// Select adds a node and generates the credential fields its protocol needs.
+// Fields that already exist are kept, so re-selecting a node never invalidates
+// a configuration a client has already imported.
+func (u *User) Select(nodeID, protocol string) bool {
+	if nodeID == "" || !KnownProtocol(protocol) || u.Selects(nodeID) {
 		return false
 	}
-	u.Protocols = append(u.Protocols, key)
-	sortProtocols(u.Protocols)
-	u.ensureCredential(key)
+	u.Nodes = append(u.Nodes, nodeID)
+	sortNodes(u.Nodes)
+	u.ensureCredential(nodeID, protocol)
 	return true
 }
 
-// Deselect removes a protocol from the account but keeps its credential, so
+// Deselect removes a node from the account but keeps its credential, so
 // selecting it again restores the same client configuration.
-func (u *User) Deselect(key string) bool {
-	for i, k := range u.Protocols {
-		if k != key {
+func (u *User) Deselect(nodeID string) bool {
+	for i, id := range u.Nodes {
+		if id != nodeID {
 			continue
 		}
-		u.Protocols = append(u.Protocols[:i], u.Protocols[i+1:]...)
+		u.Nodes = append(u.Nodes[:i], u.Nodes[i+1:]...)
 		return true
 	}
 	return false
 }
 
-// Selects reports whether the account picked a protocol.
-func (u User) Selects(key string) bool {
-	for _, k := range u.Protocols {
-		if k == key {
+// Selects reports whether the account picked a node.
+func (u User) Selects(nodeID string) bool {
+	for _, id := range u.Nodes {
+		if id == nodeID {
 			return true
 		}
 	}
 	return false
 }
 
-// Credential returns the stored credential of a protocol, which may be empty
-// for a protocol the account never selected.
-func (u User) Credential(key string) Credentials {
-	return u.Credentials[key]
+// Credential returns the stored credential of a node, which may be empty for a
+// node the account never selected.
+func (u User) Credential(nodeID string) Credentials {
+	return u.Credentials[nodeID]
 }
 
-// CredentialReady reports whether every secret field a protocol authenticates with
-// is present, which is the same set Select fills in. A document is only rendered for
-// a protocol that answers true, so a client is never handed a node the core refuses
-// for a missing field.
-func (u User) CredentialReady(key string) bool {
-	if !Known(key) {
+// CredentialReady reports whether every secret field a node's protocol
+// authenticates with is present. A document is only rendered for a node that
+// answers true, so a client is never handed an entry the core refuses for a
+// missing field.
+func (u User) CredentialReady(nodeID string) bool {
+	cred, ok := u.Credentials[nodeID]
+	if !ok || !KnownProtocol(cred.Protocol) {
 		return false
 	}
-	cred := u.Credentials[key]
-	for _, field := range credentialFields[key] {
+	for _, field := range credentialFields[cred.Protocol] {
 		switch field {
 		case "uuid":
 			if cred.UUID == "" {
@@ -155,41 +175,53 @@ func (u User) CredentialReady(key string) bool {
 	return true
 }
 
-// CredentialsReady reports whether every selected protocol has the secret fields
-// it authenticates with. An account that is not ready is excluded from both the
-// core config and the client documents, so the two can never disagree about a
-// credential nobody ever generated.
+// CredentialsReady reports whether every selected node has the secret fields its
+// protocol authenticates with. An account that is not ready is excluded from
+// both the core config and the client documents.
 func (u User) CredentialsReady() bool {
-	if len(u.Protocols) == 0 {
+	if len(u.Nodes) == 0 {
 		return false
 	}
-	for _, key := range u.Protocols {
-		if !u.CredentialReady(key) {
+	for _, id := range u.Nodes {
+		if !u.CredentialReady(id) {
 			return false
 		}
 	}
 	return true
 }
 
-// EnsureCredentials fills in missing fields for every selected protocol and
-// drops entries for protocols this build no longer knows.
-func (u *User) EnsureCredentials() {
-	for _, key := range u.Protocols {
-		u.ensureCredential(key)
-	}
-	for key := range u.Credentials {
-		if !Known(key) {
-			delete(u.Credentials, key)
+// EnsureCredentials fills in missing credential fields and drops credential
+// entries whose protocol this build does not know. known maps a node id to the
+// protocol its node serves, which is what lets a selection with no credential
+// entry at all be repaired; pass nil when the node store is not at hand, and
+// only the credentials already present are normalised.
+func (u *User) EnsureCredentials(known map[string]string) {
+	for nodeID, cred := range u.Credentials {
+		if !KnownProtocol(cred.Protocol) {
+			delete(u.Credentials, nodeID)
+			continue
 		}
+		u.ensureCredential(nodeID, cred.Protocol)
+	}
+	for _, id := range u.Nodes {
+		protocol, ok := known[id]
+		if !ok || !KnownProtocol(protocol) {
+			continue
+		}
+		u.ensureCredential(id, protocol)
+	}
+	if u.Usage == nil {
+		u.Usage = map[string]NodeUsage{}
 	}
 }
 
-func (u *User) ensureCredential(key string) {
+func (u *User) ensureCredential(nodeID, protocol string) {
 	if u.Credentials == nil {
 		u.Credentials = map[string]Credentials{}
 	}
-	cred := u.Credentials[key]
-	for _, field := range credentialFields[key] {
+	cred := u.Credentials[nodeID]
+	cred.Protocol = protocol
+	for _, field := range credentialFields[protocol] {
 		switch field {
 		case "uuid":
 			if cred.UUID == "" {
@@ -201,7 +233,7 @@ func (u *User) ensureCredential(key string) {
 			}
 		}
 	}
-	u.Credentials[key] = cred
+	u.Credentials[nodeID] = cred
 }
 
 // Status derives the account state at an instant.
@@ -252,24 +284,34 @@ func (u User) Percent() int {
 	return int(u.UsedBytes * 100 / u.QuotaBytes)
 }
 
-// AddUsage records the traffic of one accounting cycle. Negative deltas are
-// ignored: the counters come from the core and only ever grow.
-func (u *User) AddUsage(upload, download int64) {
+// AddNodeUsage records one accounting cycle against one node and the account
+// total. Negative deltas are ignored: the counters come from the core and only
+// ever grow.
+func (u *User) AddNodeUsage(nodeID string, upload, download int64) {
 	if upload < 0 {
 		upload = 0
 	}
 	if download < 0 {
 		download = 0
 	}
+	if u.Usage == nil {
+		u.Usage = map[string]NodeUsage{}
+	}
+	usage := u.Usage[nodeID]
+	usage.UploadBytes += upload
+	usage.DownloadBytes += download
+	usage.UsedBytes = usage.UploadBytes + usage.DownloadBytes
+	u.Usage[nodeID] = usage
 	u.UploadBytes += upload
 	u.DownloadBytes += download
 	u.UsedBytes += upload + download
 }
 
-// ResetCounters starts a new traffic period: the counters return to zero and
-// the period start moves to now.
+// ResetCounters starts a new traffic period: the per-node and aggregate
+// counters return to zero and the period start moves to now.
 func (u *User) ResetCounters(now time.Time) {
 	u.UsedBytes, u.UploadBytes, u.DownloadBytes = 0, 0, 0
+	u.Usage = map[string]NodeUsage{}
 	u.LastReset = now.UTC()
 }
 
@@ -304,9 +346,10 @@ func (u User) Validate() error {
 	if strings.TrimSpace(u.Token) != u.Token || u.Token == "" {
 		return errors.New("subscription token is required")
 	}
-	// The token is a URL path segment and a stats filter, so it stays lowercase
-	// ASCII: letters, digits and the hyphen, none of which needs escaping in a URL
-	// path or carries meaning in a regexp. Anything else is hand-edited or corrupt.
+	// The token is a URL path segment and part of the stats filter, so it stays
+	// lowercase ASCII: letters, digits and the hyphen, none of which needs
+	// escaping in a URL path or carries meaning in a regexp. Anything else is
+	// hand-edited or corrupt.
 	for _, r := range u.Token {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
 			continue
@@ -319,12 +362,8 @@ func (u User) Validate() error {
 	return nil
 }
 
-// sortProtocols keeps the canonical protocol order so the rendered document and
-// the panel columns do not depend on the order things were clicked.
-func sortProtocols(list []string) {
-	rank := make(map[string]int, len(state.Keys))
-	for i, k := range state.Keys {
-		rank[k] = i
-	}
-	sort.SliceStable(list, func(i, j int) bool { return rank[list[i]] < rank[list[j]] })
+// sortNodes keeps the node ids in a stable order so a rendered document does
+// not depend on the order things were clicked.
+func sortNodes(list []string) {
+	sort.Strings(list)
 }

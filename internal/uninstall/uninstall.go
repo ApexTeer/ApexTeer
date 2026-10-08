@@ -14,8 +14,8 @@ import (
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
 	"github.com/EasySBTeam/EasySB/internal/firewall"
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/service"
-	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/subd"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
@@ -50,8 +50,6 @@ func Backup(log func(string)) (string, error) {
 
 // Run performs the full uninstall sequence.
 func Run(ctx context.Context, log func(string)) error {
-	cfg := state.Load()
-
 	if _, err := Backup(log); err != nil {
 		log("backup failed: " + err.Error())
 	}
@@ -87,7 +85,12 @@ func Run(ctx context.Context, log func(string)) error {
 		log("disable subscription: " + err.Error())
 	}
 
-	if err := firewall.Remove(ctx, cfg); err != nil {
+	nodes, err := node.Load(sysinfo.NodesFile)
+	if err != nil {
+		log("nodes: " + err.Error())
+		nodes = &node.Store{}
+	}
+	if err := firewall.Remove(ctx, nodes.Nodes()); err != nil {
 		log("firewall remove: " + err.Error())
 	}
 	if err := firewall.UnitAction(ctx, "disable"); err != nil {
