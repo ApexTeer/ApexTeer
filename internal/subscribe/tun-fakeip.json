@@ -103,13 +103,13 @@
         "tag": "geosite-cn",             // 规则集标签：国内域名集合
         "type": "remote",                // 规则集类型：远程下载
         "format": "binary",              // 文件格式：编译后的二进制 SRS 格式
-        "url": "https://cdn.jsdelivr.net/gh/MinimaxFlora/proxy-rules-dat@sing/geo/geosite/cn.srs" // 远程规则文件下载 URL
+        "url": "https://cdn.jsdelivr.net/gh/EasySBTeam/Proxy-Rules-Data@sing/geo/geosite/cn.srs" // 远程规则文件下载 URL
       },
       {
         "tag": "geoip-cn",               // 规则集标签：国内 IP 集合
         "type": "remote",                // 规则集类型：远程下载
         "format": "binary",              // 文件格式：二进制 SRS 格式
-        "url": "https://cdn.jsdelivr.net/gh/MinimaxFlora/proxy-rules-dat@sing/geo/geoip/cn.srs" // 远程规则文件下载 URL
+        "url": "https://cdn.jsdelivr.net/gh/EasySBTeam/Proxy-Rules-Data@sing/geo/geoip/cn.srs" // 远程规则文件下载 URL
       }
     ],
 
