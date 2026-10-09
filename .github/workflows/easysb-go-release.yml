@@ -75,6 +75,12 @@ jobs:
       # from go build: this fetches it into internal/panel/web for go:embed, so this
       # repository installs no Node and commits no built SPA.
       - name: 获取面板前端
+        # 前端只在真正出包时取：PR 上还没有可依赖的面板 Release，make check 用占位
+        # README 即可，不该因为前端尚未发布而挡住 PR。
+        # The bundle is fetched only for a real build: a pull request has no panel release
+        # to depend on, and make check is happy with the placeholder README, so a missing
+        # front-end release must not block a PR.
+        if: github.event_name != 'pull_request'
         run: make panel
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -129,6 +135,10 @@ jobs:
       # Every arch job builds from its own staging tree, so each fetches the bundle here:
       # the go build inside make packages-asset embeds it into the binary.
       - name: 获取面板前端
+        # 同 prepare：PR 只需要编译通过，前端放进来的前提是它已经发布过。
+        # Same as prepare: a PR only needs the build to compile, and the bundle is only
+        # present once a panel release exists.
+        if: github.event_name != 'pull_request'
         run: make panel
         env:
           GITHUB_TOKEN: ${{ github.token }}
