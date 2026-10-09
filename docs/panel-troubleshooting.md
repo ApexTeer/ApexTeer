@@ -30,13 +30,14 @@ sudo tail -n 100 /etc/sing-box/easysb-panel.log
 
 常见原因与处理：
 
-- **端口被占用**：`panel listen 0.0.0.0:2095: bind: address already in use`。改
+- **端口被占用**：`panel listen 127.0.0.1:2095: bind: address already in use`。改
   `PANEL_PORT` 后重启，或释放占用端口的进程。
 - **配置端口非法**：`PANEL_PORT` 非 1-65535 时回退到默认 `2095`；检查文件是否被手改。
 - **服务未安装/未启用**：`systemctl is-enabled easysb-panel` 返回 `disabled`，从 TUI
   “Web 面板”菜单或“设置”页安装。
-- **防火墙**：本机正常但外部打不开，检查云安全组与 `ufw`/`nftables`。面板默认明文
-  HTTP，不要把它直接暴露到公网。
+- **外部打不开（默认如此）**：面板默认只监听 `127.0.0.1`。本地管理用 SSH 端口转发，或
+  配 TLS / 反向代理；确需公网直连时用 `EASYSB_PANEL_LISTEN=0.0.0.0`，并注意此时口令与
+  会话 cookie 都是明文传输。
 
 ## 登录失败 / Cannot log in
 
@@ -53,7 +54,8 @@ sudo tail -n 100 /etc/sing-box/easysb-panel.log
 
 `LoadConfig` 对缺失文件返回默认值，因此面板总能启动；出现异常时按字段排查：
 
-- `PANEL_LISTEN` 为空 → 使用 `0.0.0.0`。
+- `PANEL_LISTEN` 为空 → 使用 `127.0.0.1`；环境变量 `EASYSB_PANEL_LISTEN` 非空时覆盖
+  文件中的值。
 - `PANEL_PORT` 非数字或越界 → 使用 `2095`。
 - `PANEL_PASSWORD_HASH` 为空 → 启动时生成新口令并在控制台打印一次。
 

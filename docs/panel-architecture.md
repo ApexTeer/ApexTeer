@@ -131,8 +131,19 @@ graph TD
 
 ## 8. 安全边界 / Security boundary
 
-- 面板默认监听 `0.0.0.0:2095`，默认明文 HTTP；生产环境应由 TLS 反向代理或防火墙
-  保护。`PANEL_TLS` + 证书对可让面板直接以 HTTPS 提供服务。
+- 面板默认只监听 `127.0.0.1:2095`，默认明文 HTTP。默认 loopback 是刻意的：登录口令
+  以 JSON 明文发送、会话 cookie 同样明文返回，而每个已认证请求都等价于 root（单元不设
+  `User=`，且面板提供 PTY），所以安全的那一侧应当是「不读文档也能得到」的那一侧。需要
+  远程访问时有两条受支持的路径：给面板配 TLS（`PANEL_TLS` + 证书对），或置于 TLS 反向
+  代理之后。确需直接绑定公网地址时用 `EASYSB_PANEL_LISTEN`（systemd drop-in 即可），
+  面板在没有 TLS 时会在启动日志中给出警告。
+- **该默认值只影响没有 `PANEL_LISTEN` 键的配置。** 面板从一开始就把监听地址写进
+  `/etc/sing-box/easysb-panel.conf`，所以全新安装写入 `127.0.0.1`，而升级读取文件里既有
+  （通常是 `0.0.0.0`）的值、不改动它：已有部署的对外可访问性不因升级而改变，运维可按自己
+  的节奏迁移。`EASYSB_PANEL_LISTEN` 的优先级高于文件，用于不改状态文件而改绑。
+- 会话 cookie 的 `Secure` 由请求本身决定（`r.TLS` 或反向代理的 `X-Forwarded-Proto:
+  https`），而不是由 `PANEL_TLS`：文档推荐的反代部署里面板自身不做 TLS，但浏览器这一跳
+  是 HTTPS，此前那种绑定会让 cookie 缺少 `Secure`。
 - 列表接口不返回逐节点 uuid/password；订阅汇总接口不含 token；账号列表包含订阅 token
   （这是管理员展示订阅地址所必需），但不含节点凭据。日志不记录 query string，避免
   订阅 token 进入访问日志。
