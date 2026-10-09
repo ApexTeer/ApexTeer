@@ -9,6 +9,7 @@ import (
 	"github.com/EasySBTeam/EasySB/internal/cert"
 	"github.com/EasySBTeam/EasySB/internal/netutil"
 	"github.com/EasySBTeam/EasySB/internal/service"
+	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/subd"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
@@ -79,14 +80,24 @@ func (s *Service) issueCertificate(ctx context.Context, domain, email string) ([
 		return steps, err
 	}
 
-	cfg := s.stateConfig()
-	cfg.ACMEEmail = email
-	if cfg.ServerIP == "" {
-		if ip, err := netutil.PublicIP(ctx); err == nil {
-			cfg.ServerIP = ip
-		}
+	// The email and the public address are recorded before the CA is contacted, and
+	// they are recorded as a locked read-modify-write. Issuance then runs for tens of
+	// seconds, and the second write below used to save a copy taken here - which
+	// discarded anything another actor changed in the meantime, a change to the sync
+	// interval or the subscription port among them.
+	publicIP := ""
+	if ip, err := netutil.PublicIP(ctx); err == nil {
+		publicIP = ip
 	}
-	if err := cfg.Save(); err != nil {
+	deployed := true
+	if err := state.Modify(func(cfg *state.Config) error {
+		cfg.ACMEEmail = email
+		if cfg.ServerIP == "" {
+			cfg.ServerIP = publicIP
+		}
+		deployed = cfg.NodeDeployed
+		return nil
+	}); err != nil {
 		return steps, err
 	}
 
@@ -117,15 +128,19 @@ func (s *Service) issueCertificate(ctx context.Context, domain, email string) ([
 	if _, _, ok := cert.Paths(domain); !ok {
 		return steps, errors.New("issuance reported success but no certificate is on disk")
 	}
-	cfg.Domain = domain
-	cfg.CertDomain = domain
-	if err := cfg.Save(); err != nil {
+	// The certificate is on disk, so the domain becomes the active one. A fresh
+	// locked read-modify-write, not a save of the copy loaded before issuance.
+	if err := state.Modify(func(cfg *state.Config) error {
+		cfg.Domain = domain
+		cfg.CertDomain = domain
+		return nil
+	}); err != nil {
 		return steps, err
 	}
 	if err := cert.InstallTimer(ctx, log); err != nil {
 		log("renewal timer: " + err.Error())
 	}
-	if cfg.NodeDeployed {
+	if deployed {
 		if err := s.apply(ctx); err != nil {
 			return steps, err
 		}
@@ -188,16 +203,22 @@ func (s *Service) handleRemoveDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	cfg := s.stateConfig()
-	if cfg.CertDomain == domain {
+	// The decision and the write both happen under the state lock, against the file
+	// as it is now: reading a copy first and saving it afterwards would drop any
+	// key another actor changed between the two.
+	err := state.Modify(func(cfg *state.Config) error {
+		if cfg.CertDomain != domain {
+			return nil
+		}
 		cfg.CertDomain = ""
 		if cfg.Domain == domain {
 			cfg.Domain = ""
 		}
-		if err := cfg.Save(); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+		return nil
+	})
+	if err != nil {
+		s.internalError(w, "cannot update the domain state", err)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -251,17 +272,20 @@ func (s *Service) handleSetActiveDomain(w http.ResponseWriter, r *http.Request) 
 		badRequest(w, "domain is required")
 		return
 	}
-	s.writeMu.Lock()
-	cfg := s.stateConfig()
-	cfg.Domain = domain
-	cfg.CertDomain = domain
-	err := cfg.Save()
-	s.writeMu.Unlock()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	// A locked read-modify-write, so a key another actor changed is not discarded,
+	// and the deployed flag is read inside the same critical section rather than from
+	// a copy taken before it.
+	deployed := false
+	if err := state.Modify(func(cfg *state.Config) error {
+		cfg.Domain = domain
+		cfg.CertDomain = domain
+		deployed = cfg.NodeDeployed
+		return nil
+	}); err != nil {
+		s.internalError(w, "cannot update the active domain", err)
 		return
 	}
-	if cfg.NodeDeployed {
+	if deployed {
 		if err := s.apply(r.Context()); err != nil {
 			s.applyError(w, err)
 			return

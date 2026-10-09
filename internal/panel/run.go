@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -27,6 +28,15 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("panel listen %s: %w", addr, err)
 	}
 	opts.Log(fmt.Sprintf("EasySB panel %s · api v%s · %s", opts.Version, APIVersion, cfg.AccessURL()))
+	// The panel default is loopback, so reaching a public interface is a deliberate
+	// act. Say plainly what it costs when it is not paired with TLS, because the
+	// password and the session cookie both cross that interface in the clear and an
+	// authenticated session is root-equivalent.
+	if !cfg.TLS && !isLoopback(cfg.Listen) {
+		opts.Log("panel: WARNING listen=" + cfg.Listen + " without TLS: the admin password and " +
+			"the session cookie are sent in clear text. Configure TLS, or use a reverse proxy " +
+			"and bind loopback.")
+	}
 
 	server := &http.Server{
 		Handler:           svc.Handler(),
@@ -61,6 +71,20 @@ func Run(ctx context.Context, opts Options) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return server.Shutdown(shutdown)
+}
+
+// isLoopback reports whether a listen address is reachable only from this host. An
+// empty or wildcard host is not.
+func isLoopback(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 // currentConfig returns the panel configuration, or defaults when it cannot be

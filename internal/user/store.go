@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 )
 
 // CurrentVersion is the on-disk format version of the account file. Version 2
@@ -32,30 +34,57 @@ type Store struct {
 
 // Load reads the account file. A missing or empty file yields an empty store
 // rather than an error, because a fresh deployment starts with no accounts.
+//
+// A file that cannot be parsed is quarantined and the previous content is restored
+// from the sibling backup. The account store carries the only copy of every
+// account's credentials: an account is authenticated by the core against the uuid
+// and password in here, and nothing can regenerate them - the running config has a
+// copy, but no code rebuilds the store from it. Losing the file therefore costs
+// every client its configuration, so a corrupt one is recovered rather than fatal.
 func Load(path string) (*Store, error) {
-	s := &Store{path: path}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return s, nil
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
 		}
-		return nil, err
+		// No file at all: a fresh deployment. There is nothing to recover from, and
+		// an unreadable-but-present file is a real error rather than this case.
+		return &Store{path: path}, nil
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
+		return &Store{path: path}, nil
+	}
+	s, err := parseStore(path, data)
+	if err == nil {
 		return s, nil
 	}
-	var f fileFormat
-	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+	// The file is there but unusable. Keep it for forensics and try the backup.
+	quarantined, qerr := quarantine(path, time.Now())
+	if qerr != nil {
+		// With nothing to move aside, the parse error is the honest answer.
+		return nil, err
 	}
+	recovered, rerr := recoverFromBackup(path)
+	if rerr != nil {
+		return nil, fmt.Errorf("%w (the unusable file was kept at %s)", err, quarantined)
+	}
+	return recovered, nil
+}
+
+// parseStore decodes and validates an account document that is already in memory.
+func parseStore(path string, data []byte) (*Store, error) {
 	// A version-1 file describes protocol selections, which the current model
 	// cannot resolve without the node store. It must be upgraded by
 	// user.MigrateV2 first; refusing it here is safer than serving half-parsed
 	// accounts whose selections and credentials look empty.
+	var f fileFormat
+	if err := json.Unmarshal(data, &f); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
 	if f.Version != CurrentVersion {
 		return nil, fmt.Errorf("parse %s: account store version %d needs migration", path, f.Version)
 	}
-	s.users = f.Users
+	s := &Store{path: path, users: f.Users}
 	seen := make(map[string]bool, len(s.users))
 	for i := range s.users {
 		u := &s.users[i]
@@ -75,6 +104,41 @@ func Load(path string) (*Store, error) {
 			u.UsedBytes = total
 		}
 	}
+	return s, nil
+}
+
+// quarantine moves an unusable store aside so it is not destroyed and the next save
+// can install a fresh file. The suffix keeps the moment so two bad files do not
+// overwrite each other.
+func quarantine(path string, now time.Time) (string, error) {
+	target := fmt.Sprintf("%s.corrupt-%s", path, now.UTC().Format("20060102T150405"))
+	if err := os.Rename(path, target); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// recoverFromBackup loads the sibling backup and installs it as the store again.
+//
+// The backup is parsed with the same validation as the store itself, so a backup
+// that is also unusable is refused rather than promoted: restoring a broken file
+// over a broken file would only hide the problem.
+func recoverFromBackup(path string) (*Store, error) {
+	backup := atomicfile.BackupPath(path)
+	data, err := os.ReadFile(backup)
+	if err != nil {
+		return nil, fmt.Errorf("no usable backup at %s: %w", backup, err)
+	}
+	s, err := parseStore(backup, data)
+	if err != nil {
+		return nil, err
+	}
+	// The recovered store is written back to the real path, so the deployment keeps
+	// running on it and the next save has a live target again.
+	if err := atomicfile.Write(path, data, 0o600); err != nil {
+		return nil, err
+	}
+	s.path = path
 	return s, nil
 }
 
@@ -200,6 +264,29 @@ func (s *Store) Update(name string, fn func(*User) error) error {
 	return fmt.Errorf("user %q not found", name)
 }
 
+// ForgetNode removes every trace of a deleted node from every account: the
+// selection, its credential and its usage counter.
+//
+// It exists because deleting a node was implemented twice and the two disagreed.
+// The panel removed the selection and the credential and the counter; the TUI
+// removed only the selection. The selection is the part that matters for what the
+// core serves, but leaving the other two behind means a recreated node id - and
+// ids are random, so this is about a store that has been edited, restored from a
+// backup or cloned - would inherit a stale credential and a stale traffic count
+// from a node it has nothing to do with. One node's removal now leaves one state,
+// whichever interface performed it.
+//
+// Deselect is used rather than a hand-rolled slice edit so the selection is
+// removed the same way Select adds it. Deleting from a nil map is a no-op, so an
+// account that never carried a credential entry is handled without a check.
+func (s *Store) ForgetNode(nodeID string) {
+	for i := range s.users {
+		s.users[i].Deselect(nodeID)
+		delete(s.users[i].Credentials, nodeID)
+		delete(s.users[i].Usage, nodeID)
+	}
+}
+
 // Mutate applies fn to every account in memory. The caller finishes the batch
 // with Save, so one accounting cycle writes the file once instead of once per
 // account.
@@ -250,25 +337,9 @@ func (s *Store) Save() error {
 	// A fresh temporary name per write, not s.path+".tmp": the panel and the
 	// subscription service both persist this file, and two writers sharing one
 	// temporary path can interleave into a truncated document that is then renamed
-	// into place. CreateTemp already applies 0600, so the key material never lands
-	// under the umask of the invoking shell.
-	f, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	// into place. atomicfile.WriteKeepingBackup creates with 0600, so the key
+	// material never lands under the umask of the invoking shell, it flushes before
+	// renaming, and it keeps the previous content as a sibling backup that Load
+	// falls back to if this file is ever found unusable.
+	return atomicfile.WriteKeepingBackup(s.path, data, 0o600)
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
@@ -118,22 +119,9 @@ func (p Prefs) Save(path string) error {
 		b.WriteString(binding.key + "=\"" + value + "\"\n")
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".easysb-ui-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.WriteString(b.String()); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	// 0644: these are interface choices, not credentials, and an operator editing the
+	// file by hand as a non-root user is the case this mode exists for.
+	return atomicfile.Write(path, []byte(b.String()), 0o644)
 }
 
 // Apply fills in the variables the caller has not set yet, so remembered choices

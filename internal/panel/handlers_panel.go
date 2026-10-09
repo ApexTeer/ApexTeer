@@ -3,14 +3,42 @@ package panel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/deploy"
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/service"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
+
+// checkPanelPort reports whether the panel may listen on a port, by asking the same
+// question the node configuration asks: is this port already spoken for?
+//
+// It consults the subscription service's port and the enabled nodes, which are the
+// two things on the host that would hold it. It does not try to bind, because a bind
+// test would have to happen while the panel is still serving on its current port and
+// would be racy by construction: a port free at the moment of the check can be taken
+// before the restart, and the deployed facts are the ones the operator controls.
+func (s *Service) checkPanelPort(port int) error {
+	cfg := s.stateConfig()
+	if sub := cfg.SubPort(); port == sub {
+		return fmt.Errorf("port %d is the subscription service port", port)
+	}
+	nodes, err := deploy.LoadNodes(s.opts.NodesPath)
+	if err != nil {
+		return fmt.Errorf("cannot read the node store: %w", err)
+	}
+	for _, n := range nodes {
+		if err := node.CheckSubPort(n, port); err != nil {
+			return fmt.Errorf("port %d is already used by node %q", port, n.Name)
+		}
+	}
+	return nil
+}
 
 // handlePanel reports the panel's own configuration and unit state. It never
 // returns the password hash.
@@ -83,6 +111,17 @@ func (s *Service) handlePanelConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if *req.Port != cfg.Port {
+			// A range check is not enough. The panel shares the host with the core's
+			// inbounds and with the subscription service, and a port that collides
+			// with one of them would be persisted and only then discovered: the panel
+			// is restarted onto a port it cannot bind, and the operator has locked
+			// themselves out of the very interface they would use to fix it. The panel
+			// already refuses a node that collides with the subscription port; this is
+			// the same rule applied to the panel's own port.
+			if err := s.checkPanelPort(*req.Port); err != nil {
+				writeError(w, http.StatusUnprocessableEntity, err.Error())
+				return
+			}
 			cfg.Port = *req.Port
 			restart = true
 		}

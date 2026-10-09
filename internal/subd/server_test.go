@@ -532,6 +532,64 @@ func TestRunAnnouncesTheVersion(t *testing.T) {
 	}
 }
 
+// TestRunClosesReadyWhenItCannotBind pins the contract Ready's doc comment claims:
+// waiting on it is always enough to learn the outcome.
+//
+// It used to be closed only on the success path, so a caller that only waits on it
+// could not tell a service that is starting from one that has already given up. The
+// bind here is made to fail by holding the port, which is also what a port taken
+// between a caller choosing one and Run binding it looks like.
+func TestRunClosesReadyWhenItCannotBind(t *testing.T) {
+	// Hold a port for the duration of the test, so Run cannot have it. The wildcard
+	// address is the one the service binds, so holding only 127.0.0.1 would not
+	// conflict: those are separate sockets.
+	held, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("hold a port: %v", err)
+	}
+	defer held.Close()
+	port := held.Addr().(*net.TCPAddr).Port
+
+	cfg := nodeConfig()
+	cfg.SubServePort = port
+	ready := make(chan string, 1)
+	done := make(chan error, 1)
+	// A context that is cancelled when the test ends: even though a failed bind no
+	// longer starts anything, a Run that succeeds later would still be ticking, and
+	// a goroutine writing into the test's temporary directory races its removal.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		done <- Options{
+			AccountsPath: filepath.Join(t.TempDir(), "users.json"),
+			NodesPath:    nodePath(t),
+			Node:         func() state.Config { return cfg },
+			Log:          func(string) {},
+			Ready:        ready,
+		}.Run(ctx)
+	}()
+
+	select {
+	case _, ok := <-ready:
+		if ok {
+			t.Fatal("Ready carried an address for a listener that could not be bound")
+		}
+		// Closed without a value: the caller learns the outcome here rather than
+		// having to time out.
+	case <-time.After(10 * time.Second):
+		t.Fatal("Ready was never closed after the bind failed, so a caller would hang")
+	}
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Run reported success for a listener it could not bind")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after failing to bind")
+	}
+}
+
 func TestVersionFallsBackWhenUnset(t *testing.T) {
 	if got := (Options{}).version(); got == "" {
 		t.Fatal("an unset version leaves the log line trailing off")

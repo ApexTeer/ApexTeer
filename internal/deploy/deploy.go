@@ -86,42 +86,22 @@ var (
 	configPath = sysinfo.ConfigJSON
 )
 
-// WriteServerConfig renders the configuration and writes it to
-// /etc/sing-box/config.json. The document carries every account's credentials, so
-// it is 0600, the same rule the account store follows. Only the core reads it, and
-// the core runs as root.
-func WriteServerConfig(cfg state.Config, nodes []node.Node, accounts []user.User) ([]byte, error) {
-	data, err := ServerConfig(cfg, nodes, accounts)
-	if err != nil {
-		return nil, err
-	}
-	if err := writeConfigFile(data); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-// writeConfigFile installs an already rendered document at configPath. The
-// directory is created first, and the mode is forced on an existing file because
-// WriteFile leaves it alone: a config.json an earlier version left world-readable
-// stays world-readable otherwise, and this file carries every account's credentials.
-func writeConfigFile(data []byte) error {
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(configPath, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Chmod(configPath, 0o600); err != nil {
-		return err
-	}
-	return nil
-}
-
 // checkConfig is the acceptance test a deployment runs before restarting the node. It
 // is a variable so that a test can drive the rejection path without having to render a
 // document the engine refuses, which would otherwise depend on the build tags.
 var checkConfig = sbcore.Check
+
+// The systemd operations this package performs. They are variables for the same
+// reason checkConfig is: ApplyStore is the single write path for every change the
+// panel, the TUI and --provision make, and it had no test at all, because reaching
+// its success path means running systemctl on a host that has no service to start.
+// Injecting them lets the load-render-install-record-save sequence be driven end to
+// end in a temporary directory. Production never reassigns them.
+var (
+	serviceActive    = service.Active
+	serviceDo        = service.Do
+	serviceWriteUnit = service.WriteUnit
+)
 
 // Apply writes the configuration for the given nodes and accounts, validates it
 // and makes it live. A first accepted configuration installs, enables and starts
@@ -132,26 +112,26 @@ func Apply(ctx context.Context, cfg state.Config, nodes []node.Node, accounts []
 	if !anyEnabled(nodes) {
 		return ErrNoNodes
 	}
-	if live, err := ServerConfig(cfg, nodes, accounts); err == nil && service.Active(ctx) && sameAsLive(live) {
+	if live, err := ServerConfig(cfg, nodes, accounts); err == nil && serviceActive(ctx) && sameAsLive(live) {
 		return nil
 	}
 	if _, err := ApplyConfig(ctx, cfg, nodes, accounts); err != nil {
 		return err
 	}
-	if service.Active(ctx) {
+	if serviceActive(ctx) {
 		return restartAfterChange(ctx)
 	}
 	// First accepted configuration: install the unit and start the core. Enabling
 	// is best-effort, because a caller without permission to enable must still be
 	// able to start it.
-	if err := service.WriteUnit(); err != nil {
+	if err := serviceWriteUnit(); err != nil {
 		return err
 	}
-	_ = service.Do(ctx, "enable")
+	_ = serviceDo(ctx, "enable")
 	// A previous failure can latch systemd's start limit; clearing it lets the
 	// start below proceed instead of failing with "start request repeated too quickly".
-	_ = service.Do(ctx, "reset-failed")
-	return service.Do(ctx, "start")
+	_ = serviceDo(ctx, "reset-failed")
+	return serviceDo(ctx, "start")
 }
 
 // restartAfterChange applies a change to an already-running core. The generated
@@ -161,17 +141,17 @@ func Apply(ctx context.Context, cfg state.Config, nodes []node.Node, accounts []
 // start limit, which latches the unit into a failed state. Clear the failed state
 // and try once more before reporting the restart as a failure.
 func restartAfterChange(ctx context.Context) error {
-	err := service.Do(ctx, "restart")
+	err := serviceDo(ctx, "restart")
 	if err == nil {
 		return nil
 	}
-	_ = service.Do(ctx, "reset-failed")
+	_ = serviceDo(ctx, "reset-failed")
 	select {
 	case <-ctx.Done():
 		return err
 	case <-time.After(750 * time.Millisecond):
 	}
-	return service.Do(ctx, "restart")
+	return serviceDo(ctx, "restart")
 }
 
 // sameAsLive reports whether data is exactly what the live config file holds.
@@ -225,31 +205,100 @@ func ApplyConfig(ctx context.Context, cfg state.Config, nodes []node.Node, accou
 
 // ApplyStore applies the nodes and the accounts that may be live right now and
 // records the latter, which is the single write path for a change made in the
-// panel. Both stores are reloaded under their locks, so the set that is applied
-// and marked as such is the one on disk now.
+// panel. Both stores are reloaded under their own locks, so the set that is
+// applied and marked as such is the one on disk now.
+//
+// The order of the four steps is deliberate, because each of them was a way for
+// two concurrent changes to disagree:
+//
+//  1. The node store is read under its lock. Reading it outside any lock - which
+//     is what this used to do, before taking the account lock seventeen lines
+//     later - let a node the panel had just added be missing from the document the
+//     core was restarted with, while easysb-nodes.json still listed it as enabled
+//     and the subscription document still advertised it.
+//  2. The account store is loaded under its lock, repaired and SAVED, and the
+//     routable set is derived from that saved state. The repair generates a
+//     credential for an account that has none, and the core is about to
+//     authenticate with it: saving first is what keeps the running core's
+//     credentials from living only in this process's memory. A crash after the
+//     next step used to leave the core accepting a uuid that was nowhere on disk,
+//     and the next repair would mint a different one and break every imported
+//     client.
+//  3. The deploy runs OUTSIDE both locks. It renders, has the core accept the
+//     document, and restarts the service - the slowest work in the program, with
+//     no timeout on the systemctl calls. Holding a store lock across it meant a
+//     wedged restart blocked every other writer, and the panel's own write mutex
+//     with it.
+//  4. The live set is recorded under the account lock again, so the flag lands on
+//     whatever the store holds now rather than on a copy that a concurrent write
+//     has since replaced.
 func ApplyStore(ctx context.Context, cfg state.Config, nodesPath, accountsPath string) error {
-	nodes, err := LoadNodes(nodesPath)
-	if err != nil {
+	// 1. The nodes the document will be built from.
+	var nodes []node.Node
+	if err := withNodeLock(nodesPath, func(store *node.Store) error {
+		nodes = store.Nodes()
+		return nil
+	}); err != nil {
 		return err
 	}
-	store, lock, err := user.Locked(accountsPath)
+	// 2. Repair and persist the account credentials, and take the routable set from
+	// the state that was just written.
+	var accounts []user.User
+	if err := withUserLock(accountsPath, func(store *user.Store) error {
+		now := time.Now()
+		protocols := make(map[string]string, len(nodes))
+		for _, n := range nodes {
+			protocols[n.ID] = n.Protocol
+		}
+		store.Repair(protocols)
+		if err := store.Save(); err != nil {
+			return err
+		}
+		accounts = store.Routable(now)
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// 3. Deploy, holding no lock.
+	if err := Apply(ctx, cfg, nodes, accounts); err != nil {
+		return err
+	}
+
+	// 4. Record which accounts are live, against the store as it is now.
+	return withUserLock(accountsPath, func(store *user.Store) error {
+		store.MarkApplied(time.Now())
+		return store.Save()
+	})
+}
+
+// withNodeLock runs fn against the node store with the store's file lock held, so a
+// read-modify-write cannot lose a concurrent change and a read cannot observe a
+// store another process is part way through replacing.
+//
+// An empty path means "this host has no node store", which LoadNodes has always
+// treated as no nodes rather than as an error. It is handled here too, because
+// locking an empty path would create a sidecar beside the working directory.
+func withNodeLock(path string, fn func(*node.Store) error) error {
+	if path == "" {
+		return fn(node.Empty())
+	}
+	store, lock, err := node.Locked(path)
 	if err != nil {
 		return err
 	}
 	defer lock.Unlock()
-	now := time.Now()
-	// A file that predates a credential field is repaired here, on a write path,
-	// and the result is saved with the rest of this change.
-	protocols := make(map[string]string, len(nodes))
-	for _, n := range nodes {
-		protocols[n.ID] = n.Protocol
-	}
-	store.Repair(protocols)
-	if err := Apply(ctx, cfg, nodes, store.Routable(now)); err != nil {
+	return fn(store)
+}
+
+// withUserLock is the account store counterpart of withNodeLock.
+func withUserLock(path string, fn func(*user.Store) error) error {
+	store, lock, err := user.Locked(path)
+	if err != nil {
 		return err
 	}
-	store.MarkApplied(now)
-	return store.Save()
+	defer lock.Unlock()
+	return fn(store)
 }
 
 // LoadNodes loads the node store and returns every node. A caller that renders

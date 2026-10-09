@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"time"
+
+	"github.com/EasySBTeam/EasySB/internal/filelock"
 )
 
 // MigrateV2 upgrades a version-1 account file to version 2, translating each
@@ -17,7 +19,64 @@ import (
 //
 // A protocol that has no node in the mapping is dropped from the account
 // (migration requirement 5); the rest of the account is preserved.
+//
+// The whole read-rewrite runs under the store's file lock. The version is checked
+// before the lock because the common case is an already-migrated file, and taking
+// an exclusive lock on every start to answer a question a read answers is a cost
+// every deployment would pay forever.
 func MigrateV2(path string, mapping map[string]string) (bool, error) {
+	needs, err := needsMigration(path)
+	if err != nil || !needs {
+		return false, err
+	}
+	changed := false
+	lockErr := withLock(path, func() error {
+		// The file is re-read under the lock: another process may have migrated it
+		// between the check above and here, and rewriting a stale copy would undo
+		// whatever it wrote.
+		needs, err := needsMigration(path)
+		if err != nil || !needs {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var raw migrateFile
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		users := make([]User, 0, len(raw.Users))
+		for _, legacy := range raw.Users {
+			var l legacyUser
+			if err := json.Unmarshal(legacy, &l); err != nil {
+				return fmt.Errorf("parse %s: %w", path, err)
+			}
+			users = append(users, l.convert(mapping))
+		}
+		store := &Store{path: path, users: users}
+		if err := store.Save(); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	return changed, lockErr
+}
+
+// withLock runs fn with the account store's file lock held, so the migration cannot
+// interleave with a writer in another process.
+func withLock(path string, fn func() error) error {
+	lock, err := filelock.Acquire(path)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	return fn()
+}
+
+// needsMigration reports whether the file on disk is a version-1 account document.
+func needsMigration(path string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -32,23 +91,7 @@ func MigrateV2(path string, mapping map[string]string) (bool, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return false, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if raw.Version >= CurrentVersion {
-		return false, nil
-	}
-
-	users := make([]User, 0, len(raw.Users))
-	for _, legacy := range raw.Users {
-		var l legacyUser
-		if err := json.Unmarshal(legacy, &l); err != nil {
-			return false, fmt.Errorf("parse %s: %w", path, err)
-		}
-		users = append(users, l.convert(mapping))
-	}
-	store := &Store{path: path, users: users}
-	if err := store.Save(); err != nil {
-		return false, err
-	}
-	return true, nil
+	return raw.Version < CurrentVersion, nil
 }
 
 // migrateFile reads the version and keeps each account unparsed, so a version-1

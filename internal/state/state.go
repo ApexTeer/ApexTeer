@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
+	"github.com/EasySBTeam/EasySB/internal/filelock"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
@@ -131,6 +133,61 @@ func Default() Config {
 		c.Ports[k] = DefaultPorts[k]
 	}
 	return c
+}
+
+// Locked takes the state file's lock and returns the configuration as it is on disk
+// under it, so a caller can read, change and save without a concurrent writer's
+// change being lost. Release it with Unlock.
+//
+// The lock is a sidecar beside the state file, the same arrangement the two JSON
+// stores use. Before this existed, Save rewrote the whole document from the
+// receiver, so every writer discarded every key another writer had changed since it
+// loaded: the panel's deploy path took its copy before a multi-second deploy and
+// saved afterwards, which silently dropped what the TUI had written in between.
+//
+// The lock only orders EasySB's own processes against each other. A deployment
+// edited by hand - or by the legacy shell tool, which knows nothing about the
+// sidecar - is not serialized against this, which is why callers should still prefer
+// Modify, whose change is expressed as a function of the current file rather than as
+// a whole document captured earlier.
+func Locked() (Config, *filelock.Lock, error) {
+	lock, err := filelock.Acquire(stateFile)
+	if err != nil {
+		return Config{}, nil, err
+	}
+	return Load(), lock, nil
+}
+
+// Modify applies change to the configuration under the state file's lock.
+//
+// change receives the configuration as it is on disk at that moment, not a copy the
+// caller loaded earlier, so a value written by another process between the caller's
+// read and this call survives. That is the property a whole-document Save cannot
+// offer: it can only write back what its own receiver knew about.
+//
+// The lock is held across change, so change must not call back into the state file.
+// It is a load-mutate-save cycle over a small document, so that is not a constraint
+// in practice; anything slow belongs outside.
+func Modify(change func(*Config) error) error {
+	cfg, lock, err := Locked()
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	if err := change(&cfg); err != nil {
+		return err
+	}
+	return cfg.Save()
+}
+
+// UpdateNodeDeployed records whether a node has been deployed, touching no other
+// key. It is a Modify, so a value another actor changed while a deploy was running
+// is preserved rather than written back from this caller's stale copy.
+func UpdateNodeDeployed(deployed bool) error {
+	return Modify(func(cfg *Config) error {
+		cfg.NodeDeployed = deployed
+		return nil
+	})
 }
 
 // stateFile is where the node state is read and written. It is a variable so that a
@@ -281,27 +338,9 @@ func (c Config) Save() error {
 	// store writes its own file: a fixed name is a path anything with write access to
 	// the directory can have prepared as a symlink beforehand, and two writers sharing
 	// one temporary path can interleave into a truncated document that is then renamed
-	// into place. CreateTemp applies 0600 too, so the state never lands under the umask
-	// of the invoking shell.
-	f, err := os.CreateTemp(filepath.Dir(stateFile), filepath.Base(stateFile)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, stateFile); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	// into place. atomicfile.Write creates with 0600 too, so the state never lands under
+	// the umask of the invoking shell, and it flushes before renaming.
+	return atomicfile.Write(stateFile, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 }
 
 func (c Config) extraKeys() []string {

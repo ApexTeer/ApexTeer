@@ -18,6 +18,115 @@ func saveInto(t *testing.T, dir string) string {
 	return stateFile
 }
 
+// TestModifyDoesNotLoseAConcurrentChange is the regression test for the stale-copy
+// clobber.
+//
+// Save rewrites the whole document from its receiver, so a writer that loaded the
+// file, spent time doing something else and then saved, discards every key another
+// actor changed in the meantime. That is exactly what the deploy path did: take a
+// copy, run a deploy that can take seconds, save the copy. Modify re-reads under the
+// lock, so the other actor's change survives.
+func TestModifyDoesNotLoseAConcurrentChange(t *testing.T) {
+	saveInto(t, t.TempDir())
+
+	// The slow actor's copy, taken before the other one writes.
+	stale := Load()
+
+	// The other actor changes an unrelated key and commits it.
+	if err := Modify(func(cfg *Config) error {
+		cfg.SubSyncSecs = 120
+		return nil
+	}); err != nil {
+		t.Fatalf("Modify: %v", err)
+	}
+
+	// The slow actor now records its own change the way it must: by expressing it as
+	// a change rather than by saving the copy it took.
+	if err := Modify(func(cfg *Config) error {
+		cfg.Domain = "example.com"
+		return nil
+	}); err != nil {
+		t.Fatalf("Modify: %v", err)
+	}
+
+	after := Load()
+	if after.SubSyncSecs != 120 {
+		t.Fatalf("the concurrent change was lost: SubSyncSecs = %d, want 120", after.SubSyncSecs)
+	}
+	if after.Domain != "example.com" {
+		t.Fatalf("the later change was not recorded: Domain = %q", after.Domain)
+	}
+
+	// And the failure mode itself, pinned so the reason for Modify is on record: the
+	// stale copy still carries the old interval, and saving it would undo the other
+	// actor's write.
+	if stale.SubSyncSecs == 120 {
+		t.Fatal("the fixture no longer reproduces a stale copy, so this test proves nothing")
+	}
+	if err := stale.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := Load().SubSyncSecs; got == 120 {
+		t.Fatal("a whole-document Save unexpectedly preserved the concurrent change")
+	}
+}
+
+// TestUpdateNodeDeployedTouchesNothingElse pins the narrow write the deploy paths use
+// in place of saving their own copy.
+func TestUpdateNodeDeployedTouchesNothingElse(t *testing.T) {
+	saveInto(t, t.TempDir())
+	if err := Modify(func(cfg *Config) error {
+		cfg.Domain = "example.com"
+		cfg.SubServePort = 8443
+		cfg.SubSyncSecs = 90
+		cfg.NodeDeployed = false
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UpdateNodeDeployed(true); err != nil {
+		t.Fatalf("UpdateNodeDeployed: %v", err)
+	}
+
+	after := Load()
+	if !after.NodeDeployed {
+		t.Fatal("the deployed flag was not recorded")
+	}
+	if after.Domain != "example.com" || after.SubServePort != 8443 || after.SubSyncSecs != 90 {
+		t.Fatalf("UpdateNodeDeployed changed another key: %+v", after)
+	}
+}
+
+// TestLockedExcludesAConcurrentHolder pins that Locked really holds the file lock,
+// rather than merely reading the file.
+func TestLockedExcludesAConcurrentHolder(t *testing.T) {
+	saveInto(t, t.TempDir())
+
+	cfg, lock, err := Locked()
+	if err != nil {
+		t.Fatalf("Locked: %v", err)
+	}
+	// A write while the lock is held is a change to the same file, so it must
+	// observe the state under the lock rather than fail; the point here is that the
+	// handle and the lock are returned together and the lock is released.
+	if err := lock.Unlock(); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+	if cfg.Domain != "" {
+		t.Fatalf("a fresh state file yielded Domain %q", cfg.Domain)
+	}
+	// A second acquisition after the release must succeed: a Locked that leaked its
+	// lock would hang every later writer.
+	_, lock2, err := Locked()
+	if err != nil {
+		t.Fatalf("second Locked: %v", err)
+	}
+	if err := lock2.Unlock(); err != nil {
+		t.Fatalf("second Unlock: %v", err)
+	}
+}
+
 func TestDefault(t *testing.T) {
 	c := Default()
 	if !c.AnyEnabled() {

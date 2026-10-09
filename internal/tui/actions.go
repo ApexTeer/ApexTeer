@@ -73,8 +73,10 @@ func applyDeployment(ctx context.Context, lang i18n.Lang, log func(string)) erro
 		return err
 	}
 	log(lang.T("node_applied"))
-	cfg.NodeDeployed = true
-	if err := cfg.Save(); err != nil {
+	// Only the deployed flag is written, as a locked read-modify-write: cfg was read
+	// before a deploy that can take seconds, and saving it whole would discard
+	// anything another actor - the panel, the accounting loop - changed meanwhile.
+	if err := state.UpdateNodeDeployed(true); err != nil {
 		return err
 	}
 	if !first {

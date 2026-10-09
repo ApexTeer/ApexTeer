@@ -9,6 +9,7 @@ import (
 
 	"github.com/EasySBTeam/EasySB/internal/deploy"
 	"github.com/EasySBTeam/EasySB/internal/node"
+	"github.com/EasySBTeam/EasySB/internal/secret"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
@@ -209,13 +210,10 @@ func (s *Service) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		// A deleted node must not linger as a dangling selection in any account,
 		// or the subscription would keep advertising a node the host no longer
-		// serves.
+		// serves. user.Store.ForgetNode is the one implementation of that cascade,
+		// shared with the TUI so the two interfaces cannot leave different state.
 		err = s.withUserLock(func(users *user.Store) error {
-			users.Mutate(func(u *user.User) {
-				u.Deselect(id)
-				delete(u.Credentials, id)
-				delete(u.Usage, id)
-			})
+			users.ForgetNode(id)
 			return users.Save()
 		})
 	}
@@ -293,20 +291,88 @@ func (s *Service) handleNodeConfig(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "the node has no rendered inbound (disabled?)")
 }
 
+// internalErrorRef is the short reference stamped into the log and handed to the
+// client so a sanitized response is still traceable.
+func internalErrorRef() string {
+	return secret.Token()[:8]
+}
+
+// isStoreValidationError reports whether a store error is an answer about the
+// submitted values rather than an internal failure.
+//
+// The stores are not built around sentinel errors, so the two shapes are told apart
+// by their prefixes, which are stable and were read off the packages themselves:
+// user and node validation errors begin "user ", "node ", "subscription token",
+// "unknown protocol", "quota ", "port " or "node name"; the internal ones begin
+// "parse " (loading a corrupt or unreadable store) or "cannot ".
+//
+// The filesystem prefixes are checked FIRST, because Go's path errors read
+// "open /etc/sing-box/easysb-nodes.json: permission denied" and a store path could
+// itself begin with a word in the validation list. Deciding by the validation list
+// alone would then hand the client the path it failed on, which is the exact
+// disclosure the internal branch exists to prevent. Anything matching neither list
+// is treated as internal, so a new error message defaults to being hidden.
+func isStoreValidationError(err error) bool {
+	message := err.Error()
+	for _, prefix := range []string{
+		"parse ", "cannot ", "open ", "read ", "write ", "close ",
+		"remove ", "rename ", "stat ", "mkdir ", "chmod ",
+	} {
+		if strings.HasPrefix(message, prefix) {
+			return false
+		}
+	}
+	for _, prefix := range []string{
+		"user ", "node ", "subscription token", "unknown protocol",
+		"quota ", "port ", "node name",
+	} {
+		if strings.HasPrefix(message, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // applyError maps a deploy failure to an HTTP status.
+//
+// A configuration the core refused keeps its message end to end: that text names the
+// field the operator has to fix, it is already the intended way to report a
+// rejection, and the panel is root-equivalent so it discloses nothing the caller
+// could not read anyway. Every other deploy failure is an internal one - a store, a
+// file, systemd - and is reported as a generic message with a reference stamped into
+// the log, because those errors carry filesystem paths and internal state that a
+// client has no business seeing.
 func (s *Service) applyError(w http.ResponseWriter, err error) {
 	if errors.Is(err, deploy.ErrRejected) {
 		writeError(w, http.StatusUnprocessableEntity, "the core rejected the configuration: "+err.Error())
 		return
 	}
-	writeError(w, http.StatusInternalServerError, "apply failed: "+err.Error())
+	s.internalError(w, "cannot apply the configuration", err)
 }
 
 // storeError maps a node/user store failure to an HTTP status.
+//
+// "not found" and the store's own validation messages are answers to the request and
+// keep their wording; anything else is an internal failure and is sanitized.
 func (s *Service) storeError(w http.ResponseWriter, err error) {
-	if strings.Contains(err.Error(), "not found") {
+	switch {
+	case strings.Contains(err.Error(), "not found"):
 		writeError(w, http.StatusNotFound, err.Error())
-		return
+	case isStoreValidationError(err):
+		badRequest(w, err.Error())
+	default:
+		s.internalError(w, "cannot update the store", err)
 	}
-	badRequest(w, err.Error())
+}
+
+// internalError reports an internal failure without disclosing it, and puts the
+// detail in the log under a reference the client is given.
+//
+// The reference exists so a sanitized response is still actionable: an operator
+// reports the number and the matching log line is one search away, which is what a
+// bare "internal error" would cost them.
+func (s *Service) internalError(w http.ResponseWriter, summary string, err error) {
+	ref := internalErrorRef()
+	s.opts.Log("panel: " + ref + " " + summary + ": " + err.Error())
+	writeError(w, http.StatusInternalServerError, summary+" (ref "+ref+")")
 }

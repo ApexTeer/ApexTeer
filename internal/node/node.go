@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/secret"
 	"github.com/EasySBTeam/EasySB/internal/state"
 )
@@ -134,23 +135,45 @@ type Store struct {
 
 // Load reads the node file. A missing or empty file yields an empty store, which
 // is what a fresh deployment starts from.
+//
+// A file that cannot be parsed is quarantined and the previous content is restored
+// from the sibling backup. The node store is the only record of what the host
+// serves: the ports, the protocols and the Reality keypair are not derivable from
+// anything else, and the rendered config carries the keypair but no code rebuilds
+// the store from it. A corrupt file is therefore recovered rather than fatal.
 func Load(path string) (*Store, error) {
-	s := &Store{path: path}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return s, nil
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
 		}
-		return nil, err
+		return &Store{path: path}, nil
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
+		return &Store{path: path}, nil
+	}
+	s, err := parseStore(path, data)
+	if err == nil {
 		return s, nil
 	}
+	quarantined, qerr := quarantine(path, time.Now())
+	if qerr != nil {
+		return nil, err
+	}
+	recovered, rerr := recoverFromBackup(path)
+	if rerr != nil {
+		return nil, fmt.Errorf("%w (the unusable file was kept at %s)", err, quarantined)
+	}
+	return recovered, nil
+}
+
+// parseStore decodes and validates a node document that is already in memory.
+func parseStore(path string, data []byte) (*Store, error) {
 	var f fileFormat
 	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	s.nodes = f.Nodes
+	s := &Store{path: path, nodes: f.Nodes}
 	seen := make(map[string]bool, len(s.nodes))
 	for i := range s.nodes {
 		n := &s.nodes[i]
@@ -165,8 +188,44 @@ func Load(path string) (*Store, error) {
 	return s, nil
 }
 
+// quarantine moves an unusable store aside so it is not destroyed and the next save
+// can install a fresh file. The suffix keeps the moment so two bad files do not
+// overwrite each other.
+func quarantine(path string, now time.Time) (string, error) {
+	target := fmt.Sprintf("%s.corrupt-%s", path, now.UTC().Format("20060102T150405"))
+	if err := os.Rename(path, target); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// recoverFromBackup loads the sibling backup and installs it as the store again. A
+// backup that is also unusable is refused rather than promoted.
+func recoverFromBackup(path string) (*Store, error) {
+	backup := atomicfile.BackupPath(path)
+	data, err := os.ReadFile(backup)
+	if err != nil {
+		return nil, fmt.Errorf("no usable backup at %s: %w", backup, err)
+	}
+	s, err := parseStore(backup, data)
+	if err != nil {
+		return nil, err
+	}
+	if err := atomicfile.Write(path, data, 0o600); err != nil {
+		return nil, err
+	}
+	s.path = path
+	return s, nil
+}
+
 // Path returns the file the store persists to.
 func (s *Store) Path() string { return s.path }
+
+// Empty returns a store with no nodes and no file behind it. A caller that treats a
+// missing store as "this host serves nothing" can pass it through the same code path
+// as a loaded one instead of branching, and a zero Store cannot be built from
+// outside this package because its fields are unexported.
+func Empty() *Store { return &Store{} }
 
 // Len returns the number of nodes.
 func (s *Store) Len() int { return len(s.nodes) }
@@ -322,23 +381,8 @@ func (s *Store) Save() error {
 		return err
 	}
 	data = append(data, '\n')
-	f, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	// atomicfile.WriteKeepingBackup is the interrupted-write protection the account
+	// store uses too: a fresh temporary file beside the target, flushed, then renamed
+	// over it, and the previous content kept as a sibling Load falls back to.
+	return atomicfile.WriteKeepingBackup(s.path, data, 0o600)
 }

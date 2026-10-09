@@ -3,6 +3,7 @@ package cert
 import (
 	"context"
 	"crypto"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -435,6 +436,38 @@ func loadResource(domain string) (certificate.Resource, error) {
 
 // installPair writes an issued certificate pair, the key first and the
 // certificate second, under the mode each deserves.
+//
+// Each write is atomic on its own, so neither file is ever truncated. The two
+// files cannot be replaced as one, however, so an interruption between them still
+// leaves a half pair, and what that half is depends on whether the domain already
+// had a certificate:
+//
+//   - first issuance: the old fullchain.cer does not exist, so the interruption
+//     leaves a key with no certificate. pairIn requires both files to exist, so
+//     Paths reports no pair, ResolveActive falls back to the placeholder, and the
+//     issuance is simply retried. This is the state docs/pitfalls.md describes.
+//   - renewal: the previous fullchain.cer is still there, so the interruption
+//     leaves the NEW private key beside the OLD certificate. pairIn tests
+//     existence and non-empty size only, so that does report as a pair - a
+//     mismatched one, which is the combination sing-box refuses to start with.
+//
+// The renewal case is a residual risk of a two-file replacement, not an oversight:
+// two paths cannot be replaced as one, so some interruption between them is
+// unavoidable. What this function does control is everything around that window:
+//
+//   - the pair the CA returned is verified to match BEFORE either file is written,
+//     so a response whose key does not belong to its certificate is refused while
+//     the working pair is still intact, rather than installed and then discovered
+//     by the core;
+//   - each file is written atomically, so neither is ever truncated;
+//   - the key is written first, so the first issuance - the common path, and the one
+//     that runs on a fresh host with nothing to fall back on - leaves a state
+//     pairIn reports as no pair, and the issuance is simply retried.
+//
+// Closing the renewal window itself means making pairIn reject a mismatched pair,
+// which changes what ResolveActive and dueForRenewal do with one; both of those were
+// tried and reverted because each broke correct behaviour, so it stays tracked as F7
+// in docs/optimization-audit.md rather than being forced here.
 func installPair(domain string, res *certificate.Resource) error {
 	if res == nil {
 		return errors.New("the CA returned no certificate")
@@ -445,6 +478,13 @@ func installPair(domain string, res *certificate.Resource) error {
 	}
 	if len(res.PrivateKey) == 0 || len(res.Certificate) == 0 {
 		return fmt.Errorf("the CA returned an incomplete certificate for %s", domain)
+	}
+	// The pair is checked before anything is written. Without this, a CA response
+	// whose key does not match its certificate would be installed over a working
+	// pair, and the mismatch would surface as a node that cannot start rather than as
+	// a failed renewal with the previous certificate still serving.
+	if _, err := tls.X509KeyPair(res.Certificate, res.PrivateKey); err != nil {
+		return fmt.Errorf("the CA returned a certificate and key that do not match for %s: %w", domain, err)
 	}
 	if err := writeFile(filepath.Join(dir, keyName), res.PrivateKey, 0o600); err != nil {
 		return err

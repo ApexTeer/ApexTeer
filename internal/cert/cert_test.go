@@ -1,6 +1,7 @@
 package cert
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-acme/lego/v5/certificate"
 	"github.com/go-acme/lego/v5/challenge/http01"
 	"github.com/go-acme/lego/v5/lego"
 )
@@ -229,9 +231,224 @@ func TestPathsStaysInsideTheStateDirectory(t *testing.T) {
 	_ = dir
 }
 
+// TestInstallPairLeavesNoPairWhenAFirstIssuanceIsInterrupted pins the state the
+// docs/pitfalls.md guarantee actually describes, and it is deliberately named for
+// the first issuance rather than for a renewal.
+//
+// On a host with no certificate yet, an interruption between installPair's two
+// writes leaves the key with no certificate. pairIn requires both files, so Paths
+// reports no pair, ResolveActive falls back to the placeholder, and the issuance is
+// retried - the core is never handed a key and a certificate that do not match.
+//
+// A renewal is the other case, and this test does not cover it: the previous
+// fullchain.cer is still on disk, so the same interruption leaves the new key
+// beside the old certificate, which does report as a pair. That residual risk is
+// described on installPair and recorded as F7 in docs/optimization-audit.md; it
+// cannot be closed from here, because two files cannot be replaced as one.
+func TestInstallPairLeavesNoPairWhenAFirstIssuanceIsInterrupted(t *testing.T) {
+	dir := tempDir(t)
+	domain := "interrupted.example.com"
+	pairDir := filepath.Join(dir, domain)
+
+	// A first issuance interrupted after the first of installPair's two writes.
+	// installPair writes the key first, and no certificate exists yet.
+	issued := selfSignedPEM(t, domain)
+	if err := writeFile(filepath.Join(pairDir, keyName), issued.key, 0o600); err != nil {
+		t.Fatalf("write the key: %v", err)
+	}
+
+	// Half a pair is not a pair: the caller falls back to the self-signed
+	// placeholder and the core still has something to serve, rather than being
+	// handed a certificate and a key that do not belong together.
+	if _, _, ok := Paths(domain); ok {
+		t.Fatal("a key with no certificate was reported as a pair")
+	}
+
+	// Completing the write makes it a pair again.
+	if err := writeFile(filepath.Join(pairDir, fullchainName), issued.cert, 0o644); err != nil {
+		t.Fatalf("write the certificate: %v", err)
+	}
+	fullchain, key, ok := Paths(domain)
+	if !ok {
+		t.Fatal("a completed pair was not reported")
+	}
+	if _, err := tls.LoadX509KeyPair(fullchain, key); err != nil {
+		t.Fatalf("the installed pair does not load: %v", err)
+	}
+}
+
+// TestInstallPairRenewalInterruptionStillReportsAPair documents the residual risk of
+// a two-file replacement rather than asserting a guarantee that does not hold.
+//
+// On a renewal the previous certificate is still on disk, so an interruption between
+// installPair's two writes leaves the new key beside the old certificate. pairIn
+// tests existence and non-empty size, so that does report as a pair - a mismatched
+// one. This test exists so the behaviour is pinned and visible: if a future change
+// makes pairIn reject a mismatched pair, this test fails and the person who made it
+// has to decide the read-path consequences deliberately (see F7 in
+// docs/optimization-audit.md) instead of discovering them in production.
+//
+// It deliberately does not call installPair: installPair cannot be interrupted
+// without killing the process between its two writes, and the state that crash
+// leaves is reproduced exactly by writing the key of a new generation next to the
+// certificate of the old one.
+func TestInstallPairRenewalInterruptionStillReportsAPair(t *testing.T) {
+	dir := tempDir(t)
+	domain := "renewal.example.com"
+	pairDir := filepath.Join(dir, domain)
+
+	// The pair a previous issuance left, which is serving.
+	writePair(t, dir, domain, time.Now().AddDate(0, 0, 60))
+	if _, _, ok := Paths(domain); !ok {
+		t.Fatal("the fixture pair was not resolved")
+	}
+
+	// A renewal interrupted after installPair's first write: a new key, the old
+	// certificate still in place.
+	issued := selfSignedPEM(t, domain)
+	if err := writeFile(filepath.Join(pairDir, keyName), issued.key, 0o600); err != nil {
+		t.Fatalf("write the new key: %v", err)
+	}
+
+	fullchain, key, ok := Paths(domain)
+	if !ok {
+		t.Fatal("the pair is no longer resolved; if pairIn gained a key match check, " +
+			"revisit what ResolveActive and dueForRenewal do with a mismatched pair (F7)")
+	}
+	// The pair resolves, and it is genuinely mismatched: this is the state the docs
+	// must not claim is impossible.
+	if _, err := tls.LoadX509KeyPair(fullchain, key); err == nil {
+		t.Fatal("the fixture no longer produces a mismatch; this test is no longer testing anything")
+	}
+}
+
+// TestWriteFileReplacesRatherThanTruncates covers what writeFile guarantees about a
+// file that already exists, at the level a caller can observe after the call: the
+// content is exactly what was written, and no temporary sibling is left behind.
+//
+// It is worth being precise about what this does not show. The property the name
+// refers to - that a concurrent reader never opens a half-written file - is a
+// property of the write happening through a fresh file and a rename, and it cannot
+// be observed by reading the file after the call returns: the truncating
+// implementation this replaced would also satisfy every assertion below. It is
+// guaranteed by construction in internal/atomicfile, and the behaviour that is
+// checked here is the part a caller can get wrong, namely that replacing one half
+// of a pair is allowed and leaves whole content.
+func TestWriteFileReplacesRatherThanTruncates(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, fullchainName)
+	keyPath := filepath.Join(dir, keyName)
+
+	previous := selfSignedPEM(t, "replace.test")
+	if err := writeFile(certPath, previous.cert, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(keyPath, previous.key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replacing one half of the pair is a legitimate renewal step, so it must be
+	// allowed even though the two files momentarily disagree: refusing it is what
+	// would break renewals.
+	next := selfSignedPEM(t, "replace.test")
+	if err := writeFile(keyPath, next.key, 0o600); err != nil {
+		t.Fatalf("writeFile refused a replacement key: %v", err)
+	}
+	// The replaced file is whole and is the new content, not a mix of the two.
+	onDisk, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(onDisk, next.key) {
+		t.Fatal("the replaced key is not the content that was written")
+	}
+
+	// No temporary sibling is left behind, which is the other half of writing
+	// through a fresh file and a rename.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != filepath.Base(certPath) && e.Name() != filepath.Base(keyPath) {
+			t.Fatalf("writeFile left %q behind", e.Name())
+		}
+	}
+}
+
+// selfSignedPEM returns a fresh self-signed certificate and key as PEM, the material
+// installPair would have received from the CA for one generation.
+func selfSignedPEM(t *testing.T, cn string) struct{ cert, key []byte } {
+	t.Helper()
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, fullchainName)
+	keyPath := filepath.Join(dir, keyName)
+	if err := GenerateSelfSigned(certPath, keyPath, cn); err != nil {
+		t.Fatalf("GenerateSelfSigned: %v", err)
+	}
+	certData, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyData, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return struct{ cert, key []byte }{cert: certData, key: keyData}
+}
+
 // TestDomainsIgnoresWhatIsNotAPair covers the two ways a directory ends up in the
 // state directory without being a certificate: the account files beside it, and
 // the leftovers of an interrupted write.
+// TestInstallPairRefusesAMismatchedPairBeforeWritingAnything covers the check
+// installPair gained: the pair the CA returned is verified before either file is
+// written.
+//
+// Without it, a response whose key does not belong to its certificate was installed
+// over a working pair, and the mismatch surfaced later as a node that will not start
+// - rather than as a failed renewal with the previous certificate still serving. The
+// working pair must also survive the refusal.
+func TestInstallPairRefusesAMismatchedPairBeforeWritingAnything(t *testing.T) {
+	dir := tempDir(t)
+	domain := "mismatch.example.com"
+	pairDir := filepath.Join(dir, domain)
+
+	// A pair that is already serving.
+	writePair(t, dir, domain, time.Now().AddDate(0, 0, 60))
+	beforeCert, err := os.ReadFile(filepath.Join(pairDir, fullchainName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeKey, err := os.ReadFile(filepath.Join(pairDir, keyName))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A CA response whose key belongs to a different certificate.
+	mine := selfSignedPEM(t, domain)
+	theirs := selfSignedPEM(t, domain)
+	res := &certificate.Resource{Certificate: mine.cert, PrivateKey: theirs.key}
+	if err := installPair(domain, res); err == nil {
+		t.Fatal("installPair accepted a certificate and key that do not match")
+	}
+
+	// Nothing was written: the pair that was serving is untouched.
+	afterCert, err := os.ReadFile(filepath.Join(pairDir, fullchainName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterKey, err := os.ReadFile(filepath.Join(pairDir, keyName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterCert, beforeCert) || !bytes.Equal(afterKey, beforeKey) {
+		t.Fatal("a refused pair overwrote the working one")
+	}
+	if _, _, ok := Paths(domain); !ok {
+		t.Fatal("the working pair no longer resolves after a refused installation")
+	}
+}
+
 func TestDomainsIgnoresWhatIsNotAPair(t *testing.T) {
 	dir := tempDir(t)
 	writePair(t, dir, "example.com", time.Now().AddDate(0, 0, 60))

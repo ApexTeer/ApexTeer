@@ -489,18 +489,21 @@ func deleteNode(id string) actionFunc {
 						return err
 					}
 					lock.Unlock()
-					if affected > 0 {
-						users, ulock, err := user.Locked(sysinfo.UsersFile)
-						if err != nil {
-							return err
-						}
-						users.Mutate(func(u *user.User) { u.Deselect(id) })
-						if err := users.Save(); err != nil {
-							ulock.Unlock()
-							return err
-						}
-						ulock.Unlock()
+					// The cascade is the same one the panel runs: user.Store.ForgetNode
+					// is the single implementation, so deleting a node leaves one state
+					// whichever interface performed it. It runs even when no account
+					// selected the node, because a credential or usage entry can survive
+					// a deselection.
+					users, ulock, err := user.Locked(sysinfo.UsersFile)
+					if err != nil {
+						return err
 					}
+					users.ForgetNode(id)
+					if err := users.Save(); err != nil {
+						ulock.Unlock()
+						return err
+					}
+					ulock.Unlock()
 					return applyDeployment(ctx, lang, r.Log)
 				}), nil
 			default:

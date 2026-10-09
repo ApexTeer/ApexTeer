@@ -14,15 +14,16 @@ import (
 // editSubPort prompts for the subscription endpoint port. The port must not
 // collide with a node listener, and the endpoint service has to be restarted
 // for a change to take effect.
+//
+// The form is opened with the value read here, but the write is a locked
+// read-modify-write: the entry is confirmed some time after the value was read, and
+// saving the copy this function captured would discard anything another actor
+// changed in between. The collision check runs inside the same critical section,
+// against the node store as it is at that moment.
 func editSubPort() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		cfg := state.Load()
-		nodes, err := loadNodes()
-		if err != nil {
-			a.setToast(err.Error(), true)
-			return nil
-		}
 		prompt := fmt.Sprintf(lang.T("param_sub_port_prompt"), state.DefaultSubServePort)
 		a.openForm(lang.T("param_sub_port"), prompt, fmt.Sprint(cfg.SubServePort), "", func(a *App, value string) (tea.Cmd, error) {
 			value = strings.TrimSpace(value)
@@ -30,13 +31,19 @@ func editSubPort() actionFunc {
 			if err != nil || port < 1 || port > 65535 {
 				return nil, errors.New(lang.T("port_invalid"))
 			}
+			nodes, err := loadNodes()
+			if err != nil {
+				return nil, err
+			}
 			for _, n := range nodes {
 				if n.Port == port {
 					return nil, errors.New(lang.T("port_conflict"))
 				}
 			}
-			cfg.SubServePort = port
-			if err := cfg.Save(); err != nil {
+			if err := state.Modify(func(cfg *state.Config) error {
+				cfg.SubServePort = port
+				return nil
+			}); err != nil {
 				return nil, err
 			}
 			a.setToast(lang.T("node_params_saved"), false)
@@ -48,6 +55,7 @@ func editSubPort() actionFunc {
 
 // editSubSync prompts for the accounting interval in seconds. The panel reads
 // traffic this often, which is also how quickly a quota or an expiry is enforced.
+// The write is a locked read-modify-write for the same reason as editSubPort.
 func editSubSync() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
@@ -58,8 +66,10 @@ func editSubSync() actionFunc {
 			if err != nil || seconds < state.MinSubSyncSeconds {
 				return nil, errors.New(lang.T("param_sub_sync_invalid"))
 			}
-			cfg.SubSyncSecs = seconds
-			if err := cfg.Save(); err != nil {
+			if err := state.Modify(func(cfg *state.Config) error {
+				cfg.SubSyncSecs = seconds
+				return nil
+			}); err != nil {
 				return nil, err
 			}
 			a.setToast(lang.T("node_params_saved"), false)

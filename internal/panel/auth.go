@@ -110,6 +110,16 @@ func (s *sessionStore) revoke(token string) {
 	delete(s.sessions, token)
 }
 
+// revokeAll drops every session, which is what a credential change has to do. The
+// sessions are held in memory and a password change is the operator's remedy for a
+// leaked cookie, so leaving the old tokens live would keep the very access the
+// change was made to end - for up to the full TTL.
+func (s *sessionStore) revokeAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions = map[string]session{}
+}
+
 // sweepLocked removes expired sessions. The caller holds the lock.
 func (s *sessionStore) sweepLocked() {
 	now := s.now()
@@ -182,6 +192,27 @@ func (s *Service) setSessionCookie(w http.ResponseWriter, token string, expires 
 		SameSite: http.SameSiteStrictMode,
 		Expires:  expires,
 	})
+}
+
+// requestIsSecure reports whether the browser reached the panel over HTTPS.
+//
+// It is asked about the request rather than read from cfg.TLS, because the two
+// differ in the arrangement the installation docs recommend: a reverse proxy
+// terminates TLS and forwards plain HTTP to a loopback listener. There cfg.TLS is
+// false - the panel itself does not do TLS - while the browser's hop is HTTPS, and
+// tying the cookie to cfg.TLS left it without Secure on a deployment that is
+// entirely HTTPS from the client's point of view.
+//
+// X-Forwarded-Proto is trusted here, which is safe for this question specifically
+// and would not be for a client address: a secure cookie that does not need to be
+// secure only stops the browser sending it over plain HTTP, so a forged header
+// cannot gain access, only lose it. The panel is deployed behind a proxy that sets
+// it; where none does, r.TLS answers.
+func requestIsSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 }
 
 // clearSessionCookie expires the browser's session cookie on logout.
