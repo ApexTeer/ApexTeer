@@ -70,9 +70,51 @@
 - **订阅文档解析与 YAML 渲染的小修复**：`stripJSONC` 现在跳过 `\"`，字符串里的转义引号不会再被误判为字符串结束、把其后的 `//` 当注释删掉；mihomo 的 `yamlString` 现在转义换行 / 回车 / 制表符，节点名或凭据里带这些字符不会再截断 YAML；`qrencode` 调用带上 10 秒超时，卡住不再拖住任务协程。
 - **面板版本栏不再显示原始键名**：仪表盘与「系统自身」页把版本一项写成 `status_version`，而该键在词表里并不存在，`Lang.T` 对未知键原样返回键名，于是版本栏直接显示 `status_version`；现改用既有的 `ov_version`（与总览页同一标签）。
 
+### 安全与稳定性（工程优化第二轮）
+
+本轮只做低风险、不改变对外行为的修复；来源与证据见 `docs/optimization-audit.md`，排期见 `docs/optimization-plan.md`。
+
+- **状态文件统一走同一个原子写入**：新增 `internal/atomicfile`，把「临时文件 → flush → 改名 → flush 目录」这段此前被抄了六七份、且已经走样的序列收敛成一处。账号库、节点库、`easysb.conf`、面板配置、统计基线、界面偏好（`internal/prefs`）与工具箱看板（`internal/toolbox`）现在共用它。此前**没有任何**状态写入调用过 `fsync`：改名对并发读者是原子的，但没有 flush 时掉电可能留下长度为 0 的文件，而不 flush 父目录则可能连改名本身都没落地。证书的 `private.key` / `fullchain.cer` 也改走它（见下），此前是就地截断写。
+- **记账基线不再可能被写坏**：`stats.saveSample` 原本是 `_ = os.WriteFile(...)`——全程序唯一一处既非原子、又丢弃错误的状态写入。写坏的文件会被 `loadSample` 静默忽略，于是下一轮只能重新建立基线，上次成功保存之后的流量**永远不会被计费**（少计即白送流量）；错误现在会上报。
+- **证书私钥不再可能半写**：`cert.writeFile` 原为 `os.WriteFile` + `os.Chmod`，会**就地截断**已存在的文件，因此单个文件就可能被写坏。现在两处都走原子写入，任一份都不会出现半截内容。
+
+  需要说清楚的是这只解决了一半。两份文件无法作为一个整体替换，因此两次写入之间中断必然留下「半对」，而**留下哪一半取决于该域名此前有没有证书**：首次签发时 `pairIn` 要求两个文件都在，于是 `Paths` 报告无证书、`ResolveActive` 回退自签占位并重试；**续期时旧证书仍在**，于是留下「新私钥 + 旧证书」——它存在且非空，因此**会被当成一对证书报告出来**，而内核恰好拒绝这种不匹配的组合。`docs/pitfalls.md` 与本处原先按首次签发的情形把话说满了，现已改正：该残余风险在 `installPair` 注释、`docs/pitfalls.md` 与 `TestInstallPairRenewalInterruptionStillReportsAPair` 三处被明确记录并固定住，真正的关闭方式需要改读路径（`ResolveActive` 对不匹配的一对报错而非降级为自签占位、`dueForRenewal` 区分「没有证书」与「证书不可读」），属于需要单独批准的行为变更，记为 F7。
+- **改密码会吊销全部会话**：`handleChangePassword` 此前只换哈希。会话是内存里的，改密码正是运维在 cookie 泄漏时的补救动作，而旧令牌仍能用满 12 小时 TTL。现在新增 `sessionStore.revokeAll()`，改密码时清空所有会话并同时清掉调用方的 cookie。**注意这是可见的行为变化**：改密码后，其它已打开的浏览器标签页会立刻变成未登录，需要重新登录。失败路径不受影响——当前密码错误时返回 401 且不吊销任何会话，否则一次输错就会把运维从可用面板里踢出去。
+- **访问日志不再可被伪造**：日志记录的是 `r.URL.Path`，即**解码后**的路径，而 `net/url` 只拒绝非法转义、不拒绝 C0 控制字节，因此一条未认证的 `GET /api/v1/x%0A...` 就能往日志里插一行看似真实的记录。现在记录 `r.URL.EscapedPath()`。
+- **证书目录兜底查找同样校验域名**：`legacyDirs` 曾把**原始**域名直接 `filepath.Join` 到 `CertDir` 与 `~/.acme.sh/<domain>_ecc`，绕过了主查找所用的 `domainDir` 守卫（该校验拒绝分隔符与 `..`）。现在先过同一处校验，校验不过即不再兜底。
+- **首次管理员密码失败即停**：`GeneratePassword` 在 `crypto/rand` 出错时曾回退到固定字符串 `change-me-on-first-login`——一个写在源码里的公开凭据。现在返回错误并阻止面板启动，即失败时关闭而非开放；该函数签名随之变为 `(string, error)`。
+- **移除绕开校验的配置写入函数**：`deploy.WriteServerConfig` / `writeConfigFile` 用 `os.WriteFile` 直接把 `/etc/sing-box/config.json` 就地写盘，**不经过 `sbcore.Check`**，正是 `ApplyConfig` 当初要消除的那个失败模式，而该文件载有全部账号的 uuid 与密码。审计确认它**没有任何生产调用方**（仅被自身测试使用），故按批准删除；原有「凭证文件必须是 0600」的断言改在真正的部署路径 `ApplyConfig` 上验证，并新增一个「内核拒绝时运行中的配置原封不动、且不留下临时文件」的测试。
+- **补齐关键路径的测试**：`internal/node` 与 `internal/filelock` 此前**完全没有测试文件**，而前者是「本机到底服务什么」的唯一来源、后者是面板与订阅服务之间唯一的互斥手段。新增节点库测试（参数补全、名称/端口/协议校验、损坏文档拒绝、并发写入不丢失）与锁测试（旁路文件、互斥确实生效、重复释放安全）。`deploy.ApplyStore` 此前也没有任何测试——因为走到它的成功路径需要真的执行 `systemctl`；参照本包既有的 `checkConfig` 接缝，把 `service.Active` / `Do` / `WriteUnit` 也做成可替换变量后，`ApplyStore` 的「加载 → 渲染 → 安装 → 记录 → 保存」现在可以端到端验证，并补上 `atomicfile` 的独立测试。
+- **测试不再因平台而常红**：`internal/panel/security_test.go` 把原始 Windows 路径（`D:\...`）直接拼进 JSON 字符串字面量，而 `\U` 是非法 JSON 转义，于是请求在到达被测校验之前就以 400 被拒、断言期望 422——该文件在 Windows 检出上永远失败，且与所测逻辑无关。现在统一用 `json.Marshal` 生成请求体。
+
+### 授权、收敛与信息披露（工程优化第四轮）
+
+- **路由鉴权现在有测试兜底**：面板的整个授权模型就是注册时套上的一个 `s.require`，而漏套一条路由等于把它开放给任何能连到端口的人——考虑到面板单元不设 `User=` 且提供 root PTY，这个错误一点都不小。API 表面现在收敛为 `routes()` 一张表（53 条，`Handler()` 从它注册），新增 `TestEveryRouteRequiresASession` 逐条断言未认证请求被拒，另加 `TestEveryRouteHasAHandler` 捕获表里有条目却没有处理器。**该测试已用「临时移除 `require`」验证：会让约 40 条路由失败**（例如 `GET /api/v1/system answered 200 without a session`）。终端路由在表中标为 public（它在处理函数内自行鉴权、失败时返回自己的状态），该标记即豁免机制。
+- **节点删除只保留一处实现**：面板删节点时会 `Deselect` 并清掉该节点的凭据与流量计数，TUI 只做 `Deselect`——同一操作两种结果，而残留的凭据/计数会在节点 id 被复用（store 被编辑、从备份恢复或克隆）时被一个无关节点继承。现在统一为 `user.Store.ForgetNode`，两个入口都调它；TUI 也不再在「无账号选中」时跳过账户库（那时仍可能残留条目）。
+- **面板端口不再只查范围**：面板与内核入站、订阅服务共用一台主机，撞端口会被先写入配置、等到重启才发现——面板绑不上端口，而运维恰好失去了用来修复它的那个界面。新增 `checkPanelPort`，在写入前比对订阅端口与所有已启用节点（复用既有的 `node.CheckSubPort`），冲突返回 422 且不落盘。
+- **内部错误不再回传客户端**：`applyError` / `storeError` 是两个统一出口，现在区分三类——内核拒绝配置的报错**完整保留**（它指明运维要改的字段，也是 `ErrRejected` 被包装而非替换的全部意义）、表单校验与「not found」保留原文与状态码、而属于主机的失败（库不可读、文件损坏、systemd）改为通用 500 加一个短引用编号，细节进日志。审计指出的具体泄漏随之关闭：`POST /security/tls` 原样回传 `*tls` 错误（形如 `open /etc/shadow: permission denied`），使该端点成为路径存在性与权限探测口。前缀判定中**文件系统前缀优先**，否则路径以 `node ` 开头时会把绝对路径当校验消息回显。
+
+### 状态完整性、超时与传输默认值（工程优化第五轮）
+
+- **`easysb.conf` 现在在锁下读写**：此前该文件**完全没有锁**，而 `Save` 会按接收者的内容重写整份文档，于是每个写入方都会丢弃自它读取之后别人改动的键。最坏的一处是面板的部署路径：它在一次可能持续数秒的部署**之前**取快照、**之后**整体写回——期间 TUI 改的同步间隔会被静默抹掉；顺序反过来则会抹掉 `DOMAIN`/`CERT_DOMAIN`（所有订阅 URL 失去主机名）或把 `NODE_DEPLOYED` 重置。现在新增 `state.Modify`，变更以「当前文件的函数」形式表达；部署路径只写 `NODE_DEPLOYED` 一个键（`state.UpdateNodeDeployed`）。测试 `TestModifyDoesNotLoseAConcurrentChange` 同时钉住了修复后的正确行为**与**旧行为的失效方式。
+- **损坏的状态库可恢复**：`easysb-users.json` 与 `easysb-nodes.json` 保存时保留上一份内容为 `.bak`；加载时若无法解析，则把坏文件隔离为 `<file>.corrupt-<时间戳>`（保留现场而非删除）并从 `.bak` 恢复。这两个文件是**无法重建**的：账号库持有每个账号唯一的 uuid/口令，节点库持有 Reality 私钥。若 `.bak` 同样不可用，则如实报错而不会拿坏文件覆盖坏文件。
+- **外部命令不再可能永久挂起**：`service.Do` 此前完全依赖调用方的 context，而记账循环与订阅服务传入的是**进程生命周期**的 context，一次卡住的 `systemctl restart` 会永久占住账号锁，进而让面板所有写入排队到重启为止。现在 `Do` 自带 120 秒上限（systemd 自身默认 `TimeoutStopSec` 为 90 秒）、`Active` 为 30 秒；同时记账循环**不再在持锁状态下**调用 Apply，改为先落盘计数、锁外重启，再在锁下记录 applied。
+- **面板默认只监听 loopback**：原默认 `0.0.0.0` + 明文 HTTP 会把管理员口令（以 JSON 明文 POST）与会话 cookie 暴露在同一网段上，而每个已认证请求都等价于 root（单元不设 `User=`、面板提供 PTY）。需要远程访问时有两条受支持路径——给面板配 TLS，或置于 TLS 反向代理之后；确需直接绑定公网时用环境变量 `EASYSB_PANEL_LISTEN=0.0.0.0`（systemd drop-in 即可），此时启动日志会明确警告明文传输。会话 cookie 的 `Secure` 改为按**请求本身**的协议判定（`r.TLS` 或反代的 `X-Forwarded-Proto: https`），因此文档推荐的反代部署里 cookie 也能正确带上 `Secure`——此前它跟随 `PANEL_TLS`，在那种部署下反而缺失。
+- **`MigrateV2` 的读改写加锁**：v1→v2 迁移此前在无锁下读整份账号库再整体写回，与面板/记账循环并发时会丢账号；现在整个读改写位于 `user` 的文件锁内，版本判断在锁外先做一次（避免每次启动都取排他锁），并在锁内复查一次。
+
+### 崩溃遗留清理（工程优化第六轮）
+
+- **被杀死进程留下的临时文件不再堆积**：原子写入在成功后会清掉**属于它自己那个目标**的、超过安全时限的临时文件。那些文件只可能来自被杀的进程——所有失败路径都会自行清理——而它们承载的是文档内容（对账号库而言是全部凭据），因此它们此前只是静静地一直留在磁盘上。两点设计是刻意的：**时限必须非零**，因为写入方之间靠 store 的文件锁串行，而锁在两次写入之间是释放的，所以另一个进程完全可能在同一目录里持有**新鲜**的临时文件，仅按名字删除会毁掉它正在写的文档；**范围只限本目标的 `base+".tmp-*"`**，不碰别的目标的临时文件，删除失败也不影响写入成功。
+
+- **订阅服务绑定失败时不再表现为「一直没起来」**：`Options.Ready` 的契约是「监听成功后给出地址然后关闭」，但绑定失败这条路径直接 `return err` 而没有关闭通道。只等待该通道的调用方因此无法区分「服务正在启动」与「服务已经放弃」，只能等自己的超时。现在失败路径同样关闭通道（不带值），等待它即可得知结果。
+- **`subd.Run` 返回前会等记账循环停下**：此前 `Run` 用 `go loop.Run(ctx)` 启动记账循环，却在 `server.Shutdown` 之后直接返回，**不等它**；而该循环会在一个周期内写账号库与记账基线。于是「`Run` 返回」并不等于「它启动的东西都已停止」——测试在 `Run` 返回后清理临时目录，与循环的最后一次写入发生竞争（表现为 `TempDir RemoveAll cleanup: directory not empty`，而**不是**绑定失败）。现在 `stats.Loop` 提供 `Done()`，`subd.Run` 在**每一条**返回路径上都会停止并等待该循环（服务自身出错的那条路径同样如此）。实测：修复前 `internal/subd` 在 10–15 次 `-race` 运行中失败 1 次；修复后 30 次普通 + 20 次 `-race` 运行 **0 失败**。
+- **监听器在记账循环之前绑定**：`Run` 此前先启动记账循环再 bind，因此绑定失败时会返回错误、却把一个仍在 ctx 上滴答的 goroutine 留在身后（调用方若不在失败路径上取消，它会一直读写账号库到进程结束）。现在顺序反过来：bind 成功才启动循环。
+- **CA 返回的证书与私钥在落盘前先校验是否匹配**：此前若 CA 返回的一对凭据本身不匹配，会被直接装到正在服务的那一对之上，问题直到内核起不来才暴露；现在 `installPair` 在写任何文件**之前**先用 `tls.X509KeyPair` 校验，不匹配就拒绝，原有可用的一对保持原样继续服务。两份文件之间被中断的那个窗口无法消除（两个路径不能作为一个整体替换），这一点在 `installPair`、`docs/pitfalls.md` 与 `TestInstallPairRenewalInterruptionStillReportsAPair` 三处明确记录。
+
 ### 移除
 
 - 删除发布服务器与服务器置备链路：`.github/workflows/server-setup.yml`、`packaging/server/`（`provision.sh`、站点首页与 favicon）以及发布工作流里的 `rsync` / FTP / `SERVER_*` 秘密；源由 GitHub Release 直接承载，不再需要一台常驻主机。
+
 - 删除 rpm / pacman 打包与源：`packaging/rpm/`、`packaging/repo/packages.sh`（`make repo-packages`）、`make rpm` / `make pacman` 目标，以及工作流里对应的签名与 repomd 步骤。
 
 - 删除已无用的 sing-box 重编译链路：`.github/workflows/singbox-v2ray-api.yml`（含 `prune` job）、`scripts/build_singbox_v2ray_api.sh`、`scripts/verify_singbox_arches.sh`、`scripts/prune_release_assets.py`、`scripts/plan_check.py`，以及只验证已删除内核管理的 `scripts/vps/verify-kernel-*.sh` / `verify-source-switch.sh`。内核已编译进面板，这些脚本维护的 `singbox-stable` / `singbox-alpha` 通道不再被任何代码消费。
