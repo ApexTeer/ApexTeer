@@ -14,15 +14,20 @@ import (
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
 
-// TestExampleManifestParses keeps the shipped example honest: a field renamed
-// in the struct without updating docs/provision.example.json fails here.
-func TestExampleManifestParses(t *testing.T) {
+// TestExampleManifestRuns keeps the shipped example honest: a field renamed in
+// the struct, or an account selecting a node the example never declares, fails
+// here rather than under a user's first `--provision`.
+func TestExampleManifestRuns(t *testing.T) {
 	data, err := os.ReadFile("../../docs/provision.example.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Parse(data); err != nil {
+	spec, err := Parse(data)
+	if err != nil {
 		t.Fatalf("shipped example does not parse: %v", err)
+	}
+	if _, err := Run(context.Background(), spec, testOptions(t)); err != nil {
+		t.Fatalf("shipped example does not run: %v", err)
 	}
 }
 
