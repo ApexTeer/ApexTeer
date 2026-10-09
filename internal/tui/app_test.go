@@ -185,7 +185,7 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	// The root entries are the panel's map: every screen has to be reachable from
 	// here, and from the navigation grouping as well, or it is hidden behind a
 	// scroll nobody knows about.
-	want := []string{"toolbox", "node", "domain", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
+	want := []string{"toolbox", "node", "domain", "subscribe", "users", "service", "panel", "system", "bbr", "script-update", "uninstall"}
 	got := map[string]bool{}
 	for _, n := range a.current().nodes {
 		got[n.id] = true
@@ -807,8 +807,8 @@ func TestFitsNarrowWidthsEveryScreen(t *testing.T) {
 
 func TestBBRMenuShape(t *testing.T) {
 	a := newTestApp(t)
-	if n := len(a.current().nodes); n != 10 {
-		t.Fatalf("the main menu has %d entries, want 10", n)
+	if n := len(a.current().nodes); n != 11 {
+		t.Fatalf("the main menu has %d entries, want 11", n)
 	}
 	// The tenth entry opens a section of its own.
 	var bbrNode *node
@@ -892,7 +892,9 @@ func TestMainMenuArrowKeysFollowTheColumns(t *testing.T) {
 	if a.menuColumns() != 2 {
 		t.Fatalf("the main menu should be drawn in two columns at %d columns wide", a.width)
 	}
-	half := len(a.current().nodes) / 2
+	// The left column takes the extra row when the count is odd, which is what the
+	// cursor walks; the test reads the same split the renderer uses.
+	half := a.colHalf()
 
 	// Down walks the left column and stays in it: the entries below the fold are
 	// the ones in the other column, so a step across would look like a jump.
@@ -915,16 +917,17 @@ func TestMainMenuArrowKeysFollowTheColumns(t *testing.T) {
 		t.Fatalf("up at the top of the left column landed on %d, want %d", a.index, half-1)
 	}
 
-	// Right moves to the same row of the right column, left comes back.
+	// Right moves to the same row of the right column and clamps to its last entry
+	// when the left column is the taller one, then left comes back to the same row.
 	m, _ = a.Update(press(tea.KeyRight))
 	a = m.(*App)
-	if want := 2*half - 1; a.index != want {
-		t.Fatalf("right from the last row landed on %d, want %d", a.index, want)
+	if want := a.itemCount() - 1; a.index != want {
+		t.Fatalf("right from the bottom of the left column landed on %d, want %d", a.index, want)
 	}
 	m, _ = a.Update(press(tea.KeyLeft))
 	a = m.(*App)
-	if a.index != half-1 {
-		t.Fatalf("left landed on %d, want %d", a.index, half-1)
+	if want := a.itemCount() - 1 - half; a.index != want {
+		t.Fatalf("left landed on %d, want %d", a.index, want)
 	}
 
 	// Enter still opens the highlighted entry from either column.

@@ -27,6 +27,7 @@
 - [Releases](#releases)
 - [Capabilities](#capabilities)
 - [Interactive Menu](#interactive-menu)
+- [Web Panel](#web-panel)
 - [Command Line](#command-line)
 - [Non-interactive Install](#non-interactive-install)
 - [Config Templates](#config-templates)
@@ -138,7 +139,7 @@ The package carries the panel and the core together — the core is compiled int
 | `/usr/lib/systemd/system/easysb.service` | Subscription service unit: `easysb --serve` |
 | `/usr/share/licenses/easysb/LICENSE` | License text |
 
-The units come from the binary itself (`sb --print-unit node|sub`), which is the same code the panel writes a unit from at runtime, so the packaged copy and the runtime copy cannot drift. The package deliberately does not enable or start either service: a fresh install has no node configuration yet, so run `sb`, configure the node, and the panel enables and starts the service.
+The units come from the binary itself (`sb --print-unit node|sub|panel`), which is the same code the panel writes a unit from at runtime, so the packaged copy and the runtime copy cannot drift. The package deliberately does not enable or start either service: a fresh install has no node configuration yet, so run `sb`, configure the node, and the panel enables and starts the service.
 
 ### dpkg
 
@@ -218,6 +219,7 @@ upgrade` always have a fixed address to work from. Two repository secrets drive 
 | Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (the sing-box or mihomo subscription template, or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and one share link per selected node in the panel |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
+| Web panel | A native React + Arco Design React Web management panel as an optional service: the same binary in `easysb panel` mode under its own systemd unit, calling the same domain packages as the TUI (no second copy of the node/account data). Manage nodes, accounts, subscriptions, certificates, the core, host status and service logs from a browser, with a Chinese/English switch and a light/dark theme; install, start / stop / restart, check status and uninstall it from the TUI or its Settings page (the panel upgrades with the EasySB package). Uninstalling removes only the panel unit |
 | BBR acceleration | Shows the running kernel, congestion control, queue discipline and installed kernels; enabling BBR loads `tcp_bbr`, writes `net.core.default_qdisc` and `net.ipv4.tcp_congestion_control` and persists them in `/etc/sysctl.d/99-easysb-bbr.conf` and `/etc/modules-load.d/easysb-bbr.conf` so the choice survives a reboot; installs a prebuilt BBRv3 kernel published by [Linux-BBR-v3](https://github.com/MinimaxFlora/Linux-BBR-v3) (standard or Max, x86_64 and arm64, downloaded straight from the release), or lists every published version to pick one from; the kernel and its settings can be removed from the panel again. Versions come from the kernel project itself — its version stamp and release list — so a kernel published there shows up here without a release of this panel |
 | Self-update | Checks the published version against the one compiled into the panel and upgrades the `easysb` package through apt, then asks for a restart |
 | Bilingual | Language picked on first screen, consistent Chinese and English throughout |
@@ -227,13 +229,14 @@ upgrade` always have a fixed address to work from. Two repository secrets drive 
 ## Interactive Menu
 
 ```text
-Main menu (one card, two columns, ten entries)
+Main menu (one card, two columns, eleven entries)
 ├── Service unlock      Check what this IP can use: streaming, AI, game stores, mainland-China and Taiwan catalogues
 ├── Node management      Add, edit, enable / disable, set the port and protocol parameters, and delete a node (deleting one with accounts assigned warns how many are affected)
 ├── Domain management    Issue (with preflight checks), renew now, renewal timer, list, switch active and remove certificates
 ├── Subscription         One account's URL, QR code and share links (pick the account first, then the panel prints the endpoint prefix); install / restart / status of the subscription service
 ├── Accounts             List, create, rename, remark, quota, expiry, node selection, enable / disable, usage reset, token rotation, delete
 ├── Service management   Start, stop, restart, status, enable / disable and port-hopping rules
+├── Web panel            Install, upgrade, start / stop / restart, check status and remove the Web management panel service
 ├── System info          Runtime, and the one place the look changes from inside the interface: skin / palette / markers / language, terminal and host details
 ├── BBR                  Status (kernel, congestion control, queue discipline, installed kernels), enable BBR with fq / fq_codel / fq_pie / cake, install the standard or Max BBRv3 kernel, pick any published version from a list, remove it, clear the settings
 ├── Update version       Pull the latest EasySB release
@@ -241,6 +244,21 @@ Main menu (one card, two columns, ten entries)
 ```
 
 Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, nodes `/etc/sing-box/easysb-nodes.json`, accounts `/etc/sing-box/easysb-users.json`, shortcut `/usr/bin/sb`.
+
+---
+
+## Web Panel
+
+EasySB ships a native Web management panel as an optional service. It is the same binary in a different mode (`easysb panel`) under its own systemd unit `easysb-panel.service`, so a panel failure never stops the node or the subscription service, and there is no second copy of the node and account data.
+
+- Install it from the TUI's **Web panel** entry or from the panel's own Settings page; both call the same functions.
+- Default listen `0.0.0.0:2095`, default admin user `admin`. The first run generates an admin password and writes it to the panel log; change it from Settings after the first login.
+- It covers the same ground as the TUI: nodes, accounts, subscriptions, certificates, the core, service status, host info and service logs. The toolbox and BBR stay in the TUI for now and are not shown as fake pages.
+- Every change goes through the same write path as the TUI (`deploy.ApplyStore`), so the panel and the TUI can never drift.
+- The panel upgrades with the EasySB package (`apt upgrade easysb`); the Settings page installs, starts / stops / restarts and uninstalls the panel unit.
+- The panel is optional and uninstalling it removes only the panel unit; nodes, accounts, certificates, `config.json` and the subscription service stay exactly as they were.
+
+Details: `docs/panel-architecture.md`, `docs/panel-api.md`, `docs/panel-installation.md`, `docs/panel-troubleshooting.md`.
 
 ---
 
@@ -259,7 +277,7 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | `--render --width N --height N` | Render the dashboard once and exit (debug; add `--screen system` to draw a subpage) |
 | `--serve` | Run the subscription service and the usage accounting loop (backs `easysb.service`) |
 | `--provision FILE` | Deploy from a JSON manifest and exit, without the menu (`-` reads the manifest from stdin) |
-| `--print-unit node\|sub` | Print a service unit body to stdout; the `.deb` is assembled from this exact text |
+| `--print-unit node\|sub\|panel` | Print a service unit body to stdout; the `.deb` is assembled from this exact text |
 | `--unit-exec PATH` | Executable path `--print-unit` writes into the unit (default `/usr/bin/easysb`) |
 | `--version` | Print the version and build hash |
 | `--help` | Print usage |

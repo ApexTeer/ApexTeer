@@ -21,11 +21,18 @@ Read `docs/` first, then the package you need:
 
 ```bash
 make            # build ./easysb with the tags from release/TAGS
+make panel      # fetch the EasySB-Panel release bundle into public/dist
 make check      # gofmt -l + go vet + go test, the pre-commit gate
 make dist       # cross-compile every release architecture into dist/
 make deb        # package the dist/ binaries into .deb files with fpm (UPX-compressed)
 make repo       # lay the .deb files out as a signed apt tree in dist/repo
 ```
+
+The Web panel front end is built by GitHub Actions in the separate `EasySB-Panel`
+repository and published as a release asset; `make panel` downloads it into
+`public/dist`, where `//go:embed all:dist` in `public/public.go` picks it up. The built
+SPA is never committed, and `public/dist/README.md` and the placeholder
+`public/dist/index.html` are the only tracked files there.
 
 `make help` lists every target. The bare Go commands still work; `make build` only
 adds `-trimpath`, the tags from `release/TAGS` and the commit stamp.
@@ -47,7 +54,7 @@ make screens    # render every screen and assert the layout (python3)
   (the two the BBR kernels cover), the only platform is Debian and Ubuntu, and the
   only package is the `.deb`. The arch names come from the Makefile's `ARCHES` /
   `DEBARCH_MAP`, and the packaged systemd units are printed by the binary
-  (`easysb --print-unit node|sub`) rather than copied into `packaging/`. A
+  (`easysb --print-unit node|sub|panel`) rather than copied into `packaging/`. A
   hand-written unit or a second arch list in the workflow drifts. The `.deb` comes
   from one staged tree (`make pkg-stage`, driven per architecture by `make
   packages-asset`), and `pkg-stage` UPX-compresses the binary there, so the release

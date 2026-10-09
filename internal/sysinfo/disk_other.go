@@ -9,3 +9,9 @@ package sysinfo
 func diskUsage(string) (uint64, uint64) {
 	return 0, 0
 }
+
+// DiskTotals has no portable implementation; see diskUsage. The panel reports
+// zero disk IO on a non-Linux development host.
+func DiskTotals() (uint64, uint64) {
+	return 0, 0
+}

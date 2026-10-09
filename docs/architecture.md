@@ -46,6 +46,9 @@ each pair in sync when editing.
 | `/etc/sing-box/easysb-nodes.json` | `internal/node` | nodes: one protocol inbound each (id, name, protocol, port, parameters, enabled) (`0600`) |
 | `/etc/systemd/system/easysb.service` | `internal/service` | subscription service unit (`easysb --serve`) |
 | `/etc/systemd/system/sing-box.service` | `internal/service` | core service unit |
+| `/etc/sing-box/easysb-panel.conf` | `internal/panel` | the Web panel's own settings (listen address, port, admin bcrypt hash), `0600`; separate from `easysb.conf` so the legacy KV stays compatible |
+| `/etc/systemd/system/easysb-panel.service` | `internal/panel` | Web panel service unit (`easysb panel`), independent of the core and the subscription service |
+| `/usr/share/easysb/panel` | `internal/panel` | optional on-disk front-end bundle; the copy embedded in the binary is the fallback |
 | `/etc/sing-box/acme/` | `internal/cert` | ACME state, overridable with `EASYSB_ACME_DIR`: `account.key` and `account.json` (`0600`), then one directory per domain holding `fullchain.cer` (`0644`) and `private.key` (`0600`) |
 | `/etc/sysctl.d/99-easysb-bbr.conf`, `/etc/modules-load.d/easysb-bbr.conf` | `internal/bbr` | BBR settings EasySB writes itself, so they never collide with the kernel project's own drop-in; the sysctl file carries a comment recording the values it replaced, which is what the clear action restores. The installed kernel packages (`minimaxflora-bbrv3`) belong to dpkg and are removed through apt |
 | `/etc/sing-box/easysb-ui.conf` | `internal/prefs` | interface choices (skin, palette, marker set, language), `0644`, overridable with `EASYSB_UI_CONF` |
@@ -103,6 +106,7 @@ serves every distribution, so there is no `dists/` split and no `pool/`.
 | `internal/bbr` | BBR: read the running kernel's congestion control state, enable it through sysctl drop-ins (recording what they replaced so clearing can undo them), and install the prebuilt BBRv3 kernels published by Linux-BBR-v3 (release/tag discovery, mirror fallback, dpkg) |
 | `internal/user` | account model and store: per-node credentials, node selection, quota/expiry evaluation, subscription tokens |
 | `internal/subd` | subscription HTTP service: TLS, User-Agent negotiation, response headers, accounting loop |
+| `internal/panel` | the native Web management panel: an HTTP API under `/api/v1` and the embedded React front end. It is a mode of the same binary (`easysb panel`) under its own unit, and calls the same domain packages as the TUI — it is not a second implementation of the business logic |
 | `internal/stats` | gRPC client for the core's `StatsService`, usage accounting, quota enforcement |
 | `internal/subscribe` | subscription URLs, per-node share links, QR payloads, and the sing-box JSON, mihomo YAML and v2rayN base64 documents for one account |
 | `internal/secret` | random UUID / password / Reality keypair generation |
@@ -190,11 +194,14 @@ graph TD
     A --> G["--version: print version line"]
     A --> H["--serve: subd.Options.Run (HTTP + accounting)"]
     A --> I["--unlock: unlock report on stdout"]
+    A --> J["panel: panel.Run (Web management API + SPA)"]
 ```
 
-`core` is the only subcommand: `core run -c <config>` is the node the service
-unit starts, `core check` validates a configuration with the same engine, and
-`core version` prints the sing-box release this binary carries.
+There are two subcommands. `core run -c <config>` is the node the service unit
+starts, `core check` validates a configuration with the same engine, and
+`core version` prints the sing-box release this binary carries. `panel` is the Web
+management panel (see `docs/panel-architecture.md`); it runs under its own unit and
+is independent of the node and the subscription service.
 
 Before either the panel or the service starts, `main.go` runs the one-time store
 migrations (`node.Migrate`, then `user.MigrateV2`): a legacy deployment's enabled

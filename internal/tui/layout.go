@@ -58,7 +58,7 @@ const menuSlotCells = 7
 // having the same two boxes.
 func (a *App) menuSlotRows(w int) int {
 	cells := menuSlotCells
-	// On a narrow terminal the main menu is one column too, and it has ten entries: the box
+	// On a narrow terminal the main menu is one column too, and it has more entries than the
 	// follows whichever of the two needs more rows.
 	if colW := (ui.InnerWidth(a.style(), w) - 1) / 2; colW < 16 {
 		cells = maxInt(cells, len(a.stack[0].nodes))
