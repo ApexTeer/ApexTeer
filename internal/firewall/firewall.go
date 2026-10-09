@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/service"
 	"github.com/EasySBTeam/EasySB/internal/state"
@@ -285,7 +286,9 @@ ExecStart=%s --apply-firewall
 [Install]
 WantedBy=multi-user.target
 `, exe)
-	if err := os.WriteFile(systemdUnitPath, []byte(unit), 0o644); err != nil {
+	// Atomic: the port-hopping rules are applied by this unit at boot, so a unit left
+	// truncated by a crash would silently drop the hop rules.
+	if err := atomicfile.Write(systemdUnitPath, []byte(unit), 0o644); err != nil {
 		return err
 	}
 	return service.DaemonReload()

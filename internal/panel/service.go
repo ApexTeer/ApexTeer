@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/service"
 )
 
@@ -38,15 +39,16 @@ WantedBy=multi-user.target
 var daemonReload = service.DaemonReload
 
 // WriteUnit installs the panel service unit pointing at the installed binary.
+//
+// The write is atomic: a unit truncated by a crash would leave the panel unable to
+// start until it was rewritten, and the rename means the init system never reads a
+// partial file. atomicfile creates the parent directory, so no MkdirAll is needed.
 func WriteUnit() error {
 	exe, err := service.PanelExecutable()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll("/etc/systemd/system", 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(UnitPath, []byte(UnitBody(exe)), 0o644); err != nil {
+	if err := atomicfile.Write(UnitPath, []byte(UnitBody(exe)), 0o644); err != nil {
 		return err
 	}
 	return daemonReload()

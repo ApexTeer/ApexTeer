@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
@@ -124,8 +125,13 @@ func WriteUnit() error {
 }
 
 // writeNodeUnit renders the node unit for one executable and writes it.
+//
+// The write goes through atomicfile: a unit is what the init system starts from, and a
+// crash mid-write used to be able to leave it truncated, so the node would not come
+// back after a reboot until someone rewrote it. The rename means a reader sees either
+// the previous unit or the new one, never a partial file.
 func writeNodeUnit(path, exe string) error {
-	if err := os.WriteFile(path, []byte(UnitBody(exe)), 0o644); err != nil {
+	if err := atomicfile.Write(path, []byte(UnitBody(exe)), 0o644); err != nil {
 		return err
 	}
 	return DaemonReload()

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/service"
 )
 
@@ -57,10 +58,10 @@ func InstallTimer(ctx context.Context, log func(string)) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(systemdServicePath, []byte(fmt.Sprintf(renewServiceUnit, exe)), 0o644); err != nil {
+	if err := atomicfile.Write(systemdServicePath, []byte(fmt.Sprintf(renewServiceUnit, exe)), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(systemdTimerPath, []byte(renewTimerUnit), 0o644); err != nil {
+	if err := atomicfile.Write(systemdTimerPath, []byte(renewTimerUnit), 0o644); err != nil {
 		return err
 	}
 	if err := service.DaemonReload(); err != nil {

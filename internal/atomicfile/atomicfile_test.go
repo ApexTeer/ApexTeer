@@ -110,14 +110,44 @@ func TestWriteLeavesNoTemporaryBehind(t *testing.T) {
 	}
 }
 
-func TestWriteReportsAMissingDirectoryRatherThanCreatingIt(t *testing.T) {
-	// The parent directory is deliberately the caller's: the state files live under
-	// /etc/sing-box at 0755, a per-domain certificate directory at 0700, and one
-	// shared mode here would be wrong for one of them. A missing directory must be
-	// reported, not silently created with the wrong mode.
+// TestWriteCreatesAMissingParentDirectory matches the call the writers replaced:
+// os.WriteFile fails when the parent is absent and its callers create it first, so a
+// replacement that cannot create it would regress the systemd unit writers and the
+// BBR sysctl drop-ins, whose directory can legitimately be missing on a host that has
+// not had the service installed.
+func TestWriteCreatesAMissingParentDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "absent", "state.json")
-	if err := Write(path, []byte("x"), 0o600); err == nil {
-		t.Fatal("Write created its own parent directory")
+	if err := Write(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("Write into a missing directory: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "x" {
+		t.Fatalf("content = %q, err = %v", got, err)
+	}
+}
+
+// TestWriteLeavesAnExistingDirectoryModeAlone is the concern the previous version of
+// this file pinned, kept because it is a real one: the state files live under
+// /etc/sing-box at 0755 while a per-domain certificate directory is 0700, and the
+// writer must not widen either. What matters is not that the writer refuses to create
+// the directory but that it never re-modes one that already exists.
+func TestWriteLeavesAnExistingDirectoryModeAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix permission bits")
+	}
+	dir := filepath.Join(t.TempDir(), "acme", "example.com")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Write(filepath.Join(dir, "private.key"), []byte("k"), 0o600); err != nil {
+		t.Fatalf("Write into a 0700 directory: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("directory mode = %04o, want 0700: a certificate directory must stay private", got)
 	}
 }
 

@@ -23,7 +23,9 @@ import (
 	"time"
 )
 
-// Write installs data at path with the given mode. See WriteKeepingBackup.
+// Write installs data at path with the given mode, creating the parent directory
+// (0755) when it is missing and leaving an existing one's mode alone. See
+// WriteKeepingBackup for why the write is done this way.
 func Write(path string, data []byte, mode fs.FileMode) error {
 	return write(path, data, mode, false)
 }
@@ -56,6 +58,16 @@ func write(path string, data []byte, mode fs.FileMode, backup bool) error {
 		return fs.ErrInvalid
 	}
 	dir := filepath.Dir(path)
+	// The parent is created the way os.WriteFile's callers have always expected: this
+	// replaced that call in several places (the systemd unit writers, the BBR sysctl
+	// drop-ins) where the directory can legitimately be missing on a host that has not
+	// had the service installed before. Without this the temporary file cannot even be
+	// created, so the failure would be a regression rather than a missing convenience.
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
 	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err

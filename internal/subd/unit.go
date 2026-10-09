@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/service"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
@@ -35,7 +36,9 @@ func WriteUnit() error {
 var daemonReload = service.DaemonReload
 
 func writeUnit(path, exe string) error {
-	if err := os.WriteFile(path, []byte(UnitBody(exe)), 0o644); err != nil {
+	// Atomic: a half-written subscription unit would keep the endpoint from starting
+	// after a reboot, and the rename means systemd only ever reads a complete file.
+	if err := atomicfile.Write(path, []byte(UnitBody(exe)), 0o644); err != nil {
 		return err
 	}
 	return daemonReload()
