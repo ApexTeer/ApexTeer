@@ -1,8 +1,8 @@
 // Command easysb is the panel. One binary is four things: the TUI, which is what it does
 // with no arguments; the node itself (`easysb core run`, which the sing-box service unit
 // starts); the subscription service (`easysb --serve`); and a set of one-shot modes -
-// `--render`, `--tool`, `--unlock`, `--renew-certs`, `--apply-firewall`, `--print-unit` -
-// that exist so a host driven by a script needs no terminal at all.
+// `--render`, `--tool`, `--unlock`, `--renew-certs`, `--apply-firewall`, `--print-unit`,
+// `--provision` - that exist so a host driven by a script needs no terminal at all.
 package main
 
 import (
@@ -10,6 +10,7 @@ import (
 	_ "embed"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/EasySBTeam/EasySB/internal/i18n"
 	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/prefs"
+	"github.com/EasySBTeam/EasySB/internal/provision"
 	"github.com/EasySBTeam/EasySB/internal/sbcore"
 	"github.com/EasySBTeam/EasySB/internal/service"
 	"github.com/EasySBTeam/EasySB/internal/state"
@@ -83,6 +85,7 @@ func main() {
 	installTimer := flag.Bool("install-renew-timer", false, "安装证书续期定时器 / install the certificate renewal timer")
 	removeTimer := flag.Bool("remove-renew-timer", false, "移除证书续期定时器 / remove the certificate renewal timer")
 	serve := flag.Bool("serve", false, "运行订阅服务 / run the subscription service")
+	provisionFile := flag.String("provision", "", "按部署清单部署并退出，传 '-' 从标准输入读取 / deploy from a manifest and exit, '-' reads stdin")
 	unlockCheck := flag.Bool("unlock", false, "一次跑完 17 项解锁检测并输出报告（同工具箱的三个解锁条目）/ run all seventeen unlock checks in one report (the same three entries as the toolbox)")
 	toolFlag := flag.String("tool", "", "工具箱的某一项，list 列出全部 / one toolbox entry, or list")
 	width := flag.Int("width", 100, "渲染宽度 / render width")
@@ -126,6 +129,12 @@ func main() {
 	if *serve {
 		migrateStores()
 		runSubscribeService()
+		return
+	}
+
+	if *provisionFile != "" {
+		migrateStores()
+		runProvision(*provisionFile)
 		return
 	}
 
@@ -491,6 +500,50 @@ func runRenewTimer(install bool) {
 	if err := cert.RemoveTimer(ctx, log); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// runProvision deploys a host from a manifest, printing each step and a summary
+// of what was produced. It is the headless counterpart of the panel's node,
+// domain and account screens, meant for a script (or a deploy skill) that has a
+// document of the desired state and no terminal.
+func runProvision(path string) {
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "provision: "+err.Error())
+		os.Exit(1)
+	}
+	spec, err := provision.Parse(data)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "provision: "+err.Error())
+		os.Exit(1)
+	}
+	opt := provision.Default()
+	opt.Log = func(line string) { fmt.Println(line) }
+	res, err := provision.Run(context.Background(), spec, opt)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "provision: "+err.Error())
+		os.Exit(1)
+	}
+	printProvisionResult(res)
+}
+
+// printProvisionResult writes the subscription URL of every account, which is
+// what an operator needs to hand a client, plus the nodes that back them.
+func printProvisionResult(res *provision.Result) {
+	fmt.Println()
+	fmt.Printf("deployed %d node(s), %d account(s)\n", len(res.Nodes), len(res.Accounts))
+	for _, n := range res.Nodes {
+		fmt.Printf("  node  %-18s %-14s :%d\n", n.Name, n.Protocol, n.Port)
+	}
+	for _, a := range res.Accounts {
+		fmt.Printf("  user  %-18s %s\n", a.Name, a.URL)
 	}
 }
 

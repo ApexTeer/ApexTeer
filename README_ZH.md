@@ -241,10 +241,41 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 | `--remove-renew-timer` | 移除证书续期定时器 |
 | `--render --width N --height N` | 渲染一次仪表盘后退出（调试用；加 `--screen system` 可渲染子页面） |
 | `--serve` | 运行订阅服务与流量统计循环（`easysb.service` 使用该模式） |
+| `--provision FILE` | 按 JSON 部署清单部署后退出，不进入菜单（`-` 表示从标准输入读取清单） |
 | `--print-unit node\|sub` | 把服务单元文本输出到标准输出，发布时打 `.deb` 用的就是这段文本 |
 | `--unit-exec PATH` | `--print-unit` 写入单元的可执行文件路径（默认 `/usr/bin/easysb`） |
 | `--version` | 显示版本与构建短哈希 |
 | `--help` | 显示用法 |
+
+### 无终端部署
+
+`--provision` 用一份清单代替菜单来部署主机，脚本因此在没有终端的情况下也能完成安装与配置：写入证书、节点存储、账户存储、渲染好的内核配置与服务单元，随后启动服务，最后打印每个账户的订阅地址。
+
+```json
+{
+  "domain": "sb.example.com",
+  "email": "ops@example.com",
+  "server_ip": "203.0.113.10",
+  "sub_port": 8443,
+  "nodes": [
+    { "protocol": "vless-reality" },
+    { "protocol": "hysteria2", "port": 8001, "hop_range": "2080:3000" },
+    { "protocol": "tuic" }
+  ],
+  "accounts": [
+    { "name": "alice", "quota_gb": 100, "expire_days": 30 },
+    { "name": "bob", "nodes": ["anytls"], "password": "a-shared-secret" }
+  ]
+}
+```
+
+```bash
+sudo sb --provision deploy.json
+```
+
+`nodes` 缺省时使用全部协议的默认端口，`name` 缺省时用协议标签。`accounts[].nodes` 按协议键或节点名匹配，缺省时为全部节点；`quota_gb` 为 0 表示不限量，`expire_days` 为 0 表示不过期；`password` 与 `uuid` 会写入使用该字段的协议。清单描述的是目标状态：重复执行会复用已有的节点，并保留每个账户的订阅令牌与凭据，因此已导入的客户端订阅地址不会改变。未识别的字段会被拒绝而不是忽略。
+
+完整示例见 `docs/provision.example.json`。
 
 ---
 

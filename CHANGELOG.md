@@ -15,6 +15,7 @@
 
 ### 新增
 
+- **无终端部署模式 `sb --provision FILE`**：新增 `internal/provision` 包与 `--provision` 命令行入口，把面板里的节点、证书、账户三步收敛成一份 JSON 清单一次执行——签发证书、写入节点与账户存储、渲染内核配置、生成并启用服务单元，最后打印每个账户的订阅地址。清单描述目标状态而非一次性脚本：重复执行按名称或协议+端口复用已有节点，并保留每个账户的订阅令牌与凭据，客户端已导入的订阅地址不会因重跑而变化；`nodes` 缺省为全部协议的默认端口，`accounts[].nodes` 按协议键或节点名匹配，`password`/`uuid` 只写入使用该字段的协议，未识别的字段直接报错。`--provision -` 从标准输入读取，供 `install.sh` 与部署 skill 无人值守调用。
 - **平台收敛为 Debian / Ubuntu，架构收敛为 amd64 / arm64**：只保留 `.deb` 一种包，`release/TAGS`、`VERSION` 与 `Makefile` 的架构表（`ARCHES` / `DEBARCH_MAP`）同步收敛，删除 rpm / pacman / armhf / i386 / riscv64 / s390x 的全部定义。
 - **软件源改为附在 GitHub Release 上的扁平 apt 仓库**：`make repo` 把 `.deb` 摆进 `dist/repo` 一层目录，`packaging/repo/index.sh` 用 `apt-ftparchive` 生成 `Packages(.gz)`、`Release` 并签名出 `InRelease` / `Release.gpg`，`Filename` 剥掉 `./` 前缀以匹配 release 资产的裸文件名；公钥 `easysb-archive-keyring.asc`、`install.sh` 与索引同处一层。发布工作流把 `dist/repo/*` 作为资产附到 release，源地址固定为 `https://github.com/EasySBTeam/EasySB/releases/latest/download`（只保留最新 release，`latest` 始终可用）。一份包服务所有受支持的 Debian / Ubuntu 发行版，因此没有 `dists/<suite>` 分层。
 - **UPX 压缩进入打包主流程**：`make pkg-stage` 在暂存树里对二进制做 UPX 压缩，release 资产与软件源因此是同一批字节，二者不再可能有差异。

@@ -258,10 +258,41 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | `--remove-renew-timer` | Remove the renewal timer |
 | `--render --width N --height N` | Render the dashboard once and exit (debug; add `--screen system` to draw a subpage) |
 | `--serve` | Run the subscription service and the usage accounting loop (backs `easysb.service`) |
+| `--provision FILE` | Deploy from a JSON manifest and exit, without the menu (`-` reads the manifest from stdin) |
 | `--print-unit node\|sub` | Print a service unit body to stdout; the `.deb` is assembled from this exact text |
 | `--unit-exec PATH` | Executable path `--print-unit` writes into the unit (default `/usr/bin/easysb`) |
 | `--version` | Print the version and build hash |
 | `--help` | Print usage |
+
+### Headless Provisioning
+
+`--provision` deploys a host from a manifest instead of the menu, so a script can install and configure a machine with no terminal. It writes the certificate, the node store, the account store, the rendered core config and the service units, then starts the services, and prints each account's subscription URL.
+
+```json
+{
+  "domain": "sb.example.com",
+  "email": "ops@example.com",
+  "server_ip": "203.0.113.10",
+  "sub_port": 8443,
+  "nodes": [
+    { "protocol": "vless-reality" },
+    { "protocol": "hysteria2", "port": 8001, "hop_range": "2080:3000" },
+    { "protocol": "tuic" }
+  ],
+  "accounts": [
+    { "name": "alice", "quota_gb": 100, "expire_days": 30 },
+    { "name": "bob", "nodes": ["anytls"], "password": "a-shared-secret" }
+  ]
+}
+```
+
+```bash
+sudo sb --provision deploy.json
+```
+
+`nodes` defaults to every protocol at its default port; `name` defaults to the protocol's label. `accounts[].nodes` matches a node by protocol key or node name and defaults to every node; `quota_gb` 0 is unlimited and `expire_days` 0 never expires. `password` and `uuid` are applied to the protocols that use them. The manifest is a desired state: re-running it reuses the nodes it already finds and keeps each account's token and credentials, so a subscription URL never changes under a client that already imported it. Unknown keys are rejected rather than ignored.
+
+The full example lives at `docs/provision.example.json`.
 
 ---
 
