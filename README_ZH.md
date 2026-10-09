@@ -44,7 +44,7 @@
 EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议部署、证书申请、服务解锁检测、订阅生成统一到一套交互式菜单里。
 
 - **Go 版（当前主实现）**：根目录 Go module，基于 bubbletea / bubbles / lipgloss 的深色仪表盘 TUI，编译为单一静态二进制并以 `sb` 呼出。
-- **模板**：`templates/` 存放五个协议的 JSONC 配置样例与订阅模板，既可以只用模板，也可以交给程序自动落地。
+- **模板**：独立的 [EasySB-Examples](https://github.com/EasySBTeam/EasySB-Examples) 仓库存放五个协议的 JSONC 配置样例与订阅模板，既可以只用模板，也可以交给程序自动落地。
 - **内核**：sing-box **已编译进面板本体**——`github.com/sagernet/sing-box` 是 `go.mod` 的直接依赖，装上面板就有内核，节点就是 `easysb core run`；没有任何内核二进制要下载、替换或切换，账号流量统计也随构建一起带上（`with_v2ray_api`，见 `release/TAGS`）。
 - **证书**：用 `go-acme/lego` 在面板自己的进程里申请 Let's Encrypt 证书，不再下载 acme.sh，也不需要 socat。
 
@@ -67,21 +67,12 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 ├── AGENTS.md                     # 面向 AI Agent 与协作者的说明
 ├── go.mod                        # Go module 定义
 ├── internal/                     # Go 实现，包职责见 docs/architecture.md
-├── templates/                    # 订阅与协议配置模板
-│   ├── config/
-│   │   ├── tun-fakeip.json       # sing-box TUN + FakeIP 订阅模板
-│   │   └── mihomo.yaml           # mihomo / Clash Meta 配置（可读镜像）
-│   ├── anytls/                   # AnyTLS 协议客户端 / 服务端样例
-│   ├── hysteria2/                # Hysteria2 协议客户端 / 服务端样例
-│   ├── tuic/                     # TUIC 协议客户端 / 服务端样例
-│   ├── vmess-websocket-tls/      # VMess + WebSocket + TLS 样例
-│   └── vless-vision-reality/     # VLESS + Vision + Reality 样例
 ├── assets/                       # README 横幅
 ├── docs/                         # 面向 Agent 与协作者的工程文档
 └── .github/                      # CI 工作流与社区健康文件
 ```
 
-`templates/` 下的协议样例为可直接阅读的 JSONC，去注释后即可作为 sing-box 服务端 / 客户端配置使用。
+[EasySB-Examples](https://github.com/EasySBTeam/EasySB-Examples) 中的协议样例为可直接阅读的 JSONC，去注释后即可作为 sing-box 服务端 / 客户端配置使用。
 
 ---
 
@@ -207,7 +198,7 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 | 系统信息 | 查看面板运行环境，并能在界面内直接换外观：`↑`/`↓` 加 `Enter` 或 `A`-`D` 选皮肤，`T` 切深浅配色，`I` 在 Unicode 符号与纯 ASCII 之间切换。改完下一帧就生效（主题从此不再跟随终端），字形预览一行可以在其他卡片出问题前先看出终端字体能不能显示这些字形；切换时顶部状态条与底部按键提示保持不动，只有正文换掉 |
 | 复制链接 | 订阅与分享链接以卡片网格呈现在与主菜单同尺寸的固定面板里；订阅卡片显示订阅名（sing-box / mihomo / Base64 订阅）与格式说明，分享链接卡片显示协议名，均不显示主机或完整 URL。`↑`/`↓`/`←`/`→`（或数字键）选择，`Enter` 复制当前项，`C` 复制全部，`Q` 退出程序，`Esc` 返回；复制成功的卡片变成成功色，复制全部在页头提示。窗口变窄变矮时网格自动减少列数并截断内容，面板不溢出。日志页 `C` 复制日志（OSC52） |
 | 证书管理 | 内置 lego 走 HTTP-01 standalone 直接申请 Let's Encrypt 证书：申请、查看、切换激活、删除；申请前先检查域名解析，申请时先停内核腾出 80 端口，全程无需下载任何脚本或额外监听工具。续期按到期时间判断（提前 30 天），由面板自己的 systemd timer 驱动，续期后自动重载 sing-box 与订阅服务 |
-| 订阅生成 | 每个账号一个订阅地址（`/sub/<令牌>`），由内置订阅服务按客户端自动选择格式（`templates/config/tun-fakeip.json`、`templates/config/mihomo.yaml` 或 Base64 分享链接），并通过 `Subscription-Userinfo` 上报用量；面板提供二维码与每个已勾选节点一条分享链接 |
+| 订阅生成 | 每个账号一个订阅地址（`/sub/<令牌>`），由内置订阅服务按客户端自动选择格式（内置 sing-box 或 mihomo 订阅模板，或 Base64 分享链接），并通过 `Subscription-Userinfo` 上报用量；面板提供二维码与每个已勾选节点一条分享链接 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
 | 服务管理 | 启动、停止、重启、查看状态与开机自启 |
 | BBR 加速 | 查看运行内核、拥塞算法、队列算法与已装内核；启用 BBR（加载 `tcp_bbr`、写 `net.core.default_qdisc` 与 `net.ipv4.tcp_congestion_control`，并落盘到 `/etc/sysctl.d/99-easysb-bbr.conf`、`/etc/modules-load.d/easysb-bbr.conf`，重启后仍生效）；安装 [Linux-BBR-v3](https://github.com/MinimaxFlora/Linux-BBR-v3) 发布的预编译 BBRv3 内核（标准版 / Max 版，x86_64 与 arm64，直接从 GitHub release 下载），也可以从版本列表里挑任意一个已发布版本安装；卸载内核、清空配置都能在面板里完成。版本号全部来自内核项目本身（`version.ini` 与 release 列表），对面发了新内核，这里打开列表就能看到，不需要面板再发版 |
@@ -259,27 +250,29 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 
 ## 配置模板
 
+样例位于独立的 [EasySB-Examples](https://github.com/EasySBTeam/EasySB-Examples) 仓库，每个协议一个目录。
+
 | 目录 | 协议 | 承载层 | 伪装 / 加密 | 关键能力 |
 | :--- | :--- | :--- | :--- | :--- |
-| `templates/anytls/` | AnyTLS | TCP | 证书 TLS | Padding Scheme 多阶段填充 |
-| `templates/hysteria2/` | Hysteria 2 | QUIC / UDP | TLS（ALPN `h3`） | 端口跳跃、弱网表现优秀 |
-| `templates/tuic/` | TUIC | QUIC / UDP | TLS（ALPN `h3`） | 0-RTT 握手、`native` UDP 转发 |
-| `templates/vmess-websocket-tls/` | VMess | WebSocket over TLS | 证书 TLS | 可穿 CDN、Early Data |
-| `templates/vless-vision-reality/` | VLESS + Vision | TCP | REALITY（免证书） | `xtls-rprx-vision`、抗主动探测 |
-| `templates/config/tun-fakeip.json` | TUN + FakeIP | 系统全局 | — | 规则分流、DNS 拆分、URLTest 自动测速 |
-| `templates/config/mihomo.yaml` | mihomo / Clash Meta | 系统全局 | — | 完整客户端配置：节点、策略组、DNS、规则 |
+| `Hysteria2/` | Hysteria 2 | QUIC / UDP | TLS（ALPN `h3`） | 端口跳跃、弱网表现优秀 |
+| `VLESS-Vision-REALITY/` | VLESS + Vision | TCP | REALITY（免证书） | `xtls-rprx-vision`、抗主动探测 |
+| `TUIC/` | TUIC | QUIC / UDP | TLS（ALPN `h3`） | 0-RTT 握手、`native` UDP 转发 |
+| `AnyTLS/` | AnyTLS | TCP | 证书 TLS | Padding Scheme 多阶段填充 |
+| `VMess-WebSocket-TLS/` | VMess | WebSocket over TLS | 证书 TLS | 可穿 CDN、Early Data |
+| `Config/tun-fakeip.json` | TUN + FakeIP | 系统全局 | — | 规则分流、DNS 拆分、URLTest 自动测速 |
+| `Config/mihomo.yaml` | mihomo / Clash Meta | 系统全局 | — | 完整客户端配置：节点、策略组、DNS、规则 |
 
 模板中的 UUID、密码、REALITY 私钥与证书路径全部是示例值，部署前必须替换，且服务端与客户端保持一致。可先用内核校验语法：
 
 ```bash
-sing-box check -c templates/vless-vision-reality/config_server.json
+sing-box check -c VLESS-Vision-REALITY/config_server.json
 ```
 
 ---
 
 ## 订阅
 
-每个账号只有一个订阅地址，其文档分别基于 `templates/config/tun-fakeip.json`（sing-box）与 `templates/config/mihomo.yaml`（mihomo / Clash Meta）渲染，其余客户端使用 Base64 分享链接文档。交付方式：
+每个账号只有一个订阅地址，其文档基于内置的 sing-box 订阅模板（TUN + FakeIP）或 mihomo / Clash Meta 配置渲染，其余客户端使用 Base64 分享链接文档。交付方式：
 
 1. 内置订阅服务（面板中的「安装订阅服务」写入 `easysb.service`，以 `easysb --serve` 运行）在 `SUB_SERVE_PORT`（默认 `8443`）上响应 `/sub/<令牌>`。
 2. 各客户端格式的终端二维码，安装 `qrencode` 后可直接扫码导入。

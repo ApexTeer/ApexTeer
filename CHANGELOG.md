@@ -8,6 +8,10 @@
 
 本版把发布范围收敛为 Debian / Ubuntu，发布通道整体改由 GitHub Release 承载。
 
+### 变更
+
+- **协议样例与订阅模板迁移到独立仓库**：根目录的 `templates/` 整体移到 [EasySB-Examples](https://github.com/EasySBTeam/EasySB-Examples)，目录名改为协议显示名（`Hysteria2`、`VLESS-Vision-REALITY`、`TUIC`、`AnyTLS`、`VMess-WebSocket-TLS`、`Config`）。运行期内嵌模板（`internal/subscribe/tun-fakeip.json`、`internal/subscribe/mihomo.yaml`）位置不变，`Config/` 仍是它们的可读镜像，需成对同步；`README.md` / `README_ZH.md`、`docs/`、`AGENTS.md`、`.github/` 与 `SECURITY.md` 中的相关引用一并改为指向新仓库。
+
 ### 新增
 
 - **平台收敛为 Debian / Ubuntu，架构收敛为 amd64 / arm64**：只保留 `.deb` 一种包，`release/TAGS`、`VERSION` 与 `Makefile` 的架构表（`ARCHES` / `DEBARCH_MAP`）同步收敛，删除 rpm / pacman / armhf / i386 / riscv64 / s390x 的全部定义。

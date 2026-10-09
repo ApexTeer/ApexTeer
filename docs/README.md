@@ -22,8 +22,9 @@ EasySB is a single static Go binary that deploys and operates a five-protocol
 sing-box server on Linux. It replaces the legacy bash implementation with a
 full-screen bubbletea TUI. Persistent state lives in
 `/etc/sing-box/easysb.conf`, accounts live in
-`/etc/sing-box/easysb-users.json`, readable config samples live under
-`templates/`, and releases are published by cross-compiling in GitHub Actions
+`/etc/sing-box/easysb-users.json`, readable config samples live in the separate
+EasySB-Examples repository, and releases are published by cross-compiling in
+GitHub Actions
 under the tag `v<VERSION>`. The binaries are wrapped into `.deb` packages and laid
 out as a signed, flat apt repository by `make repo`, then attached to the release,
 so the source has the fixed address

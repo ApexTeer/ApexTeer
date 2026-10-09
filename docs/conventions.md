@@ -2,10 +2,11 @@
 
 ## Naming
 
-- Directories under the repository are lowercase and ASCII: `templates/`,
-  `docs/`, `assets/`. This includes template subdirectories
-  (`anytls`, `hysteria2`, `tuic`, `vmess-websocket-tls`,
-  `vless-vision-reality`, `config`).
+- Directories under the repository are lowercase and ASCII: `docs/`, `assets/`
+  and the Go package tree. The readable config samples moved to the separate
+  EasySB-Examples repository, where the protocol directories keep their display
+  casing (`Hysteria2`, `VLESS-Vision-REALITY`, `TUIC`, `AnyTLS`,
+  `VMess-WebSocket-TLS`, `Config`).
 - Go packages stay lowercase single words (`state`, `subscribe`, `sysinfo`).
   Interfaces and stores are named after what they model, not after the UI
   screen: the account model is `internal/user` with a `Store`, while the panel

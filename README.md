@@ -44,7 +44,7 @@
 EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol deployment, certificate issuance, service unlock checks and subscription generation into one interactive menu.
 
 - **Go (primary implementation)**: a root Go module built with bubbletea / bubbles / lipgloss, compiled into a single static binary exposed as `sb`.
-- **Templates**: `templates/` ships readable JSONC samples for the five protocols plus the subscription template. Use them on their own, or let the tool deploy them.
+- **Templates**: the separate [EasySB-Examples](https://github.com/EasySBTeam/EasySB-Examples) repository ships readable JSONC samples for the five protocols plus the subscription template. Use them on their own, or let the tool deploy them.
 - **Core**: sing-box is **compiled into the panel** — `github.com/sagernet/sing-box` is a `go.mod` requirement, so installing EasySB installs the core with it, and the node is `easysb core run`. There is no core binary to download, replace or switch, and the traffic counters come with the build (`with_v2ray_api`, see `release/TAGS`).
 - **Certificates**: Let's Encrypt through `go-acme/lego`, in the panel's own process. No acme.sh, no socat, nothing downloaded to issue a certificate.
 
@@ -67,21 +67,12 @@ EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol de
 ├── AGENTS.md                     # Guide for AI agents and contributors
 ├── go.mod                        # Go module definition
 ├── internal/                     # Go packages, mapped in docs/architecture.md
-├── templates/                    # Subscription and protocol config templates
-│   ├── config/
-│   │   ├── tun-fakeip.json       # sing-box TUN + FakeIP subscription template
-│   │   └── mihomo.yaml           # mihomo / Clash Meta profile (readable mirror)
-│   ├── anytls/                   # AnyTLS client / server samples
-│   ├── hysteria2/                # Hysteria2 client / server samples
-│   ├── tuic/                     # TUIC client / server samples
-│   ├── vmess-websocket-tls/      # VMess + WebSocket + TLS samples
-│   └── vless-vision-reality/     # VLESS + Vision + Reality samples
 ├── assets/                       # README banners
 ├── docs/                         # Engineering docs for agents and contributors
 └── .github/                      # CI workflows and community health files
 ```
 
-The protocol samples under `templates/` are readable JSONC; strip the comments and they work as sing-box server / client configs as-is.
+The protocol samples in [EasySB-Examples](https://github.com/EasySBTeam/EasySB-Examples) are readable JSONC; strip the comments and they work as sing-box server / client configs as-is.
 
 ---
 
@@ -224,7 +215,7 @@ upgrade` always have a fixed address to work from. Two repository secrets drive 
 | System info | The runtime the panel is running on, and the one place the look changes from inside the interface: `↑`/`↓` + `Enter` or `A`-`D` picks a skin, `T` flips dark/light, `I` swaps Unicode markers for ASCII. Every choice lands on the next frame, and the glyph preview row shows before a card anywhere else does whether the terminal font can draw the markers. The status strip and the hints stay put while the body swaps |
 | Copy links | Subscription and share-link results render as a card grid inside the same fixed panel as the main menu. Subscription cards show the subscription name (sing-box / mihomo / Base64) plus a format note, share-link cards show the protocol name, and neither draws the host or the full URL. Select with `↑`/`↓`/`←`/`→` (or a number key), `Enter` copies the card, `C` copies all, `Q` quits the program, `Esc` returns. A copied card turns green and copy-all reports in the header. Narrow or short windows reflow the grid and truncate content, never overflowing the panel. On log screens `C` copies the log (OSC52) |
 | Certificates | Let's Encrypt issuance in process through lego with the HTTP-01 standalone challenge: issue, list, switch active and remove. The preflight check covers DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and nothing is downloaded to do any of it. Renewal is decided by expiry (30 days before it) and driven by the panel's own systemd timer, which also reloads sing-box and the subscription service |
-| Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (`templates/config/tun-fakeip.json`, `templates/config/mihomo.yaml` or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and one share link per selected node in the panel |
+| Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (the sing-box or mihomo subscription template, or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and one share link per selected node in the panel |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
 | BBR acceleration | Shows the running kernel, congestion control, queue discipline and installed kernels; enabling BBR loads `tcp_bbr`, writes `net.core.default_qdisc` and `net.ipv4.tcp_congestion_control` and persists them in `/etc/sysctl.d/99-easysb-bbr.conf` and `/etc/modules-load.d/easysb-bbr.conf` so the choice survives a reboot; installs a prebuilt BBRv3 kernel published by [Linux-BBR-v3](https://github.com/MinimaxFlora/Linux-BBR-v3) (standard or Max, x86_64 and arm64, downloaded straight from the release), or lists every published version to pick one from; the kernel and its settings can be removed from the panel again. Versions come from the kernel project itself — its version stamp and release list — so a kernel published there shows up here without a release of this panel |
@@ -276,27 +267,29 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 
 ## Config Templates
 
+The samples live in the separate [EasySB-Examples](https://github.com/EasySBTeam/EasySB-Examples) repository, one directory per protocol.
+
 | Directory | Protocol | Transport | Disguise / encryption | Highlights |
 | :--- | :--- | :--- | :--- | :--- |
-| `templates/anytls/` | AnyTLS | TCP | TLS | Multi-stage Padding Scheme |
-| `templates/hysteria2/` | Hysteria 2 | QUIC / UDP | TLS (ALPN `h3`) | Port hopping, strong on lossy links |
-| `templates/tuic/` | TUIC | QUIC / UDP | TLS (ALPN `h3`) | 0-RTT handshake, `native` UDP relay |
-| `templates/vmess-websocket-tls/` | VMess | WebSocket over TLS | TLS | CDN friendly, Early Data |
-| `templates/vless-vision-reality/` | VLESS + Vision | TCP | REALITY (no cert) | `xtls-rprx-vision`, active-probing resistant |
-| `templates/config/tun-fakeip.json` | TUN + FakeIP | System-wide | — | Rule routing, DNS split, URLTest |
-| `templates/config/mihomo.yaml` | mihomo / Clash Meta | System-wide | — | Full client profile: proxies, groups, DNS, rules |
+| `Hysteria2/` | Hysteria 2 | QUIC / UDP | TLS (ALPN `h3`) | Port hopping, strong on lossy links |
+| `VLESS-Vision-REALITY/` | VLESS + Vision | TCP | REALITY (no cert) | `xtls-rprx-vision`, active-probing resistant |
+| `TUIC/` | TUIC | QUIC / UDP | TLS (ALPN `h3`) | 0-RTT handshake, `native` UDP relay |
+| `AnyTLS/` | AnyTLS | TCP | TLS | Multi-stage Padding Scheme |
+| `VMess-WebSocket-TLS/` | VMess | WebSocket over TLS | TLS | CDN friendly, Early Data |
+| `Config/tun-fakeip.json` | TUN + FakeIP | System-wide | — | Rule routing, DNS split, URLTest |
+| `Config/mihomo.yaml` | mihomo / Clash Meta | System-wide | — | Full client profile: proxies, groups, DNS, rules |
 
 UUIDs, passwords, REALITY private keys and certificate paths in the templates are samples. Replace them before deployment and keep server and client in sync. Validate syntax with the core:
 
 ```bash
-sing-box check -c templates/vless-vision-reality/config_server.json
+sing-box check -c VLESS-Vision-REALITY/config_server.json
 ```
 
 ---
 
 ## Subscription
 
-Every account has one subscription URL, and the document behind it is rendered from `templates/config/tun-fakeip.json` (sing-box) or `templates/config/mihomo.yaml` (mihomo / Clash Meta) — or a Base64 share-link document for everything else. Delivery:
+Every account has one subscription URL, and the document behind it is rendered from the built-in sing-box subscription template (TUN + FakeIP) or the mihomo / Clash Meta profile — or a Base64 share-link document for everything else. Delivery:
 
 1. The built-in subscription service (`easysb --serve`, installed as `easysb.service` from the panel) answers `/sub/<token>` on `SUB_SERVE_PORT` (default `8443`).
 2. A terminal QR code per client format, scannable once `qrencode` is installed.

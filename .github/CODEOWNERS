@@ -5,9 +5,6 @@
 
 * @MinimaxFlora
 
-# 客户端订阅与全局代理模板
-/templates/ @MinimaxFlora
-
 # CI 工作流与社区健康文件
 /.github/ @MinimaxFlora
 
