@@ -260,6 +260,39 @@ true as of round 2 rather than then.)*
 
 ---
 
+## 4a. Findings from the later full sweep (F23-F27)
+
+The findings above were produced by the first audit. A second, independent sweep was
+run afterwards, deliberately looking for the same classes in the code the first pass
+had not touched — the systemd-unit writers, other dependency and vulnerability
+surfaces, and the release pipeline's live state. It found five more. Nothing here
+contradicts F1-F22; it is what those rounds did not reach.
+
+| # | Finding | Severity | Class | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| F23 | Seven writers still installed a file with a plain `os.WriteFile`: the systemd units for the node, panel, subscription service, ACME timer and port-hopping firewall, plus the BBR sysctl and modules-load drop-ins. A crash part way through leaves a **truncated unit or sysctl drop-in** that survives until someone rewrites it. | **High** | data safety / service stability | **fixed** — all seven go through `internal/atomicfile` (`559e837`) |
+| F24 | `atomicfile.Write` did **not** create the parent directory, while `WriteKeepingBackup` — reached by `node.Save` and `user.Save` — was called on the assumption that it did. The contract and the code disagreed, and the test of the day pinned the wrong one. | **High** | latent defect | **fixed** — `Write` creates the parent at 0755 and leaves an existing directory's mode alone, so a 0700 certificate directory is not widened (`559e837`) |
+| F25 | `govulncheck` had never been run. It reports **12 reachable standard-library vulnerabilities** (net/http, net/http/internal/http2, net/textproto, crypto/tls, html/template), all fixed in `go1.27.2`, plus **4 reachable `golang.org/x/net` vulnerabilities** fixed in `v0.60.0`. The panel serves TLS over the network, the subscription service is an HTTP server, and the download path is an HTTP client. | **High** | security | **fixed** — `go` directive to 1.27.2, `x/net` to v0.60.0; `govulncheck` now reports **no reachable vulnerabilities** (`e62c48b`) |
+| F26 | The cross-process property of the store lock was **measured by hand** in the review (a throwaway `nolockprobe` build) and pinned by no test; the permanent tests are all in-process. | Medium | test effectiveness | **fixed** — `TestLockedExcludesAcrossProcesses` re-execs the test binary as six real processes; it passes 3/3 with the lock and fails with "store holds 1 accounts after 6 cross-process writers" without it (`af3a739`) |
+| F27 | Two pre-existing `actionlint`/`shellcheck` findings in the release workflow (`SC2086` on the `COMMIT=${GITHUB_SHA}` plumbing, `SC2011` on the asset prune), plus `ubuntu-26.04` reported as an unknown runner label because actionlint's database lags that release. | Low | static analysis | **recorded, deliberately not changed** — see `docs/optimization-release-audit.md` §7.5; the brief forbids unrelated refactors and changes to the version/hash plumbing |
+
+### 4a.1 Two corrections, recorded because the first claim was wrong
+
+- **F24's test asserted the opposite of the truth.** `TestWriteReportsAMissingDirectoryRatherThanCreatingIt`
+  said *"a missing directory must be reported, not silently created"*. That was never
+  true of the package: `node.Save` and `user.Save` call `WriteKeepingBackup` after
+  their own `MkdirAll`, and `os.WriteFile`, which the package replaced, has always
+  required its callers to create the directory. Migrating the unit writers surfaced
+  it — `writeNodeUnit` into a directory that did not exist failed on
+  `CreateTemp` rather than falling back to `os.WriteFile`'s behaviour. The test was
+  replaced by the correct pair: creates a missing parent, and preserves an existing
+  directory's mode.
+- **The first audit's "no dependency upgrades — no security reason to move one" is
+  now false.** It was an accurate statement about what that audit had measured, but
+  it had not run a vulnerability scan. F25 supplies the reason.
+
+---
+
 ## 5. Detail on the findings that matter
 
 ### 5.1 Deployment ordering and the concurrency model (F1, F2, F3, F4, F9)

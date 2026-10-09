@@ -386,30 +386,122 @@ Stated explicitly; none of these is claimed to work.
 
 | Scenario | Why it cannot be verified here |
 | :--- | :--- |
-| The release workflow actually running | needs a push to `master`; analysing it statically is what this audit did instead |
-| `action-gh-release`'s exact behaviour on an existing tag | network policy blocks fetching the action's source; taken from its documented API and this repository's own description of it ([action README](https://github.com/softprops/action-gh-release), [issue #403 on uploading to an existing tag](https://github.com/softprops/action-gh-release/issues/403)) |
-| Whether `v6.0.0` on the remote currently matches this checkout | a local clone cannot tell; the prune step deletes all other releases, so the remote state cannot be inferred from history either |
-| Real `apt` upgrade behaviour against the live source | needs a Debian host with the source configured and a published `.deb`; the version-comparison reasoning is from `apt`'s documented semantics, not an execution |
-| `make deb` / `make pkg-stage` / `make repo` end to end | `fpm`, `upx`, `apt-ftparchive` and the GPG key are absent in this environment |
+| The release workflow actually running | needs a push to `master`; the guard is verified statically and against a stubbed `gh` instead |
+| `action-gh-release`'s exact behaviour on an existing tag | network policy blocks fetching the action's source; taken from its documented API and this repository's own description of it ([action README](https://github.com/softprops/action-gh-release), [issue #403 on uploading to an existing tag](https://github.com/softprops/action-gh-release/issues/403)). The guard's conclusions hold under either behaviour. |
+| Real `apt` upgrade behaviour against the live source | needs a Debian host with the source configured. The **version comparison is now measured**, not inferred (§7). |
+| `make deb` / `make pkg-stage` end to end | **now executed** — `fpm 1.18.0` was installed into `$HOME` without root (§7) |
+| `make repo` (index + signing) | `apt-ftparchive` is present but **no GPG key**: the index layout is verified against the published one, signing is not |
 | GPG signing of `Release`/`InRelease` | no key available |
 | Real systemd, real ACME issuance | no systemd as PID 1; no domain or port 80 |
 | The mixed-checksum upload window | would require observing a live upload |
+| `dpkg --unpack` into a throwaway root | dpkg requires superuser even with `--root`; the payload is verified by extraction instead |
 
 ---
 
-## 6. Conclusion
+## 7. Verification added after the audit
 
-F19 is **confirmed by static analysis** and is reachable on the next qualifying push,
-because `VERSION` is still `6.0.0` while `v6.0.0` already exists. The mechanism is
-that the release tag is derived only from `VERSION`, nothing checks the tag before
-publishing, and the package version (`6.0.0-1`) does not encode the commit — so a
-re-release replaces same-named assets with different bytes that `apt` will not
-install over the identical version it already has.
+The audit was read-only. This section records what was subsequently executed, and
+what it changed in the analysis above.
 
-The proposed fix is one additive step in `prepare` that fails the run when the tag
+### 7.1 What the live repository actually looks like (read-only)
+
+`git ls-remote` and the GitHub API were reachable, so the remote state is no longer
+inferred:
+
+| Fact | Value |
+| :--- | :--- |
+| remote `refs/heads/master` | `37dae5f9c6ef980d9d2c30fd7634de29df68fee3` — the clone point, unchanged |
+| remote `refs/tags/v6.0.0` | `a343e41edc553c579eaea7d6e24cf7c0bc656514` (lightweight, equals the commit) |
+| release | `v6.0.0`, not draft, not prerelease, published 2026-10-06, `make_latest` |
+| assets | exactly 9, including `easysb_6.0.0-1_{amd64,arm64}.deb` and the 7 apt files |
+| remote `VERSION` | `6.0.0`, matching this checkout |
+
+This resolves the §5 row that could not be settled from a local clone, and it
+confirms the F19 reproduction against the real repository: the tag already exists
+and points at `a343e41`, while `VERSION` still reads `6.0.0`.
+
+### 7.2 The published apt repository is internally consistent
+
+Every checksum was recomputed from the bytes the release actually serves:
+
+| File | Index value | Recomputed | Result |
+| :--- | :--- | :--- | :--- |
+| `easysb_6.0.0-1_amd64.deb` | `2778f3c5…6b3b`, 11989510 | identical | MATCH |
+| `easysb_6.0.0-1_arm64.deb` | `ebdc2c58…d844`, 9851252 | identical | MATCH |
+| `Packages` | signed in `InRelease` as `94d77d00…` | identical | MATCH |
+| `Packages.gz` | signed in `InRelease` as `aa7cb1c2…` | identical | MATCH |
+
+So the source a user's `apt` talks to is currently sound. Nothing about F19 is a
+*current* corruption; it is a future one.
+
+### 7.3 F19's impact, measured instead of argued
+
+Two `.deb` files were built with the **same version** and different bytes — exactly
+what a republish produces — and compared with `dpkg`:
+
+```
+build A: version=6.0.0-1  sha256=fb166f7b924568cf…
+build B: version=6.0.0-1  sha256=89614e120e77a4b3…
+dpkg --compare-versions A eq B : TRUE
+dpkg --compare-versions A gt B : FALSE   -> apt has nothing to upgrade TO
+```
+
+This is the audit's central claim, now an execution rather than a reading of apt's
+documented semantics.
+
+### 7.4 The packaging chain was executed end to end
+
+`fpm` was installed with `gem install --user-install` (no root, no system change).
+`make build` and `make packages-asset` for both architectures then produced real
+packages, and their payload was verified by extraction:
+
+- amd64 12 MB and arm64 9.1 MB after UPX, matching the published 11.99 MB / 9.85 MB;
+- `/usr/bin/easysb` runs and reports `EasySB 6.0.0 (<commit>)`;
+- `/usr/bin/sb -> easysb`;
+- the two packaged units are **byte-identical** to `--print-unit node|sub`, so the
+  packaged unit and the runtime one cannot drift;
+- `ExecStart` names `/usr/bin/easysb`, the packaged path;
+- no path under `/etc/sing-box` is in the package, and neither maintainer script
+  mentions it — an independent confirmation of §4.1's upgrade argument.
+
+### 7.5 Two static-analysis findings, both pre-existing
+
+`actionlint` 1.7.12 and `shellcheck` 0.10.0 were installed into `$HOME` (no root)
+and run for the first time:
+
+- `runs-on: ubuntu-26.04` is reported as an unknown label: actionlint's runner
+  database lags Ubuntu 26.04's release. Registering the label in a config file
+  clears it. Present in **both** workflows, and **three times in the parent commit**
+  `04dd7bb`, so the guard did not introduce it.
+- Two shellcheck findings in `easysb-go-release.yml`, **both present in the parent
+  commit and in code F19 did not touch**: `SC2086` on
+  `make packages-asset ASSET=… COMMIT=${GITHUB_SHA}` (line 255) and `SC2011` on the
+  asset-prune `find … | xargs -n1 basename` (line 361).
+
+**The guard's own script is clean** at `shellcheck --severity=info`: no findings.
+Per the brief's instruction not to perform unrelated refactors and not to change the
+version/hash plumbing, the two pre-existing findings are recorded rather than
+"fixed" inside the F19 change.
+
+---
+
+## 8. Conclusion
+
+F19 is **confirmed by static analysis and against the live repository, and its
+impact is now measured**: `VERSION` is still `6.0.0`, remote `v6.0.0` already points
+at `a343e41`, the release tag is derived only from `VERSION`, nothing checks the tag
+before publishing, and the package version (`6.0.0-1`) does not encode the commit —
+so a re-release replaces same-named assets with different bytes, and `dpkg` reports
+the old and new builds as the *same version*, leaving `apt` nothing to upgrade to.
+
+The fix applied is one additive step in `prepare` that fails the run when the tag
 exists and points at a different commit. It reads only, changes no existing step,
 leaves `v6.0.0` and every published asset alone, and permits a same-commit retry so a
-failed release stays recoverable.
+failed release stays recoverable. Its behaviour is pinned by eleven cases run against
+a stubbed `gh`, including lightweight and annotated tags, API failure, an
+unrecognised object type and a malformed sha.
 
-**No fix has been applied**, and no tag, release, asset, workflow or package was
-modified. The working tree is clean at `7ca1c31`; nothing was pushed.
+**No tag, release, asset or package was created, moved or deleted, and the live apt
+repository was only read.** The published source was verified to be internally
+consistent. The commits are local; nothing was pushed.
+
