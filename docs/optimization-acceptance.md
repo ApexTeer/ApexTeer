@@ -4,7 +4,7 @@ Closing report for the full optimization pass. It says what was done, what was
 actually executed, what is still unverified and why, and what remains gated on
 authorisation. Nothing here is claimed as passing that was not run.
 
-- **Branch**: `master`, **HEAD** `af3a739`…`e62c48b` (see §6 for the exact chain)
+- **Branch**: `master`, **HEAD** `931fc63` (see §1 for the exact chain)
 - **Tags**: `v6.0.0` only — never created, moved or deleted
 - **Pushed**: nothing. No release, asset, tag or package was published.
 
@@ -26,6 +26,7 @@ rewrite at any point (`git reflog` shows only the clone plus one entry per commi
 | `559e837` | `fix(atomicfile): create the parent directory, and write every unit through it` |
 | `af3a739` | `test(user): prove the store lock excludes across real processes` |
 | `e62c48b` | `fix(deps): bump the patched toolchain and x/net for reachable vulnerabilities` |
+| `931fc63` | `docs: record the later sweep, its fixes, and the final acceptance` |
 
 Every commit is independently reviewable: `559e837` is one class of writer plus its
 tests, `af3a739` adds only a test, `e62c48b` is two version lines.
@@ -180,7 +181,7 @@ Both are documented in `docs/panel-installation.md` and
 ## 6. Final state
 
 ```
-HEAD    : e62c48b27a4620834ad309865f290e6a8e8b05f1   (report written from af3a739..e62c48b)
+HEAD    : 931fc63 (the documentation commit; the code state verified below is e62c48b)
 branch  : master
 status  : clean — no modified, staged or untracked files
 tags    : v6.0.0 (unchanged; never created, moved or deleted)
