@@ -41,3 +41,4 @@ dist/
 # scripts/fetch-panel.sh; the built SPA is never committed, only the placeholder note.
 /internal/panel/web/*
 !/internal/panel/web/README.md
+!/internal/panel/web/index.html
