@@ -49,6 +49,7 @@ func buildRoot() *menu {
 			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Subscribe }, sub: buildSubscribe()},
 			{id: "users", label: tk("users_title"), desc: tk("menu_users"), icon: func(s icons.Set) string { return s.Account }, action: enterUsers()},
 			{id: "service", label: tk("svc_title"), desc: tk("menu_service"), icon: func(s icons.Set) string { return s.Service }, sub: buildService()},
+			{id: "panel", label: tk("menu_panel"), desc: tk("menu_panel"), icon: func(s icons.Set) string { return s.Globe }, sub: buildPanel()},
 			iconLeaf("system", "menu_system", "menu_system_desc", func(s icons.Set) string { return s.System }, func(a *App) tea.Cmd {
 				a.openSystem()
 				return nil

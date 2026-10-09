@@ -304,6 +304,17 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 		a.push(a.nodeMenu())
 		a.push(a.nodeListMenu())
 		a.section = "node"
+	case "users":
+		a.loadAccounts()
+		a.loadNodes()
+		a.push(a.usersMenu())
+		a.section = "users"
+	case "user-list":
+		a.loadAccounts()
+		a.loadNodes()
+		a.push(a.usersMenu())
+		a.push(a.userListMenu())
+		a.section = "users"
 	case "params":
 		a.push(a.nodeMenu())
 		a.push(buildParams())

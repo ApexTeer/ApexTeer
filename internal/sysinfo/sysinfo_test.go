@@ -50,3 +50,45 @@ func TestParseUptime(t *testing.T) {
 		t.Fatalf("empty uptime = %s, want 0", got)
 	}
 }
+
+func TestParseNetDev(t *testing.T) {
+	data := "Inter-|   Receive                                                |  Transmit\n" +
+		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+		"    lo: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n" +
+		"  eth0: 5000 50 0 0 0 0 0 0 7000 70 0 0 0 0 0 0\n" +
+		"  eth1: 300 3 0 0 0 0 0 0 400 4 0 0 0 0 0 0\n"
+	rx, tx := parseNetDev([]byte(data))
+	if rx != 5300 || tx != 7400 {
+		t.Fatalf("rx/tx = %d/%d, want 5300/7400 (loopback excluded)", rx, tx)
+	}
+	if rx, tx := parseNetDev([]byte("garbage\n")); rx != 0 || tx != 0 {
+		t.Fatalf("unparseable input should sum to zero, got %d/%d", rx, tx)
+	}
+}
+
+func TestParseDiskStats(t *testing.T) {
+	// One whole disk, one NVMe disk, and the noise that must be ignored: a
+	// partition of each (already inside its disk's counters), a device-mapper
+	// and an md device (which would double-count the disks underneath them),
+	// and the loop devices.
+	data := "   8       0 sda 100 0 2000 10 50 0 4000 20 0 0 0\n" +
+		"   8       1 sda1 90 0 1800 9 40 0 3600 18 0 0 0\n" +
+		" 259       0 nvme0n1 10 0 300 1 5 0 600 2 0 0 0\n" +
+		" 259       1 nvme0n1p1 8 0 240 0 4 0 480 1 0 0 0\n" +
+		" 253       0 dm-0 7 0 140 0 3 0 280 0 0 0 0\n" +
+		"   9       0 md0 1 0 20 0 1 0 40 0 0 0 0\n" +
+		"   7       0 loop0 999 0 999000 0 999 0 999000 0 0 0 0\n" +
+		"garbage that is not a diskstats line\n"
+	read, write := parseDiskStats([]byte(data))
+	wantRead := uint64((2000 + 300) * sectorSize)
+	wantWrite := uint64((4000 + 600) * sectorSize)
+	if read != wantRead {
+		t.Fatalf("read = %d, want %d (whole disks only)", read, wantRead)
+	}
+	if write != wantWrite {
+		t.Fatalf("write = %d, want %d (whole disks only)", write, wantWrite)
+	}
+	if read, write := parseDiskStats(nil); read != 0 || write != 0 {
+		t.Fatalf("empty input should be zero, got %d/%d", read, write)
+	}
+}

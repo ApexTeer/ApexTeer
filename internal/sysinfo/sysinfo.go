@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -103,6 +104,19 @@ type Status struct {
 	DiskFree  uint64
 
 	Uptime time.Duration
+
+	// NetRxBytes and NetTxBytes are the cumulative bytes received and sent on
+	// the host's non-loopback interfaces since boot, read from /proc/net/dev.
+	// They are counters, so a rate is the difference between two snapshots.
+	NetRxBytes uint64
+	NetTxBytes uint64
+
+	// DiskReadBytes and DiskWriteBytes are the cumulative bytes read from and
+	// written to the host's whole block devices since boot, read from
+	// /proc/diskstats. Like the network counters they are totals, so a rate is
+	// the difference between two snapshots.
+	DiskReadBytes  uint64
+	DiskWriteBytes uint64
 }
 
 // PortInfo is one protocol's listener as the node state describes it: the port it is on
@@ -165,6 +179,66 @@ func collectDevice(st *Status) {
 	st.MemTotal, st.MemAvail, st.SwapTotal, st.SwapFree = memory()
 	st.DiskTotal, st.DiskFree = diskUsage("/")
 	st.Uptime = uptime()
+	st.NetRxBytes, st.NetTxBytes = NetworkTotals()
+	st.DiskReadBytes, st.DiskWriteBytes = DiskTotals()
+}
+
+// sectorSize is the unit /proc/diskstats counts transfers in. The kernel has
+// reported 512-byte sectors there since long before 4K-native disks, and it
+// stays 512 regardless of the device's physical sector size.
+const sectorSize = 512
+
+// wholeDiskRE matches the whole block devices whose traffic is worth counting.
+// Partitions (sda1, nvme0n1p2) and stacked devices (dm-0, md0) are left out:
+// the partitions are already inside their disk's numbers, and the device-mapper
+// and md layers would double-count IO that the underlying disks already report.
+var wholeDiskRE = regexp.MustCompile(`^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+)$`)
+
+// parseDiskStats sums the sectors read and written across the whole block
+// devices in /proc/diskstats. Each line is "major minor name reads ... sectors
+// read ... writes ... sectors written ...", so the read sector count is field 5
+// and the write sector count is field 9 once the name is included.
+func parseDiskStats(data []byte) (read, write uint64) {
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 10 || !wholeDiskRE.MatchString(fields[2]) {
+			continue
+		}
+		if sectors, err := strconv.ParseUint(fields[5], 10, 64); err == nil {
+			read += sectors
+		}
+		if sectors, err := strconv.ParseUint(fields[9], 10, 64); err == nil {
+			write += sectors
+		}
+	}
+	return read * sectorSize, write * sectorSize
+}
+
+// parseNetDev sums the bytes columns of /proc/net/dev across every interface
+// except the loopback. The kernel prints two header lines, then one line per
+// interface as "name: rx_bytes rx_packets ... tx_bytes ...".
+func parseNetDev(data []byte) (rx, tx uint64) {
+	for _, line := range strings.Split(string(data), "\n") {
+		name, rest, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(name) == "lo" {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) < 9 {
+			continue
+		}
+		r, err1 := strconv.ParseUint(fields[0], 10, 64)
+		t, err2 := strconv.ParseUint(fields[8], 10, 64)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		rx += r
+		tx += t
+	}
+	return rx, tx
 }
 
 // localIPs returns the first usable IPv4 and IPv6 address on an up, non-loopback

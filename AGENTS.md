@@ -47,7 +47,7 @@ make screens    # render every screen and assert the layout (python3)
   (the two the BBR kernels cover), the only platform is Debian and Ubuntu, and the
   only package is the `.deb`. The arch names come from the Makefile's `ARCHES` /
   `DEBARCH_MAP`, and the packaged systemd units are printed by the binary
-  (`easysb --print-unit node|sub`) rather than copied into `packaging/`. A
+  (`easysb --print-unit node|sub|panel`) rather than copied into `packaging/`. A
   hand-written unit or a second arch list in the workflow drifts. The `.deb` comes
   from one staged tree (`make pkg-stage`, driven per architecture by `make
   packages-asset`), and `pkg-stage` UPX-compresses the binary there, so the release

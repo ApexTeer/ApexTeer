@@ -27,6 +27,7 @@
 - [发布产物](#发布产物)
 - [EasySB 能力](#easysb-能力)
 - [交互菜单](#交互菜单)
+- [Web 面板](#web-面板)
 - [命令参数](#命令参数)
 - [无交互安装](#无交互安装)
 - [配置模板](#配置模板)
@@ -138,7 +139,7 @@ Debian 与 Ubuntu 可以添加 apt 软件源后用 `apt install` / `apt upgrade`
 | `/usr/lib/systemd/system/easysb.service` | 订阅服务单元：`easysb --serve` |
 | `/usr/share/licenses/easysb/LICENSE` | 许可证全文 |
 
-单元文件由二进制自己打印（`sb --print-unit node|sub`），与面板运行时写单元用的是同一段代码，所以包内的单元和运行时写下的单元不会各自漂移。安装时**不会**自动 enable 或 start：新装机器还没有节点配置，先运行 `sb` 配置节点，面板会自动 enable 并 start 服务。
+单元文件由二进制自己打印（`sb --print-unit node|sub|panel`），与面板运行时写单元用的是同一段代码，所以包内的单元和运行时写下的单元不会各自漂移。安装时**不会**自动 enable 或 start：新装机器还没有节点配置，先运行 `sb` 配置节点，面板会自动 enable 并 start 服务。
 
 ### dpkg
 
@@ -201,6 +202,7 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 | 订阅生成 | 每个账号一个订阅地址（`/sub/<令牌>`），由内置订阅服务按客户端自动选择格式（内置 sing-box 或 mihomo 订阅模板，或 Base64 分享链接），并通过 `Subscription-Userinfo` 上报用量；面板提供二维码与每个已勾选节点一条分享链接 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
 | 服务管理 | 启动、停止、重启、查看状态与开机自启 |
+| Web 面板 | 原生 React + Arco Design React 管理面板，作为可选服务提供：同一二进制以 `easysb panel` 模式运行在自己的 systemd 单元下，调用与 TUI 相同的业务包（不存在第二份节点/账号数据）。可在浏览器里管理节点、账号、订阅、证书、内核、主机状态与服务日志，并支持中英文切换与明暗主题切换；安装、启动 / 停止 / 重启、查看状态与卸载既可从 TUI 的「Web 面板」菜单完成，也可在面板「设置」页完成（面板自身随 EasySB 包升级）。卸载面板只移除面板单元 |
 | BBR 加速 | 查看运行内核、拥塞算法、队列算法与已装内核；启用 BBR（加载 `tcp_bbr`、写 `net.core.default_qdisc` 与 `net.ipv4.tcp_congestion_control`，并落盘到 `/etc/sysctl.d/99-easysb-bbr.conf`、`/etc/modules-load.d/easysb-bbr.conf`，重启后仍生效）；安装 [Linux-BBR-v3](https://github.com/MinimaxFlora/Linux-BBR-v3) 发布的预编译 BBRv3 内核（标准版 / Max 版，x86_64 与 arm64，直接从 GitHub release 下载），也可以从版本列表里挑任意一个已发布版本安装；卸载内核、清空配置都能在面板里完成。版本号全部来自内核项目本身（`version.ini` 与 release 列表），对面发了新内核，这里打开列表就能看到，不需要面板再发版 |
 | 脚本自更新 | 从本仓库拉取最新脚本，校验通过后替换 |
 | 中英双语 | 启动首屏选择语言，全流程界面一致 |
@@ -210,13 +212,14 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 ## 交互菜单
 
 ```text
-主菜单（整幅卡片内左右两列，共 10 项）
+主菜单（整幅卡片内左右两列，共 11 项）
 ├── 服务解锁状态 检测 ChatGPT / Netflix 等服务的解锁情况
 ├── 节点管理     新增 / 编辑 / 启用停用节点，设置端口与协议参数，删除节点（若仍被账号勾选会提示受影响账号数量）
 ├── 域名管理     申请证书（含环境与解析预检）、立即续期、续期定时器、查看、切换激活、删除
 ├── 订阅管理     某账号的订阅地址 / 二维码 / 分享链接（先选账号，再输出订阅地址前缀）、订阅服务的安装 / 重启 / 状态
 ├── 账号管理     账号列表、新建、重命名、备注、流量限额、有效期、勾选节点、启用 / 停用、重置流量、更换令牌、删除
 ├── 服务管理     启动 / 停止 / 重启 / 状态 / 开机自启、端口跳跃规则
+├── Web 面板     安装、升级、启动 / 停止 / 重启、查看状态、卸载 Web 管理面板服务
 ├── 系统信息     运行环境、外观切换（皮肤 / 深浅 / 标记 / 语言）、终端与设备信息
 ├── BBR 管理     查看 BBR 状态、启用加速（fq / fq_codel / fq_pie / cake）、安装标准版或 Max 版 BBRv3 内核、选择版本安装（列出所有已发布版本）、卸载内核、清空配置
 ├── 版本更新     拉取最新 EasySB 发行版
@@ -224,6 +227,21 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 ```
 
 对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，节点 `/etc/sing-box/easysb-nodes.json`，账号 `/etc/sing-box/easysb-users.json`，快捷指令 `/usr/bin/sb`。
+
+---
+
+## Web 面板
+
+EasySB 附带一个原生 Web 管理面板，作为可选服务提供。它就是同一个二进制以 `easysb panel` 模式运行在自己的 systemd 单元 `easysb-panel.service` 下，因此面板故障不会停掉节点或订阅服务，也不存在第二份节点与账号数据。
+
+- 安装入口二选一：TUI 的「Web 面板」菜单，或面板「设置」页；两者调用同一组函数。
+- 默认监听 `0.0.0.0:2095`，默认管理员 `admin`。首次运行会生成管理员口令并写入面板日志；首次登录后请在「设置」页修改。
+- 覆盖与 TUI 同等的范围：节点、账号、订阅、证书、内核、服务状态、主机信息与服务日志。工具箱与 BBR 暂留 TUI，不显示假页面。
+- 所有变更都走与 TUI 相同的写入路径（`deploy.ApplyStore`），面板与 TUI 不会各自漂移。
+- 面板自身随 EasySB 包升级（`apt upgrade easysb`）；「设置」页负责安装、启动 / 停止 / 重启与卸载面板单元。
+- 面板是可选项；卸载面板只移除面板单元，节点、账号、证书、`config.json` 与订阅服务保持原样。
+
+详见 `docs/panel-architecture.md`、`docs/panel-api.md`、`docs/panel-installation.md`、`docs/panel-troubleshooting.md`。
 
 ---
 
@@ -242,7 +260,7 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
 | `--render --width N --height N` | 渲染一次仪表盘后退出（调试用；加 `--screen system` 可渲染子页面） |
 | `--serve` | 运行订阅服务与流量统计循环（`easysb.service` 使用该模式） |
 | `--provision FILE` | 按 JSON 部署清单部署后退出，不进入菜单（`-` 表示从标准输入读取清单） |
-| `--print-unit node\|sub` | 把服务单元文本输出到标准输出，发布时打 `.deb` 用的就是这段文本 |
+| `--print-unit node\|sub\|panel` | 把服务单元文本输出到标准输出，发布时打 `.deb` 用的就是这段文本 |
 | `--unit-exec PATH` | `--print-unit` 写入单元的可执行文件路径（默认 `/usr/bin/easysb`） |
 | `--version` | 显示版本与构建短哈希 |
 | `--help` | 显示用法 |

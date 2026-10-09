@@ -139,7 +139,7 @@ func Apply(ctx context.Context, cfg state.Config, nodes []node.Node, accounts []
 		return err
 	}
 	if service.Active(ctx) {
-		return service.Do(ctx, "restart")
+		return restartAfterChange(ctx)
 	}
 	// First accepted configuration: install the unit and start the core. Enabling
 	// is best-effort, because a caller without permission to enable must still be
@@ -148,7 +148,30 @@ func Apply(ctx context.Context, cfg state.Config, nodes []node.Node, accounts []
 		return err
 	}
 	_ = service.Do(ctx, "enable")
+	// A previous failure can latch systemd's start limit; clearing it lets the
+	// start below proceed instead of failing with "start request repeated too quickly".
+	_ = service.Do(ctx, "reset-failed")
 	return service.Do(ctx, "start")
+}
+
+// restartAfterChange applies a change to an already-running core. The generated
+// document was already accepted by the core in ApplyConfig, so a failed restart is
+// environmental: the previous instance can still hold the v2ray API port
+// (127.0.0.1:10085), and several changes landing back to back can trip systemd's
+// start limit, which latches the unit into a failed state. Clear the failed state
+// and try once more before reporting the restart as a failure.
+func restartAfterChange(ctx context.Context) error {
+	err := service.Do(ctx, "restart")
+	if err == nil {
+		return nil
+	}
+	_ = service.Do(ctx, "reset-failed")
+	select {
+	case <-ctx.Done():
+		return err
+	case <-time.After(750 * time.Millisecond):
+	}
+	return service.Do(ctx, "restart")
 }
 
 // sameAsLive reports whether data is exactly what the live config file holds.
