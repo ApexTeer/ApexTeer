@@ -70,10 +70,10 @@ jobs:
           cache: true
 
       # 前端由 EasySB-Panel 的 Release 承载，和 go build 是两套工具链：这里把它取进
-      # internal/panel/web 供 go:embed，本仓库因此不装 Node，也不提交编译产物。
+      # public/dist 供 go:embed，本仓库因此不装 Node，也不提交编译产物。
       # The front end is carried by an EasySB-Panel release and is a separate toolchain
-      # from go build: this fetches it into internal/panel/web for go:embed, so this
-      # repository installs no Node and commits no built SPA.
+      # from go build: this fetches it into public/dist for go:embed, so this repository
+      # installs no Node and commits no built SPA.
       - name: 获取面板前端
         # 前端只在真正出包时取：PR 上还没有可依赖的面板 Release，make check 用占位
         # README 即可，不该因为前端尚未发布而挡住 PR。

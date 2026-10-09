@@ -100,8 +100,9 @@ graph TD
 
 - 技术栈：React + TypeScript + Arco Design React（Vite 构建），源码在独立仓库
   `EasySB-Panel`。前端由该仓库的 GitHub Actions 构建、作为 Release 资产发布，本仓库
-  `make panel` 把它取到 `internal/panel/web` 后随二进制嵌入；编译产物不进版本库，Go 侧
-  构建因此不需要 Node 工具链（详见 `scripts/fetch-panel.sh` 与 `internal/panel/web/README.md`）。
+  `make panel` 把它取到 `public/dist` 后由 `public/public.go` 的 `//go:embed all:dist`
+  随二进制嵌入；编译产物不进版本库，Go 侧构建因此不需要 Node 工具链（详见
+  `scripts/fetch-panel.sh` 与 `public/dist/README.md`）。
 - 界面外观参照 1Panel：白底浅色卡片式布局、单一主色蓝、表格化信息密度；顶栏提供
   中英文切换与明暗主题切换，两者都持久化在 `localStorage`（`easysb_panel_lang`、
   `easysb_panel_theme`），暗色通过 `body[arco-theme='dark']` 交给 Arco 调色板。

@@ -124,15 +124,15 @@ build-plain: ## 不带标签构建，便于快速迭代
 
 # --- 面板前端 / Panel bundle ---------------------------------------------------
 
-# 前端由 EasySB-Panel 的 Release 承载；这里把它取进 internal/panel/web 供 go:embed。
+# 前端由 EasySB-Panel 的 Release 承载；这里把它取进 public/dist 供 go:embed。
 # 发布构建必须先跑这一步，否则二进制里只有占位文件；本地要用真实控制台时也跑它。
-# The front end is carried by an EasySB-Panel release; this pulls it into
-# internal/panel/web for go:embed. A release build runs it first, otherwise the binary
-# only carries the placeholder; run it locally too when you want the real console.
-panel: ## 取最新正式面板前端到 internal/panel/web
+# The front end is carried by an EasySB-Panel release; this pulls it into public/dist
+# for go:embed. A release build runs it first, otherwise the binary only carries the
+# placeholder; run it locally too when you want the real console.
+panel: ## 取最新正式面板前端到 public/dist
 	bash scripts/fetch-panel.sh
 
-panel-edge: ## 取 edge 滚动面板前端到 internal/panel/web
+panel-edge: ## 取 edge 滚动面板前端到 public/dist
 	PANEL_CHANNEL=edge bash scripts/fetch-panel.sh
 
 # --- 运行 / Run ---------------------------------------------------------------

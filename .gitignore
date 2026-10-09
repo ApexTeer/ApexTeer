@@ -31,14 +31,18 @@ desktop.ini
 *.tmp
 *.bak
 
-# 构建产物：make build 的本地产物与 make dist 的发布产物
+# 构建产物：make build 的本地产物与 make dist 的发布产物（锚定仓库根目录的 dist，
+# 否则会连 public/dist 一起忽略）
+# Build output: the local binary from make build and the release tree from make dist.
+# The leading slash keeps this to the repository root, so it never swallows public/dist.
 /easysb
-dist/
+/dist/
 
 # 面板前端产物：由 EasySB-Panel 的 Release 承载，scripts/fetch-panel.sh 下载到
-# internal/panel/web，所以编译产物不提交，只保留占位说明。
+# public/dist，所以编译产物不提交，只保留占位说明与占位页。
 # Panel bundle: carried by an EasySB-Panel release and downloaded by
-# scripts/fetch-panel.sh; the built SPA is never committed, only the placeholder note.
-/internal/panel/web/*
-!/internal/panel/web/README.md
-!/internal/panel/web/index.html
+# scripts/fetch-panel.sh into public/dist; the built SPA is never committed, only the
+# placeholder note and page.
+/public/dist/*
+!/public/dist/README.md
+!/public/dist/index.html

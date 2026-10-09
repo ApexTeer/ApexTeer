@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,13 +24,8 @@ import (
 	"github.com/EasySBTeam/EasySB/internal/subd"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 	"github.com/EasySBTeam/EasySB/internal/user"
+	"github.com/EasySBTeam/EasySB/public"
 )
-
-// webBundle is the fallback front end compiled into the binary. A distribution
-// may place a newer build under WebDir; that copy wins when it is present.
-//
-//go:embed all:web
-var webBundle embed.FS
 
 // Options configures the panel server. Every path is injectable so a test can run
 // the whole server against a temporary directory instead of /etc/sing-box.
@@ -366,9 +360,9 @@ func (s *Service) webFS() fs.FS {
 	if info, err := os.Stat(dir); err == nil && info.IsDir() {
 		return os.DirFS(dir)
 	}
-	sub, err := fs.Sub(webBundle, "web")
+	sub, err := fs.Sub(public.Dist, "dist")
 	if err != nil {
-		return webBundle
+		return public.Dist
 	}
 	return sub
 }

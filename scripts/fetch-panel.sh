@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# 把 EasySB-Panel 发布的前端产物取进 internal/panel/web，go:embed 从那里打进二进制。
+# 把 EasySB-Panel 发布的前端产物取进 public/dist，public/public.go 的 go:embed 从那里
+# 打进二进制。
 # 前端由 EasySB-Panel 的 Actions 构建、以 Release 资产发布；本仓库不提交编译产物，
 # 只在构建前跑一次本脚本，缺 index.html 时立即失败，避免发一个没有控制台的包。
-# Fetch the panel bundle published by EasySB-Panel into internal/panel/web, where
-# go:embed picks it up. The bundle is built by EasySB-Panel's Actions and published as a
-# release asset; this repository never commits the built SPA. Run this once before a
-# build. It fails fast when the extracted bundle has no index.html, so a package without
-# a console is never produced.
+# Fetch the panel bundle published by EasySB-Panel into public/dist, where the
+# go:embed in public/public.go picks it up. The bundle is built by EasySB-Panel's Actions
+# and published as a release asset; this repository never commits the built SPA. Run this
+# once before a build. It fails fast when the extracted bundle has no index.html, so a
+# package without a console is never produced.
 #
 # 用法 / Usage:
 #   bash scripts/fetch-panel.sh                 # 最新正式 Release
@@ -20,7 +21,7 @@ set -euo pipefail
 # Repository, channel and destination are all overridable from the environment.
 REPO="${PANEL_REPO:-EasySBTeam/EasySB-Panel}"
 CHANNEL="${PANEL_CHANNEL:-release}"
-DEST="${PANEL_DEST:-internal/panel/web}"
+DEST="${PANEL_DEST:-public/dist}"
 ASSET_PREFIX="${PANEL_ASSET_PREFIX:-easysb-panel-dist-}"
 
 # GITHUB_TOKEN 存在时带上，避开匿名限流，也让私有源可用。
