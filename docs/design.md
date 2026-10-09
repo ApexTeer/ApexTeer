@@ -25,12 +25,13 @@ mentions them changes in the same commit. An unread key is dead weight.
 
 ## Templates are readable first
 
-`templates/` holds JSONC that a human can read and copy. Comments are allowed
-there even though sing-box itself would reject them; the tool strips comments
-when it renders a real config. The subscription templates that ship inside the
-binary are `internal/subscribe/tun-fakeip.json` and `internal/subscribe/mihomo.yaml`;
-the readable mirrors are `templates/config/tun-fakeip.json` and
-`templates/config/mihomo.yaml`.
+The readable samples live in the separate EasySB-Examples repository and hold
+JSONC that a human can read and copy. Comments are allowed there even though
+sing-box itself would reject them; the tool strips comments when it renders a
+real config. The subscription templates that ship inside the binary are
+`internal/subscribe/tun-fakeip.json` and `internal/subscribe/mihomo.yaml`; their
+readable mirrors are `Config/tun-fakeip.json` and `Config/mihomo.yaml` in that
+repository.
 
 ## Bilingual by construction
 

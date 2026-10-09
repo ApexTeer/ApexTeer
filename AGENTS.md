@@ -77,11 +77,12 @@ make screens    # render every screen and assert the layout (python3)
 - Every user-facing string goes through `internal/i18n` for both `C` and `E`,
   except the toolbox's own report bodies: a tool's row labels, summaries and notes
   are the tool's own words on purpose (see `docs/toolbox.md`).
-- Directories and paths are lowercase ASCII. `templates/` subdirectories are
-  lowercase.
+- Directories and paths are lowercase ASCII.
 - The runtime subscription templates are embedded from `internal/subscribe/`
-  (`tun-fakeip.json`, `mihomo.yaml`); `templates/config/` holds the readable
-  mirrors. Keep each pair in sync.
+  (`tun-fakeip.json`, `mihomo.yaml`). Their readable mirrors, together with the
+  protocol samples, live in the separate EasySB-Examples repository
+  (https://github.com/EasySBTeam/EasySB-Examples, `Config/`). Keep each pair in
+  sync when either side changes.
 - `README.md` is English; `README_ZH.md` is Chinese. Update both.
 - Use conventional commit subjects (`type(scope): subject`) and no co-author
   trailers.

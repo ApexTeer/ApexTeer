@@ -97,8 +97,8 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   so binary and kernel-package downloads go straight to `github.com`. Mirror
   prefixes were removed on purpose; do not reintroduce them to work around a local
   network problem.
-- **Comments are invalid JSON.** `templates/` files are JSONC for humans. Strip
-  comments before handing anything to `sing-box check`.
+- **Comments are invalid JSON.** The sample files in EasySB-Examples are JSONC
+  for humans. Strip comments before handing anything to `sing-box check`.
 
 ## The toolbox
 
@@ -232,10 +232,10 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 ## State and templates
 
 - **Two subscription templates.** Runtime uses the embedded
-  `internal/subscribe/tun-fakeip.json`; `templates/config/tun-fakeip.json` is the
-  readable mirror. Editing only one causes drift. The same applies to the mihomo
-  template pair `internal/subscribe/mihomo.yaml` and
-  `templates/config/mihomo.yaml`.
+  `internal/subscribe/tun-fakeip.json`; `Config/tun-fakeip.json` in
+  EasySB-Examples is the readable mirror. Editing only one causes drift. The same
+  applies to the mihomo template pair `internal/subscribe/mihomo.yaml` and
+  `Config/mihomo.yaml`.
 - **Do not rename state keys.** `easysb.conf` stays compatible with the legacy
   shell tool; add keys, never repurpose them.
 - **Renaming a directory touches docs and GitHub metadata.** A folder rename

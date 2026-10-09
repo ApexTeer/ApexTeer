@@ -2,7 +2,8 @@
 #
 # This file is embedded by internal/subscribe/mihomo.go and rendered with
 # text/template; the proxy list and node names are substituted from the node
-# state. templates/config/mihomo.yaml is the readable mirror with sample data.
+# state. The readable mirror with sample data lives in the EasySB-Examples
+# repository under Config/mihomo.yaml.
 # Do not put template actions in comments: they are still expanded.
 
 mixed-port: 7890

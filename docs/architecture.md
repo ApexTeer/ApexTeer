@@ -20,15 +20,6 @@ newer release exists, and hands the actual upgrade to apt.
 ├── Makefile                        # build / test / dist entry points (see `make help`)
 ├── packaging/                      # package lifecycle scripts (deb/) and the apt source builder (repo/)
 ├── go.mod / go.sum                 # module github.com/EasySBTeam/EasySB, Go 1.27.1
-├── templates/                      # readable JSONC samples and subscription template
-│   ├── anytls/
-│   ├── hysteria2/
-│   ├── tuic/
-│   ├── vmess-websocket-tls/
-│   ├── vless-vision-reality/
-│   └── config/
-│       ├── tun-fakeip.json          # TUN + FakeIP sing-box subscription template
-│       └── mihomo.yaml              # mihomo / Clash Meta subscription template
 ├── internal/                       # all implementation packages
 ├── assets/                         # README banners
 ├── docs/                           # these engineering docs
@@ -37,10 +28,12 @@ newer release exists, and hands the actual upgrade to apt.
 └── README_ZH.md                    # Chinese
 ```
 
-`templates/` is documentation and reference material. The subscription templates
-actually used at runtime are embedded from `internal/subscribe/tun-fakeip.json`
-and `internal/subscribe/mihomo.yaml` via `//go:embed`; keep each pair in sync when
-editing.
+The readable protocol samples and subscription templates live in a separate
+repository, [EasySB-Examples](https://github.com/EasySBTeam/EasySB-Examples). The
+templates actually used at runtime are embedded from
+`internal/subscribe/tun-fakeip.json` and `internal/subscribe/mihomo.yaml` via
+`//go:embed`; the copies under `Config/` in that repository mirror them, so keep
+each pair in sync when editing.
 
 ## Runtime data
 
