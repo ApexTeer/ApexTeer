@@ -34,3 +34,10 @@ desktop.ini
 # 构建产物：make build 的本地产物与 make dist 的发布产物
 /easysb
 dist/
+
+# 面板前端产物：由 EasySB-Panel 的 Release 承载，scripts/fetch-panel.sh 下载到
+# internal/panel/web，所以编译产物不提交，只保留占位说明。
+# Panel bundle: carried by an EasySB-Panel release and downloaded by
+# scripts/fetch-panel.sh; the built SPA is never committed, only the placeholder note.
+/internal/panel/web/*
+!/internal/panel/web/README.md

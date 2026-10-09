@@ -21,11 +21,17 @@ Read `docs/` first, then the package you need:
 
 ```bash
 make            # build ./easysb with the tags from release/TAGS
+make panel      # fetch the EasySB-Panel release bundle into internal/panel/web
 make check      # gofmt -l + go vet + go test, the pre-commit gate
 make dist       # cross-compile every release architecture into dist/
 make deb        # package the dist/ binaries into .deb files with fpm (UPX-compressed)
 make repo       # lay the .deb files out as a signed apt tree in dist/repo
 ```
+
+The Web panel front end is built by GitHub Actions in the separate `EasySB-Panel`
+repository and published as a release asset; `make panel` downloads it into
+`internal/panel/web`, where `go:embed all:web` picks it up. The built SPA is never
+committed, and `internal/panel/web/README.md` is the only tracked file there.
 
 `make help` lists every target. The bare Go commands still work; `make build` only
 adds `-trimpath`, the tags from `release/TAGS` and the commit stamp.
