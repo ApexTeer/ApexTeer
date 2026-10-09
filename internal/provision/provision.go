@@ -23,10 +23,12 @@ import (
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
 	"github.com/EasySBTeam/EasySB/internal/deploy"
+	"github.com/EasySBTeam/EasySB/internal/firewall"
 	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/service"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/subd"
+	"github.com/EasySBTeam/EasySB/internal/subscribe"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
@@ -193,6 +195,10 @@ type Options struct {
 	ApplyStore    func(context.Context, state.Config, string, string) error
 	SubWriteUnit  func() error
 	SubDo         func(context.Context, string) error
+	SubURL        func(state.Config, string) string
+	FWApply       func(context.Context, state.Config, []node.Node, func(string)) error
+	FWWriteUnit   func([]node.Node) error
+	FWUnitAction  func(context.Context, string) error
 }
 
 // Default returns the real Options.
@@ -215,6 +221,10 @@ func Default() Options {
 		ApplyStore:    deploy.ApplyStore,
 		SubWriteUnit:  subd.WriteUnit,
 		SubDo:         subd.Do,
+		SubURL:        subscribe.SubscriptionURL,
+		FWApply:       firewall.Apply,
+		FWWriteUnit:   firewall.WriteUnit,
+		FWUnitAction:  firewall.UnitAction,
 	}
 }
 
@@ -271,6 +281,18 @@ func (o Options) withDefaults() Options {
 	if o.SubDo == nil {
 		o.SubDo = d.SubDo
 	}
+	if o.SubURL == nil {
+		o.SubURL = d.SubURL
+	}
+	if o.FWApply == nil {
+		o.FWApply = d.FWApply
+	}
+	if o.FWWriteUnit == nil {
+		o.FWWriteUnit = d.FWWriteUnit
+	}
+	if o.FWUnitAction == nil {
+		o.FWUnitAction = d.FWUnitAction
+	}
 	return o
 }
 
@@ -285,6 +307,7 @@ func Run(ctx context.Context, spec Spec, opt Options) (*Result, error) {
 	now := opt.Now()
 
 	cfg := opt.LoadConfig()
+	first := !cfg.NodeDeployed
 	if cfg.SubServePort == 0 {
 		cfg.SubServePort = state.DefaultSubServePort
 	}
@@ -340,6 +363,18 @@ func Run(ctx context.Context, spec Spec, opt Options) (*Result, error) {
 		return nil, err
 	}
 
+	// The hop firewall and the subscription service change with the host rather
+	// than with a single node, so they are set up on the first deploy only, the
+	// same as the panel does. A firewall that cannot be applied is a warning: the
+	// nodes still serve, only port hopping is missing.
+	if first {
+		if err := opt.FWApply(ctx, cfg, nodes, log); err != nil {
+			log("firewall: " + err.Error())
+		} else if err := opt.FWWriteUnit(nodes); err == nil {
+			_ = opt.FWUnitAction(ctx, "enable")
+		}
+	}
+
 	if err := opt.SubWriteUnit(); err != nil {
 		return nil, err
 	}
@@ -350,7 +385,7 @@ func Run(ctx context.Context, spec Spec, opt Options) (*Result, error) {
 		return nil, err
 	}
 
-	return buildResult(spec, cfg, nodes, userStore), nil
+	return buildResult(cfg, nodes, userStore, opt.SubURL), nil
 }
 
 // applyNodes creates the spec's nodes that are not already present. A node is
@@ -524,12 +559,11 @@ func issueCertificate(ctx context.Context, spec Spec, opt Options, log func(stri
 	return nil
 }
 
-func buildResult(spec Spec, cfg state.Config, nodes []node.Node, store *user.Store) *Result {
-	scheme := "http"
-	if strings.TrimSpace(spec.Domain) != "" {
-		scheme = "https"
-	}
-	res := &Result{Domain: spec.Domain}
+// buildResult assembles the summary, using the same URL builder the panel and
+// the subscription service use, so the address printed here is the one a client
+// can actually fetch.
+func buildResult(cfg state.Config, nodes []node.Node, store *user.Store, subURL func(state.Config, string) string) *Result {
+	res := &Result{Domain: cfg.Domain}
 	for _, n := range nodes {
 		res.Nodes = append(res.Nodes, NodeStatus{Name: n.Name, Protocol: n.Protocol, Port: n.Port})
 	}
@@ -537,7 +571,7 @@ func buildResult(spec Spec, cfg state.Config, nodes []node.Node, store *user.Sto
 		res.Accounts = append(res.Accounts, AccountStatus{
 			Name:  u.Name,
 			Token: u.Token,
-			URL:   fmt.Sprintf("%s://%s:%d%s%s", scheme, cfg.Host(), cfg.SubPort(), subd.SubPath, u.Token),
+			URL:   subURL(cfg, u.Token),
 		})
 	}
 	return res
