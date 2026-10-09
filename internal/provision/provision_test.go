@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
+	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/state"
 	"github.com/EasySBTeam/EasySB/internal/user"
 )
@@ -49,6 +50,10 @@ func testOptions(t *testing.T) Options {
 		ApplyStore:    func(context.Context, state.Config, string, string) error { return nil },
 		SubWriteUnit:  func() error { return nil },
 		SubDo:         func(context.Context, string) error { return nil },
+		SubURL:        func(state.Config, string) string { return "http://test/sub/token" },
+		FWApply:       func(context.Context, state.Config, []node.Node, func(string)) error { return nil },
+		FWWriteUnit:   func([]node.Node) error { return nil },
+		FWUnitAction:  func(context.Context, string) error { return nil },
 	}
 }
 
