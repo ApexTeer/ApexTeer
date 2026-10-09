@@ -379,20 +379,62 @@ reaches the core before it is persisted, and **no** unauthenticated API route.
 
 ## 7. Suggested but not required
 
-1. **Convert `provision.Run`'s state write to `state.Modify`** (§3.3). Small,
-   closes the last instance of the F2 class; needs its own round because it changes
-   a deployment entry point.
-2. **Add an explicit lost-update test that does not depend on timing** — e.g.
-   assert that an unlocked `Load`+save pair demonstrably loses a concurrent write
-   (the experiment in §3.2 shows this fails 1-of-8 every time). It would document
-   *why* the lock exists rather than only that it works.
-3. **A guard for F19** (§4.3), once release policy is decided.
-4. **A versioned certificate directory with a switched pointer** (§4.1) — a real
-   design improvement, but a config-schema migration and not for this round.
-5. **`state.Config.Save` does not use `WriteKeepingBackup`**, so `easysb.conf` has
-   no `.bak`. Deliberately left alone: the state file is human-edited and
-   recoverable by re-entering a handful of keys, unlike the credential stores.
-   Worth a conscious decision rather than a silent one.
+Two of these were implemented after the review, in the round that followed it; the
+rest were assessed and deliberately left. Each entry says which.
+
+1. **Convert `provision.Run`'s state write to `state.Modify`** (§3.3) — **assessed and
+   rejected for now.** The change is not the two-line swap it looks like: `provision`
+   reaches the state through the injected seams `LoadConfig`/`SaveConfig`
+   (`internal/provision/provision.go:185-186`), and it is the only package that does.
+   Its tests set `SaveConfig` to a no-op, so that nothing touches `/etc`. `state.Modify`
+   reads the hardcoded `stateFile` variable instead, so swapping the call sites over
+   would remove the seam and make the provision tests write to the real state path —
+   recreating exactly the leak that `stateFile`'s own comment says was fixed. Doing it
+   properly means adding a third injectable `ModifyState` seam, i.e. re-plumbing a
+   deployment entry point to close a window that is already unreachable in practice
+   (a one-shot CLI on a single-operator host). Recorded, not done.
+2. **Add an explicit lost-update test that does not depend on timing** — **partly done
+   already.** `TestModifyDoesNotLoseAConcurrentChange` (`internal/state`) does exactly
+   this: it takes a stale copy, commits another actor's change, then asserts `Modify`
+   preserves it, and finally shows that saving the stale copy **does** erase it. The
+   A/B experiment in §3.2 supplies the missing half for the credential stores — the
+   unlocked cycle loses 7 of 8 updates every run — but as a measurement, not a test.
+3. **A guard for F19** (§4.3) — **not done**, release policy is out of scope this round.
+4. **A versioned certificate directory with a switched pointer** (§4.1) — **not done**;
+   a config-schema migration, see the blast radius recorded there.
+5. **`state.Config.Save` does not use `WriteKeepingBackup`**, so `easysb.conf` has no
+   `.bak` — **deliberately unchanged**: the state file is human-edited and recoverable
+   by re-entering a handful of keys, unlike the credential stores.
+6. **Two coverage gaps closed after the review**, because both sat on paths the
+   optimization had touched and neither was covered at all:
+   - `sysinfo.ReadKeyValues` is the **only** parser for `/etc/sing-box/easysb.conf`;
+     `state.Load` builds the whole host configuration through it and
+     `panel.LoadConfig` reads its own file the same way. `internal/sysinfo` was at
+     20.8% and the function was not referenced by any test. Six tests now cover the
+     `%q` round-trip that `state.Save` depends on (quotes, backslashes, tabs, a
+     trailing backslash), the long-line buffer that must not truncate the rest of the
+     file, comment and malformed-line handling, duplicate keys, and a missing file.
+     Verified load-bearing: disabling the `strconv.Unquote` path makes them fail with
+     `BACKSLASHED round-tripped to "C:\\\\path\\\\to\\\\thing"`. Coverage 20.8% → 29.8%.
+   - `service.wrap` is the error text every caller reports when a `systemctl`
+     operation fails, including the fallback that keeps a reason when systemctl
+     prints nothing (a timeout, or the start-limit latch). The timeout paths
+     themselves remain unverifiable here (see §5), but the gate that skips them and
+     the diagnostic they produce are now pinned. Coverage 29.2% → 40.3%.
+7. **Three `systemctl` timeout constants read inconsistently** — `commandTimeout`
+   (120s, named) plus inline 15s in `DaemonReload` and 30s in `Active`. The values are
+   deliberate and correct; only the presentation is uneven. Left alone: renaming two
+   constants is churn in a file this round otherwise only adds tests to, and the
+   values are already explained in `commandTimeout`'s comment.
+
+### Repo-native gates run after the review
+
+`make version`, `make fmt-check` and `make release-matrix` all pass
+(`make version` prints `EasySB 6.0.0 / commit 510facd / tags …`), and
+`scripts/layout_check.py` — the repository's own TUI check, 16 screens × 6 sizes =
+**192 renders** — reports `ok (0 problems)`. That check had not been run during the
+optimization, so it is the first confirmation that the TUI changes in
+`internal/tui/{actions,domain,nodes,params}.go` did not disturb the fixed layout.
 
 ## 8. Verification performed for this review
 
