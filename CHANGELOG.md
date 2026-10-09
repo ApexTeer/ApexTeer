@@ -11,6 +11,7 @@
 ### 变更
 
 - **协议样例与订阅模板迁移到独立仓库**：根目录的 `templates/` 整体移到 [EasySB-Examples](https://github.com/EasySBTeam/EasySB-Examples)，目录名改为协议显示名（`Hysteria2`、`VLESS-Vision-REALITY`、`TUIC`、`AnyTLS`、`VMess-WebSocket-TLS`、`Config`）。运行期内嵌模板（`internal/subscribe/tun-fakeip.json`、`internal/subscribe/mihomo.yaml`）位置不变，`Config/` 仍是它们的可读镜像，需成对同步；`README.md` / `README_ZH.md`、`docs/`、`AGENTS.md`、`.github/` 与 `SECURITY.md` 中的相关引用一并改为指向新仓库。
+- **规则集下载地址改为组织仓库**：内嵌订阅模板 `internal/subscribe/tun-fakeip.json` 与镜像 `Config/tun-fakeip.json` 里的远程规则集 URL 由 `MinimaxFlora/proxy-rules-dat` 改为 [EasySBTeam/Proxy-Rules-Data](https://github.com/EasySBTeam/Proxy-Rules-Data)，`@sing` 分支与 `geo/geosite/cn.srs`、`geo/geoip/cn.srs` 路径保持不变。
 
 ### 新增
 
