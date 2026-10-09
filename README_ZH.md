@@ -258,6 +258,7 @@ deb [signed-by=/usr/share/keyrings/easysb-archive-keyring.gpg] https://github.co
   "server_ip": "203.0.113.10",
   "sub_port": 8443,
   "nodes": [
+    { "protocol": "anytls" },
     { "protocol": "vless-reality" },
     { "protocol": "hysteria2", "port": 8001, "hop_range": "2080:3000" },
     { "protocol": "tuic" }
