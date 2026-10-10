@@ -346,7 +346,39 @@ func (s *Service) Handler() http.Handler {
 	// Everything else is the single-page application.
 	mux.HandleFunc("/", s.handleStatic)
 
-	return s.withLogging(s.withSecurityEntry(mux))
+	return s.withLogging(s.withSecurityEntry(s.withSecurityHeaders(mux)))
+}
+
+// withSecurityHeaders sets the response headers that stop a browser treating the console's
+// own content as something it is not.
+//
+// The Content-Security-Policy is deliberately narrow, and the narrowness is the point: it
+// contains only directives that cannot break a working page, so it can be enabled without a
+// rendering test per release. frame-ancestors and object-src stop the console being framed
+// by another site and stop a plugin being embedded in it; both are enforced regardless of
+// what the front end loads.
+//
+// script-src and style-src are deliberately NOT set. The panel serves the front end's own
+// bundle from its own origin, and a policy broad enough to be safe for an unknown bundle
+// adds nothing; one narrow enough to be worth having would have to be verified against every
+// front-end release. Establishing the exact set the SPA needs is worth doing, but it needs a
+// rendering test in CI rather than a guess here.
+func (s *Service) withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		// A response whose type is guessed can be treated as script; the panel serves one
+		// JSON API and one bundle, and both know their type.
+		h.Set("X-Content-Type-Options", "nosniff")
+		// Nothing about this console should be framed. DENY also covers the case of a
+		// browser that predates frame-ancestors.
+		h.Set("X-Frame-Options", "DENY")
+		// The address carries the security entry, which is half of the panel's access
+		// control. It must not travel to another origin in a Referer, and the panel needs
+		// no referrer information itself.
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // securityEntry returns the live security entry segment, or "" when the panel is
