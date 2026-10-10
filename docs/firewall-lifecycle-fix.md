@@ -160,29 +160,85 @@ anonymous caller learns nothing. Logout is a public route but only calls
 `revoke(requestToken(r))`, not `revokeAll()`, so an anonymous POST cannot log a real session
 out — a deviation, not a vulnerability.
 
-## 4. Significant finding: the deployed panel has no front end
+## 4. The deployed panel had no front end — now fixed
 
-The running panel serves a **568-byte placeholder page**:
+### 4.1 What was found
+
+The running panel served a **568-byte placeholder page**:
 
 ```
 <title>EasySB 控制台（占位页）</title>
 面板前端占位页：运行 make panel 从 EasySB-Panel 的 Release 取前端，再重新构建二进制。
 ```
 
-The binary was built **without** running `make panel`, so `//go:embed all:dist` embedded the
-placeholder that is committed in `public/dist/`. `EasySB-Panel v0.1.0` does publish a real
-bundle (`easysb-panel-dist-v0.1.0.tar.gz`, 459,610 bytes), so the correct build fetches it —
-this build did not.
+The binary had been built **without** running `make panel`, so `//go:embed all:dist`
+embedded the placeholder committed in `public/dist/`. The API was complete and correct —
+53/53 routes audited — but a browser saw the placeholder, not a console.
 
-**Consequence**: the API is complete and correct (53/53 routes audited in the previous
-round), but a browser visiting the panel sees the placeholder, not a console. If you have
-been using the panel successfully, the front end you used came from somewhere else and is
-not in this binary.
+### 4.2 Why `make panel` still worked
 
-**Unverified**: whether the **published** `.deb` serves a real SPA. Binary-safe search found
-no asset names and no placeholder in it, and my attempt to serve it on a spare port failed
-to bind because it reads the production config's port. I could not confirm it either way and
-am not claiming it.
+`scripts/fetch-panel.sh` defaulted to `EasySBTeam/EasySB-Panel`, which GitHub now
+**redirects** to `EasySBTeam/EasySB-Frontend`. The fetch therefore succeeded — one hop and
+one rename away from a 404 in CI. The default is now the current name.
+
+### 4.3 Why a placeholder could reach a release at all
+
+`fetch-panel.sh` only failed when `index.html` was *missing*, and the placeholder
+`index.html` is committed, so a fetch that produced no real bundle still passed. Two guards
+were added:
+
+- `make panel-check` fails when `public/dist/index.html` still contains `占位`, and
+  **`pkg-stage` depends on it**, so a package cannot be built from a placeholder.
+- `fetch-panel.sh` applies the same check after extraction.
+
+Verified both ways: placeholder → `exit 2` ("public/dist/index.html is still the
+placeholder: the release would ship a panel with no console"); real bundle → passes.
+
+### 4.4 The fix, deployed and verified
+
+`make panel` fetched `easysb-panel-dist-v0.1.0.tar.gz` (459,610 bytes) from
+`EasySB-Frontend`; the panel was rebuilt, installed, and restarted. What the live panel now
+serves:
+
+| Request | Result |
+| :--- | :--- |
+| `GET /` | 535 bytes, `<title>EasySB 控制台</title>`, no placeholder text |
+| `GET /assets/index-C4OFHUfJ.js` | **200, 1,311,116 bytes**, `text/javascript; charset=utf-8` |
+| `GET /assets/index-BvrH33hU.css` | **200, 575,327 bytes**, `text/css; charset=utf-8` |
+| `GET /logo.png` | 200, 34,323 bytes, `image/png` |
+| `GET /nodes` (deep link) | 200, falls back to the shell |
+| public IP `https://103.116.247.139:2095/` | 200 |
+
+The JS is real minified application code (contains `createRoot` and `api/v1` paths), not an
+error page. The core was **not** restarted: its PID was identical before and after.
+
+### 4.5 What was verified about execution, and what was not
+
+**Verified.** A real browser engine (Chrome for Testing 155) fetched the shell, the JS, the
+CSS and `logo.png`, all 200. The panel log then shows the in-sequence API traffic a running
+SPA produces: `auth/session` → `dashboard` → `nodes` → `users` → `domains` → `core` →
+`system` → `security` → `bbr` → `toolbox` → `logs` → `panel` → `subscriptions`, then
+`POST /auth/login`. A `POST /api/v1/core/apply` without the CSRF header was correctly
+refused with **403**, and every call made without a session returned **401**.
+
+**Not verified — the honest gap.** I could not confirm the painted UI in a browser.
+`chrome-headless-shell` needs X/NSS libraries the server does not ship; I built a portable
+bundle and that attempt **failed harmfully**: the bundle included **glibc**, and putting it
+in `LD_LIBRARY_PATH` poisoned the shell (coreutils aborted with "stack smashing detected").
+The bundle was removed immediately and the host was confirmed unaffected — all five
+services active, 0 failed units, panel 200, your files untouched. I did not repeat it.
+
+So the asset graph, MIME types, byte counts, API contract and request sequence are verified
+against the live host. **That the React UI paints correctly is unverified.** Opening
+`https://103.116.247.139:2095/` settles it in seconds, and it is the one check I cannot make
+from here.
+
+**Unverified (earlier question, now moot for the running host)**: whether the *published*
+`.deb` in the release carries a real SPA. Binary-safe search found neither asset names nor
+placeholder text in it, and serving it on a spare port failed to bind because it reads the
+production config's port. I am not claiming either way; the guard added in 4.3 makes the
+question answerable for the next release.
+
 
 ## 5. Task 4 — package status (investigation)
 

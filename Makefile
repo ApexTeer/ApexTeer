@@ -124,9 +124,9 @@ build-plain: ## 不带标签构建，便于快速迭代
 
 # --- 面板前端 / Panel bundle ---------------------------------------------------
 
-# 前端由 EasySB-Panel 的 Release 承载；这里把它取进 public/dist 供 go:embed。
+# 前端由 EasySB-Frontend 的 Release 承载；这里把它取进 public/dist 供 go:embed。
 # 发布构建必须先跑这一步，否则二进制里只有占位文件；本地要用真实控制台时也跑它。
-# The front end is carried by an EasySB-Panel release; this pulls it into public/dist
+# The front end is carried by an EasySB-Frontend release; this pulls it into public/dist
 # for go:embed. A release build runs it first, otherwise the binary only carries the
 # placeholder; run it locally too when you want the real console.
 panel: ## 取最新正式面板前端到 public/dist
@@ -134,6 +134,22 @@ panel: ## 取最新正式面板前端到 public/dist
 
 panel-edge: ## 取 edge 滚动面板前端到 public/dist
 	PANEL_CHANNEL=edge bash scripts/fetch-panel.sh
+
+# 发布构建必须带真实前端，否则打出来的包有完整 API 却没有控制台——v6.0.0 就是这样发出去的，
+# 面板只返回 568 字节的占位页。占位页的横幅里带「占位」二字，这里据此停下。
+# A release build has to carry the real front end. Without it the package ships a complete
+# API and no console, which is what v6.0.0 did: the panel served a 568-byte placeholder.
+# The placeholder banner contains "占位", which is what this refuses to ship.
+.PHONY: panel-check
+panel-check: ## 内部：确认 public/dist 是真实前端而不是占位页
+	@if grep -q '占位' public/dist/index.html 2>/dev/null; then \
+		echo "public/dist/index.html 仍是占位页，发布构建会得到一个没有控制台的面板。" >&2; \
+		echo "public/dist/index.html is still the placeholder: the release would ship a" >&2; \
+		echo "panel with no console. Run 'make panel' first." >&2; \
+		exit 1; \
+	fi
+	@test -f public/dist/index.html || { echo "public/dist/index.html 缺失 / missing: run 'make panel'" >&2; exit 1; }
+	@echo "面板前端已就位 / panel front end present"
 
 # --- 运行 / Run ---------------------------------------------------------------
 
@@ -208,7 +224,7 @@ deb: build ## 打包全部发布架构的 .deb 到 dist/
 # 进入 stage/ 的时候，dist/ 里那份交叉编译产物保持原样。
 # One format reads this staging tree, so it is also the single place UPX runs: compression
 # happens as the file leaves dist/ for stage/, leaving the cross-compiled dist/ copy alone.
-pkg-stage: ## 内部：准备打包暂存树（ASSET= 必填；REUSE_DIST=1 复用 dist/；NO_BUILD=1 不重建）
+pkg-stage: panel-check ## 内部：准备打包暂存树（ASSET= 必填；REUSE_DIST=1 复用 dist/；NO_BUILD=1 不重建）
 	@test -n "$(ASSET)" || { echo "ASSET 未设置 / ASSET required, one of: $(ARCHES)"; exit 1; }
 	@if [ -z "$(NO_BUILD)" ]; then $(MAKE) --no-print-directory build; fi
 	@if [ -z "$(REUSE_DIST)" ]; then $(MAKE) --no-print-directory dist-asset ASSET=$(ASSET); fi
