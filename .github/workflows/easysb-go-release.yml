@@ -105,6 +105,36 @@ jobs:
         id: ver
         run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
+  # 判断这一次是否要发布，结论放在 publish。
+  #
+  # 这一步和 release 分开，是为了让"要不要发"与"发不发得出去"分开：版本已发布过时，
+  # 判断本身不是失败，release 被跳过（整个运行仍是绿色），构建与测试照常跑完。把判断写进
+  # release 作业只能是"失败即结束"，一次未升版的合并就会把 master 变红——正是要避免的。
+  #
+  # 真正的错误（API 不可用、响应形状异常）仍会让这一步失败，绝不因抖动而盲发。
+  #
+  # Decides whether this run publishes, in the publish output. It is a job of its own so that
+  # "should we ship?" is separate from "did shipping succeed": when the version already
+  # shipped, the decision is not a failure and the release job is skipped (the run stays
+  # green) while build and test still run. Folding the decision into the release job could
+  # only fail-and-stop, turning every un-bumped merge red - the very thing to avoid. Genuine
+  # errors (API unavailable, unexpected shape) still fail here rather than publish blind.
+  gate:
+    if: github.event_name != 'pull_request'
+    needs: prepare
+    runs-on: ubuntu-26.04
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 决定是否发布
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/guard-duplicate-release.sh "v${{ needs.prepare.outputs.version }}"
+
   # 每个架构一个作业：从一棵暂存树出来一个 .deb。二进制由 --print-unit 打印的 systemd
   # 单元、UPX 压缩后的可执行文件都在这一棵树上，安装进系统的单元与面板运行时写下的完全
   # 一致，不存在第二处定义。
@@ -158,6 +188,12 @@ jobs:
           path: dist/*.deb
           if-no-files-found: error
 
+  # 只有当 gate 判定要发布时才运行：版本已发布过（VERSION 未升版）时这一步被跳过，整个
+  # 运行仍是绿色，gate 会在运行摘要里提醒升版。
+  #
+  # Runs only when gate decided to publish: when the version already shipped (VERSION was not
+  # bumped) this job is skipped and the run stays green, with gate's summary asking for a bump.
+  #
   # 一个 release 装下全部资产：tag 与 release 名都是 v<版本>，与 sing-box 一致。除了每个
   # 架构的 .deb，还附上同一批 .deb 摆成的扁平 apt 仓库，release 本身就是软件源。
   # 发布只保留最新一个 release；上传完再把旧的连同 tag 一起收走，Release 页始终只剩当前版本。
@@ -166,44 +202,14 @@ jobs:
   # the release is the apt source. Only the newest release is kept: after the upload the stale
   # releases and their tags are pruned, so the Release page only ever shows the current version.
   release:
-    if: github.event_name != 'pull_request'
-    needs: [prepare, build]
+    if: github.event_name != 'pull_request' && needs.gate.outputs.publish == 'true'
+    needs: [prepare, gate, build]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
       - name: 检出仓库
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      # 「这个版本的 tag 是否已存在」只在发布时才是个问题，所以这道检查放在这里，而不是
-      # prepare 里。
-      #
-      # 放在 prepare 曾经让 push 到 master 的每一次运行都在第一分钟失败，包括只想验证
-      # 改动的运行：一个未升版的提交永远拿不到一次完整的构建与测试。是否发布是 release
-      # 作业的事，校验不是。这道检查失败时，产物已经构建并通过测试，只是不上传。
-      #
-      # Whether this version's tag already exists only matters when publishing, so the check
-      # lives here rather than in prepare. In prepare it failed every push to master inside the
-      # first minute - including runs that only wanted to validate a change, so an un-bumped
-      # commit could never get a full build and test. Publishing is the release job's business;
-      # validating is not. When this fails, the artifacts are already built and tested, they
-      # are simply not uploaded.
-      #
-      # 版本号是发布的唯一标识：包版本只有 <VERSION>-1（Makefile 的 fpm -v/--iteration 与
-      # packaging/repo/index.sh 的 debver），所以同一个 tag 再发一次，会让同名资产变成不同
-      # 字节，而 apt 比较版本号后不会升级——修复后的字节永远到不了已装 <VERSION>-1 的机器，
-      # 用户也没有该升级的信号。VERSION 未变而 tag 已存在时停下，要求显式升版。
-      #
-      # The version is the release's only identifier: the package version is just <VERSION>-1
-      # (fpm -v/--iteration in the Makefile and debver in packaging/repo/index.sh), so
-      # re-publishing a tag replaces same-named assets with different bytes while apt,
-      # comparing versions, declines to upgrade - the fixed bytes never reach a host that
-      # already has <VERSION>-1, and the user gets no signal that they should. Stop when
-      # VERSION has not moved but its tag exists.
-      - name: 防止重复发布同一版本
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/guard-duplicate-release.sh "v${{ needs.prepare.outputs.version }}"
 
       - name: 下载全部产物
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

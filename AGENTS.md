@@ -50,6 +50,13 @@ make screens    # render every screen and assert the layout (python3)
   second place. The workflow, `internal/update`, and the release notes share it.
   `VERSION` is embedded into the binary with `go:embed`; do not reintroduce a
   `main.version` default or a version constant in `install.sh`.
+- A release is published only when `VERSION` moves. The `gate` job runs
+  `scripts/guard-duplicate-release.sh`: when `v<VERSION>` already points at a
+  different commit it reports `publish=false`, the release job is skipped, and the
+  run stays green (build and test still run) with a "bump `VERSION`" note in the
+  summary. Republishing a version is never silent: the package version is
+  `<VERSION>-1`, so `apt` would decline to upgrade a host that already has it, and
+  the new bytes would never arrive.
 - EasySB ships as a single `.deb`: the only architectures are `amd64` and `arm64`
   (the two the BBR kernels cover), the only platform is Debian and Ubuntu, and the
   only package is the `.deb`. The arch names come from the Makefile's `ARCHES` /
