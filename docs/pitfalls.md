@@ -220,11 +220,25 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   Encrypt, or its staging endpoint, instead of taking a default: acme.sh moved its
   own default from Let's Encrypt to ZeroSSL, so a default that can move silently
   changes who signs the panel's certificates.
-- **The key is written before the certificate.** `installPair()` writes
-  `private.key` first and `fullchain.cer` second, so a failure between the two
-  leaves a pair that does not exist rather than a certificate next to a key it was
-  not issued for — the one combination sing-box refuses to start with. `Paths()`
-  reports a pair only when both files are there and non-empty.
+- **The key is written before the certificate, and that only covers a first
+  issuance.** `installPair()` writes `private.key` first and `fullchain.cer`
+  second. On a host with no certificate yet, a failure between the two leaves a key
+  with no certificate, and `Paths()` requires both files to be there and non-empty,
+  so it reports no pair and `ResolveActive()` falls back to the placeholder — the
+  core is never handed a certificate next to a key it was not issued for, which is
+  the one combination sing-box refuses to start with.
+
+  On a **renewal** the previous `fullchain.cer` is still on disk, so the same
+  failure leaves the *new* key beside the *old* certificate: that does exist, is
+  non-empty, and `Paths()` therefore reports it as a pair even though the two do not
+  match. Do not restate the guarantee without this distinction. Closing it means
+  making `pairIn()` verify that the key matches the certificate, which changes what
+  `ResolveActive()` (a mismatched pair currently would silently become the
+  self-signed placeholder) and `dueForRenewal()` (an unparsable pair currently
+  becomes "due", spending a certificate) do — so it is a deliberate change with its
+  own tests, not a one-line hardening. Tracked as F7 in
+  `docs/optimization-audit.md`. `writeFile()` is atomic per file, so neither half is
+  ever truncated; it is the pair that cannot be replaced as one.
 - **Reissuing a valid certificate is not a failure.** `Issue()` returns success
   and says why ("… is still valid until …") when the certificate in place is not
   due; that is what a second click on the button produces.

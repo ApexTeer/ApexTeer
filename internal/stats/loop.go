@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/sbcore"
 	"github.com/EasySBTeam/EasySB/internal/state"
@@ -67,11 +68,14 @@ type Loop struct {
 	announcedNoStats bool
 	// sampleLoaded records whether the on-disk baseline has been consulted yet.
 	sampleLoaded bool
+	// done is closed when Run returns, so a caller that started it in a goroutine
+	// can wait for the loop to stop touching the stores.
+	done chan struct{}
 }
 
 // New prepares an accounting loop.
 func New(opts Options) *Loop {
-	return &Loop{opts: opts}
+	return &Loop{opts: opts, done: make(chan struct{})}
 }
 
 // statsCapable answers whether this loop has counters to read: the injected
@@ -85,7 +89,14 @@ func (l *Loop) statsCapable() bool {
 
 // Run samples until ctx is cancelled. It ticks once immediately, because the
 // service may have been started precisely to apply a policy change.
+//
+// A caller that started Run in a goroutine can wait for Done to learn that it has
+// stopped. Returning after cancelling the context is not enough on its own: the
+// loop writes the account store and its baseline during a cycle, so a caller that
+// finished while the last cycle was still running could remove or replace the
+// directory underneath it.
 func (l *Loop) Run(ctx context.Context) error {
+	defer close(l.done)
 	l.log("accounting every " + l.interval().String())
 	for {
 		if err := l.Tick(ctx); err != nil && ctx.Err() == nil {
@@ -98,6 +109,9 @@ func (l *Loop) Run(ctx context.Context) error {
 		}
 	}
 }
+
+// Done is closed once Run has returned, including when it was never started.
+func (l *Loop) Done() <-chan struct{} { return l.done }
 
 // Tick runs one accounting cycle.
 func (l *Loop) Tick(ctx context.Context) error {
@@ -164,26 +178,40 @@ func (l *Loop) Tick(ctx context.Context) error {
 	// A restart is only needed when the set of accounts the core accepts has to
 	// change; accounting itself never touches the running core. A loop without an
 	// applier only keeps the counters correct, which is what tests exercise.
-	if l.opts.Apply != nil && transitions(store, now) {
-		nodes, err := l.nodes()
-		if err != nil {
-			lock.Unlock()
-			return err
-		}
-		if err := l.opts.Apply(ctx, l.opts.Node(), nodes, store.Routable(now)); err != nil {
-			lock.Unlock()
-			return err
-		}
-		store.MarkApplied(now)
-		changed = true
-	}
+	restart := l.opts.Apply != nil && transitions(store, now)
+	// The counters are persisted before the restart, and the lock is released before
+	// it too. The restart reaches systemctl, whose only deadline is the context it
+	// is handed - and this loop's context lives as long as the process - so holding
+	// the account lock across it meant one wedged restart stopped every other writer
+	// on the store, the panel's included, until someone restarted the service.
 	if changed {
 		if err := store.Save(); err != nil {
 			lock.Unlock()
 			return err
 		}
 	}
+	// What the restart needs, captured while the store is still loaded.
+	var routable []user.User
+	if restart {
+		routable = store.Routable(now)
+	}
 	lock.Unlock()
+
+	if restart {
+		nodes, err := l.nodes()
+		if err != nil {
+			return err
+		}
+		if err := l.opts.Apply(ctx, l.opts.Node(), nodes, routable); err != nil {
+			return err
+		}
+		// The applied flag is recorded against a store reloaded under the lock, and
+		// only that flag is at stake: the counters were written above, so a failure
+		// here costs a repeated restart next cycle rather than lost traffic.
+		if err := l.markApplied(now); err != nil {
+			return err
+		}
+	}
 	// The baseline moves only after the deltas it produced are on disk. The store
 	// is reloaded from the file at the top of every cycle, so advancing the sample
 	// before a failed Apply or Save would subtract those bytes from the next diff
@@ -191,6 +219,18 @@ func (l *Loop) Tick(ctx context.Context) error {
 	l.sample, l.sampled = counters, true
 	l.saveSample()
 	return nil
+}
+
+// markApplied records which accounts the core now accepts, under the account lock
+// and against the store as it is on disk at that moment.
+func (l *Loop) markApplied(now time.Time) error {
+	store, lock, err := user.Locked(l.opts.AccountsPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	store.MarkApplied(now)
+	return store.Save()
 }
 
 // nodes loads the node store the applier should render. A loop without a node
@@ -342,6 +382,13 @@ func (l *Loop) loadSample() {
 // saveSample writes the current baseline so a restart of the subscription
 // service does not discard the traffic accumulated since the last cycle. It is
 // called only after the deltas it produced are safely on disk.
+//
+// The write is atomic, because the failure this baseline guards against is not
+// only a restart: a torn file is unreadable, loadSample ignores it, and the next
+// cycle then only re-establishes a baseline — so every byte since the last good
+// save is never charged. Undercounting hands out free traffic, which is the
+// worse of the two accounting errors. The error is reported rather than dropped
+// for the same reason.
 func (l *Loop) saveSample() {
 	path := l.samplePath()
 	if path == "" {
@@ -353,7 +400,14 @@ func (l *Loop) saveSample() {
 	}
 	data, err := json.Marshal(doc)
 	if err != nil {
+		l.log("accounting: cannot encode the baseline: " + err.Error())
 		return
 	}
-	_ = os.WriteFile(path, data, 0o600)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		l.log("accounting: cannot create the baseline directory: " + err.Error())
+		return
+	}
+	if err := atomicfile.Write(path, data, 0o600); err != nil {
+		l.log("accounting: cannot save the baseline: " + err.Error())
+	}
 }

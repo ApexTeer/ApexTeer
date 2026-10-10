@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,5 +61,75 @@ func TestPickExecutable(t *testing.T) {
 				t.Fatalf("pickExecutable(%q, %v) = %q, want %q", tc.self, tc.candidates, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestWrapKeepsTheReasonTheActionFailed covers the error a failed systemctl call
+// produces, which is the only thing an operator sees: every caller in the panel, the
+// TUI and the first-deploy path reports it verbatim.
+//
+// The commands run with LC_ALL=C so this text is in the C locale and stable, and the
+// output fallback is what makes a failure that prints nothing - a timeout, or
+// systemd's start-limit latch - still name a reason rather than ending at the colon.
+func TestWrapKeepsTheReasonTheActionFailed(t *testing.T) {
+	cause := errors.New("exit status 1")
+
+	withOutput := wrap("restart", []byte("Job for sing-box.service failed.\n"), cause).Error()
+	for _, want := range []string{"restart", sysinfo.ServiceName, "Job for sing-box.service failed."} {
+		if !strings.Contains(withOutput, want) {
+			t.Errorf("wrap() = %q, missing %q", withOutput, want)
+		}
+	}
+	// The output is trimmed: a trailing newline would split a log line.
+	if strings.Contains(withOutput, "\n") {
+		t.Errorf("wrap() kept a newline: %q", withOutput)
+	}
+
+	// No output: the underlying error is the only reason there is.
+	silent := wrap("start", nil, cause).Error()
+	if !strings.Contains(silent, "exit status 1") || !strings.Contains(silent, "start") {
+		t.Errorf("wrap() dropped the cause when systemctl printed nothing: %q", silent)
+	}
+
+	// Whitespace-only output is treated as no output.
+	blank := wrap("stop", []byte("  \n\t\n"), cause).Error()
+	if !strings.Contains(blank, "exit status 1") {
+		t.Errorf("wrap() did not fall back to the cause for blank output: %q", blank)
+	}
+}
+
+// TestDoAndActiveFailClosedWithoutSystemd pins the behaviour on a host that has the
+// systemctl binary but no systemd running as init - the arrangement in a container,
+// and the one this repository is developed in. The status question answers "not
+// running", which is what makes a caller take the install-and-start branch instead of
+// restarting something that is not there.
+//
+// The commands carry their own deadline (commandTimeout for Do, a shorter one for
+// Active), but that path cannot be exercised here: with no systemd bus the call fails
+// immediately rather than blocking, so the ceiling is verified by inspection only.
+func TestDoAndActiveFailClosedWithoutSystemd(t *testing.T) {
+	if Detect() != Systemd {
+		t.Skip("systemctl is not on PATH, so there is nothing to fail against")
+	}
+	// A lifecycle action against a bus that is not there is an error, not a silent
+	// success: pretending to have restarted would leave the caller believing it.
+	if err := Do(context.Background(), "restart"); err == nil {
+		t.Error("Do reported success without a systemd to talk to")
+	}
+	// The status question must never report a service it could not see.
+	if Active(context.Background()) {
+		t.Fatal("Active reported a running service although systemd could not be reached")
+	}
+}
+
+// TestDaemonReloadIsSkippedWithoutSystemd pins that the no-op gate comes before any
+// command is run: on a host without systemd, WriteUnit must not fail because the
+// daemon reload could not be performed.
+func TestDaemonReloadIsSkippedWithoutSystemd(t *testing.T) {
+	if Detect() == Systemd {
+		t.Skip("this host has systemd, so the skip branch is not taken")
+	}
+	if err := DaemonReload(); err != nil {
+		t.Fatalf("DaemonReload on a non-systemd host = %v, want nil", err)
 	}
 }

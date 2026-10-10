@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/download"
 )
 
@@ -347,11 +347,12 @@ func persist(qdisc string, previous previousSettings) error {
 }
 
 // writeRoot writes a file with the permissions a sysctl drop-in needs.
+//
+// The write is atomic because these are the files the kernel reads at boot: a
+// truncated sysctl drop-in or modules-load entry would silently drop BBR, and the
+// generated temp file carries the same 0644 the sysctl loader expects.
 func writeRoot(path, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return atomicfile.Write(path, []byte(content), 0o644)
 }
 
 // validQdisc reports whether name is one of the queue disciplines BBR is paired

@@ -214,6 +214,104 @@ func TestLoginRejectsWrongPasswordAndIssuesSession(t *testing.T) {
 	}
 }
 
+// TestChangePasswordRevokesEverySession covers the remedy an operator reaches for
+// when they suspect a session cookie has leaked: they change the password. Leaving
+// the old tokens live would keep the very access the change was meant to end, for
+// up to the full 12 hour TTL, so the handler drops every session - including the
+// one that made the request - and clears the caller's cookie.
+func TestChangePasswordRevokesEverySession(t *testing.T) {
+	opts := testOptions(t)
+	opts.AllowAnonymous = false
+	hash, _ := HashPassword("correct-password")
+	if err := (Config{Listen: "127.0.0.1", Port: 2095, Username: "admin", PasswordHash: hash}).Save(opts.ConfigPath); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(opts)
+
+	// Two clients, as if the panel were open in two browsers.
+	login := func() string {
+		rec := do(t, svc, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"correct-password"}`, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("login must be 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		token, _ := decodeBody(t, rec)["token"].(string)
+		if token == "" {
+			t.Fatal("login did not return a token")
+		}
+		return token
+	}
+	first, second := login(), login()
+
+	// Both are usable before the change.
+	for i, token := range []string{first, second} {
+		rec := do(t, svc, http.MethodGet, "/api/v1/auth/session", "", map[string]string{"Authorization": "Bearer " + token})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("session %d must be readable before the change, got %d", i, rec.Code)
+		}
+	}
+
+	changed := do(t, svc, http.MethodPost, "/api/v1/auth/password",
+		`{"current":"correct-password","next":"a-new-password"}`,
+		map[string]string{"Authorization": "Bearer " + first})
+	if changed.Code != http.StatusOK {
+		t.Fatalf("the password change must be 200, got %d: %s", changed.Code, changed.Body.String())
+	}
+	if revoked, _ := decodeBody(t, changed)["sessionsRevoked"].(bool); !revoked {
+		t.Fatal("the response must report that sessions were revoked")
+	}
+
+	// Neither the caller's own token nor the other client's survives.
+	for i, token := range []string{first, second} {
+		rec := do(t, svc, http.MethodGet, "/api/v1/auth/session", "",
+			map[string]string{"Authorization": "Bearer " + token})
+		if rec.Code == http.StatusOK {
+			t.Fatalf("session %d survived the password change", i)
+		}
+	}
+
+	// The new password is the one that works now.
+	if rec := do(t, svc, http.MethodPost, "/api/v1/auth/login",
+		`{"username":"admin","password":"a-new-password"}`, nil); rec.Code != http.StatusOK {
+		t.Fatalf("the new password must log in, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(t, svc, http.MethodPost, "/api/v1/auth/login",
+		`{"username":"admin","password":"correct-password"}`, nil); rec.Code == http.StatusOK {
+		t.Fatal("the old password still logs in")
+	}
+}
+
+// TestChangePasswordRejectsAWrongCurrentPassword pins the other half: the current
+// password is required, and a refused change must not revoke anything, or a
+// mistyped field would log the operator out of a working panel.
+func TestChangePasswordRejectsAWrongCurrentPassword(t *testing.T) {
+	opts := testOptions(t)
+	opts.AllowAnonymous = false
+	hash, _ := HashPassword("correct-password")
+	if err := (Config{Listen: "127.0.0.1", Port: 2095, Username: "admin", PasswordHash: hash}).Save(opts.ConfigPath); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(opts)
+
+	login := do(t, svc, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"correct-password"}`, nil)
+	token, _ := decodeBody(t, login)["token"].(string)
+
+	refused := do(t, svc, http.MethodPost, "/api/v1/auth/password",
+		`{"current":"not-the-password","next":"a-new-password"}`,
+		map[string]string{"Authorization": "Bearer " + token})
+	if refused.Code != http.StatusUnauthorized {
+		t.Fatalf("a wrong current password must be 401, got %d: %s", refused.Code, refused.Body.String())
+	}
+
+	// The session is untouched, and the stored credential did not move.
+	after := do(t, svc, http.MethodGet, "/api/v1/auth/session", "", map[string]string{"Authorization": "Bearer " + token})
+	if after.Code != http.StatusOK {
+		t.Fatalf("a refused change revoked the session, got %d", after.Code)
+	}
+	if rec := do(t, svc, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"correct-password"}`, nil); rec.Code != http.StatusOK {
+		t.Fatalf("a refused change replaced the password, got %d", rec.Code)
+	}
+}
+
 func TestCookieMutationRequiresCSRFHeader(t *testing.T) {
 	opts := testOptions(t)
 	opts.AllowAnonymous = false

@@ -34,8 +34,10 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot create session")
 		return
 	}
-	cfg := s.currentConfig()
-	s.setSessionCookie(w, token, expires, cfg.TLS)
+	// Secure follows the scheme the browser used, so the cookie is not sent over
+	// plain HTTP when the panel is behind a TLS-terminating proxy. See
+	// requestIsSecure.
+	s.setSessionCookie(w, token, expires, requestIsSecure(r))
 	s.opts.Log("login ok from " + key)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username":   strings.TrimSpace(body.Username),
@@ -101,6 +103,12 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot save the panel configuration")
 		return
 	}
+	// A password change is how an operator ends an access they no longer trust, so
+	// every session - including the one that made this request - is dropped. The
+	// caller's cookie is cleared as well, otherwise the browser keeps sending a token
+	// that is now unknown.
+	s.sessions.revokeAll()
+	s.clearSessionCookie(w)
 	s.opts.Log("admin password changed")
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionsRevoked": true})
 }

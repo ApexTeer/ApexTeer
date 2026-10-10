@@ -35,6 +35,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
@@ -115,6 +116,15 @@ type pair struct {
 func (p pair) ok() bool { return p.fullchain != "" && p.key != "" }
 
 // pairIn resolves one fullchain/key pair inside a directory.
+//
+// Existence and non-empty size are the test here, not a key match. A match check
+// was tried in this position and rejected: ResolveActive would treat a mismatched
+// pair as "no pair" and quietly serve a self-signed placeholder instead of the
+// certificate the operator installed, and dueForRenewal would read an unparsable
+// pair as "no certificate" and silently re-order one. Both are worse than the
+// problem they were meant to catch. The pair is instead verified where it is
+// written, which is the point the wrong combination can first appear - see
+// writeFile and installPair.
 func pairIn(dir, fname, kname string) pair {
 	fullchain := filepath.Join(dir, fname)
 	key := filepath.Join(dir, kname)
@@ -125,7 +135,17 @@ func pairIn(dir, fname, kname string) pair {
 }
 
 // legacyDirs are the directories a previous EasySB or acme.sh kept certificates in.
+//
+// The domain is validated through domainDir first, so this fallback cannot be
+// steered by a name the primary lookup would have refused. These are read-only
+// paths joined from a value that arrives from the state file and from directory
+// entries, and a name carrying a separator or ".." would otherwise select a
+// directory outside the certificate tree: a domain is checked in one place or it
+// is not checked at all.
 func legacyDirs(domain string) []string {
+	if _, ok := domainDir(domain); !ok {
+		return nil
+	}
 	dirs := []string{
 		filepath.Join(sysinfo.CertDir, domain),
 		sysinfo.CertDir,
@@ -300,14 +320,23 @@ func GenerateSelfSigned(certPath, keyPath, cn string) error {
 // creating the directory it belongs to. The mode is set explicitly because the
 // panel runs as root with whatever umask the invoking shell had, and a private
 // key that ends up world readable is a leak that outlives the run that caused it.
+//
+// The write is atomic, so a reader never opens a half-written key or certificate.
+// A truncated private key is a deployment that cannot start, and the placeholder
+// pair is rewritten on these paths whenever a certificate is missing.
+//
+// What this deliberately does not do is check the file being written against its
+// counterpart. A renewal writes a NEW certificate over an OLD key before it writes
+// the new key, so the two legitimately disagree mid-renewal: refusing that would
+// break every renewal rather than protect it. What is guaranteed instead is
+// per-file atomicity - each of the pair is always a whole file, either its
+// previous content or its new one - which is the strongest thing two separate
+// paths can offer, and the reason installPair's write order matters.
 func writeFile(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, mode); err != nil {
-		return err
-	}
-	return os.Chmod(path, mode)
+	return atomicfile.Write(path, data, mode)
 }
 
 func exists(path string) bool {

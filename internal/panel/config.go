@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
@@ -40,12 +41,30 @@ const (
 	// LogFile collects the panel log when it is not run under journald.
 	LogFile = sysinfo.WorkDir + "/easysb-panel.log"
 
-	// DefaultListen binds the panel to every interface. The operator is expected
-	// to front it with TLS or a firewall; docs/panel-installation.md says so.
-	DefaultListen = "0.0.0.0"
+	// DefaultListen binds the panel to loopback only.
+	//
+	// It used to be "0.0.0.0", which put the admin login on every interface over
+	// plain HTTP by default: the password is posted as JSON to /auth/login and the
+	// session cookie comes back, both in the clear, so anyone on the path reads
+	// them. Every authenticated request is root-equivalent here - the unit sets no
+	// User and the panel offers a PTY - which is what makes the default worth
+	// changing rather than documenting. docs/panel-installation.md already told the
+	// operator to front it with TLS or a firewall; this makes the safe arrangement
+	// the one you get without reading the docs.
+	//
+	// A remote admin has two supported paths: enable TLS on the panel
+	// (PANEL_TLS + a pair, see handleSecurityTLS), or put it behind a reverse proxy
+	// and bind it where the proxy can reach it with ListenEnv.
+	DefaultListen = "127.0.0.1"
 	// DefaultPort is the panel's listen port. It is outside the protocol defaults
 	// (8000-8004) and the subscription default (8443) to avoid collisions.
 	DefaultPort = 2095
+
+	// ListenEnv overrides the listen address without editing the configuration
+	// file, which is the escape hatch for a deployment that needs the panel on a
+	// public address: a systemd drop-in setting this to 0.0.0.0 restores the
+	// previous behaviour deliberately rather than by default.
+	ListenEnv = "EASYSB_PANEL_LISTEN"
 
 	// APIVersion is the contract the React front end is written against. It is
 	// reported to the client so an incompatible front end can refuse to run
@@ -108,6 +127,12 @@ func LoadConfig(path string) (Config, error) {
 	}
 	cfg.CertFile = values["PANEL_CERT_FILE"]
 	cfg.KeyFile = values["PANEL_KEY_FILE"]
+	// The environment override wins over the file, so a deployment can be moved to a
+	// public address with a systemd drop-in instead of by editing state the operator
+	// may not have to hand.
+	if v := strings.TrimSpace(os.Getenv(ListenEnv)); v != "" {
+		cfg.Listen = v
+	}
 	return cfg, nil
 }
 
@@ -127,7 +152,10 @@ func EnsureConfig(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	password := GeneratePassword()
+	password, err := GeneratePassword()
+	if err != nil {
+		return "", err
+	}
 	hash, err := HashPassword(password)
 	if err != nil {
 		return "", err
@@ -163,25 +191,12 @@ func (c Config) Save(path string) error {
 		fmt.Sprintf("PANEL_CERT_FILE=%q", c.CertFile),
 		fmt.Sprintf("PANEL_KEY_FILE=%q", c.KeyFile),
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Chmod(path, 0o600)
+	// The mode is applied to the temporary file before the rename, so the file that
+	// lands is already 0600 rather than being narrowed after it is in place. The
+	// temporary file was 0600 either way, so this is not a window that ever leaked;
+	// what it removes is the case where a pre-existing target left at a wider mode
+	// stayed wider until the chmod after the rename completed.
+	return atomicfile.Write(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 }
 
 // Addr is the host:port the panel listens on.
@@ -245,16 +260,19 @@ const passwordAlphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ234567
 
 // GeneratePassword returns a 20-character random password suitable for the initial
 // administrator credential.
-func GeneratePassword() string {
+//
+// It returns an error rather than a fallback when the system randomness cannot be
+// read. A fixed fallback would be a published credential: the whole point of the
+// generated password is that nobody knows it, so failing to generate one has to
+// stop the panel from starting rather than hand it a value that is in the source.
+func GeneratePassword() (string, error) {
 	out := make([]byte, 20)
 	for i := range out {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(passwordAlphabet))))
 		if err != nil {
-			// crypto/rand failing is unrecoverable; fall back to a fixed but
-			// non-empty value rather than an empty password.
-			return "change-me-on-first-login"
+			return "", fmt.Errorf("cannot read the system randomness for the admin password: %w", err)
 		}
 		out[i] = passwordAlphabet[n.Int64()]
 	}
-	return string(out)
+	return string(out), nil
 }

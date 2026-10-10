@@ -324,21 +324,31 @@ func Run(ctx context.Context, spec Spec, opt Options) (*Result, error) {
 		cfg.ACMEEmail = spec.Email
 	}
 
-	// The node store first: an account selects nodes, so they have to exist.
-	nodeStore, err := node.Load(opt.NodesPath)
-	if err != nil {
-		return nil, err
-	}
-	nodes, err := applyNodes(spec, nodeStore, log)
-	if err != nil {
+	// The node store first: an account selects nodes, so they have to exist. Both
+	// groups below are read-modify-write cycles against files the panel and the
+	// subscription service also write, so each one runs under that store's file
+	// lock. Without it a node or account the panel created between the load and the
+	// save was written back from a stale copy, and provision reported success.
+	//
+	// The two locks are taken in sequence and never nested, and they are both
+	// released before ApplyStore below - which takes them itself - so there is no
+	// lock-order inversion and no self-deadlock.
+	var (
+		nodes     []node.Node
+		userStore *user.Store
+	)
+	if err := withNodeLock(opt.NodesPath, func(nodeStore *node.Store) error {
+		var err error
+		nodes, err = applyNodes(spec, nodeStore, log)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 
-	userStore, err := user.Load(opt.AccountsPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := applyAccounts(spec, userStore, nodes, now, log); err != nil {
+	if err := withUserLock(opt.AccountsPath, func(store *user.Store) error {
+		userStore = store
+		return applyAccounts(spec, store, nodes, now, log)
+	}); err != nil {
 		return nil, err
 	}
 
@@ -386,6 +396,28 @@ func Run(ctx context.Context, spec Spec, opt Options) (*Result, error) {
 	}
 
 	return buildResult(cfg, nodes, userStore, opt.SubURL), nil
+}
+
+// withNodeLock runs fn against the node store with its file lock held, so the
+// load-mutate-save cycle inside fn cannot lose a change another process made in
+// between. The lock is released before fn returns.
+func withNodeLock(path string, fn func(*node.Store) error) error {
+	store, lock, err := node.Locked(path)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	return fn(store)
+}
+
+// withUserLock is the account store counterpart of withNodeLock.
+func withUserLock(path string, fn func(*user.Store) error) error {
+	store, lock, err := user.Locked(path)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	return fn(store)
 }
 
 // applyNodes creates the spec's nodes that are not already present. A node is

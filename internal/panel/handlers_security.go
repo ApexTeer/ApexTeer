@@ -119,21 +119,29 @@ func (s *Service) handleSecurityTLS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
-			writeError(w, http.StatusUnprocessableEntity, "cannot load the certificate pair: "+err.Error())
+			// The pair is an answer to the request, so the refusal keeps its 422; the
+			// underlying error does not. It is a *tls error that names the file and
+			// the OS failure behind it ("open /etc/shadow: permission denied"), which
+			// turns this endpoint into a path existence and permission oracle. The
+			// detail goes to the log under a reference instead.
+			ref := internalErrorRef()
+			s.opts.Log("panel: " + ref + " certificate pair refused: " + err.Error())
+			writeError(w, http.StatusUnprocessableEntity,
+				"the certificate and key could not be loaded as a pair (ref "+ref+")")
 			return
 		}
 	}
 
 	cfg, err := LoadConfig(s.opts.ConfigPath)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, "cannot read the panel configuration", err)
 		return
 	}
 	cfg.TLS = body.Enabled
 	cfg.CertFile = certFile
 	cfg.KeyFile = keyFile
 	if err := cfg.Save(s.opts.ConfigPath); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, "cannot save the panel configuration", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

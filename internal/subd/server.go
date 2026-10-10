@@ -52,8 +52,10 @@ type Options struct {
 	Now func() time.Time
 	// Log receives one line per event.
 	Log func(string)
-	// Ready receives the bound address once the listener is up, then closes.
-	// Tests use it to learn the ephemeral port.
+	// Ready receives the bound address once the listener is up, then closes, and it
+	// is closed without a value when the listener could not be bound. Waiting on it
+	// is therefore always enough to learn the outcome. Tests use it to learn the
+	// ephemeral port.
 	Ready chan string
 	// cache keeps the parsed account file between requests; Run fills it in.
 	cache *storeCache
@@ -104,6 +106,21 @@ func (o Options) Run(ctx context.Context) error {
 	cfg := o.node()
 	addr, certFile, keyFile := o.transport(cfg)
 
+	// The listener is bound before the accounting loop is started, so a Run that
+	// cannot serve leaves nothing running behind it. Starting the loop first meant a
+	// failed bind returned an error while a goroutine was still ticking on ctx -
+	// which, when the caller does not cancel on the failure path, keeps reading and
+	// writing the account store for the life of the process.
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		// Closed on the failure path too, so a caller that only waits on Ready sees
+		// the failure instead of a service that looks like it is still starting.
+		if o.Ready != nil {
+			close(o.Ready)
+		}
+		return err
+	}
+
 	loop := stats.New(stats.Options{
 		AccountsPath: o.AccountsPath,
 		NodesPath:    o.NodesPath,
@@ -114,12 +131,13 @@ func (o Options) Run(ctx context.Context) error {
 		Now:          o.Now,
 		Log:          o.Log,
 	})
-	go loop.Run(ctx)
+	// The loop gets a context of its own so every return path below can stop it and
+	// wait for it, including the one where serving failed rather than the caller
+	// cancelling.
+	loopCtx, stopLoop := context.WithCancel(ctx)
+	defer stopLoop()
+	go loop.Run(loopCtx)
 
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
 	o.logf(fmt.Sprintf("subscription endpoint %s (tls=%v) · EasySB %s", listener.Addr(), certFile != "", o.version()))
 
 	server := &http.Server{
@@ -153,12 +171,22 @@ func (o Options) Run(ctx context.Context) error {
 		// Serving failed on its own. Returning here used to leave the listener bound
 		// and the accounting loop running, so a service that came up and then failed
 		// still held the port against the restart that would have recovered it.
+		stopLoop()
+		<-loop.Done()
 		_ = server.Close()
 		return err
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return server.Shutdown(shutdown)
+	err = server.Shutdown(shutdown)
+	// Wait for the accounting loop before reporting that Run has finished. It writes
+	// the account store and its baseline during a cycle, and it stops asynchronously
+	// with respect to this goroutine: a caller that treats Run's return as "everything
+	// it started has stopped" - the tests do, and so does anything that cleans up the
+	// state directory afterwards - would otherwise race the last cycle's write.
+	stopLoop()
+	<-loop.Done()
+	return err
 }
 
 // transport picks the listen address and, when the node holds a real

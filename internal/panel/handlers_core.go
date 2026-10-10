@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -32,6 +33,18 @@ func (s *Service) handleCore(w http.ResponseWriter, r *http.Request) {
 // handleCoreConfig returns the rendered core configuration. It contains account
 // credentials, so it is only ever served to an authenticated administrator.
 // Without a file on disk the document is rendered from the stores but not saved.
+//
+// The REALITY private key is redacted before the document leaves the server. The front
+// end only pretty-prints this response for display (it never reads the key), and the
+// private key is the one field in the document whose exposure would let anyone who reads
+// it impersonate the node's TLS identity. An administrator is root-equivalent and can read
+// the file directly, but an admin session is not the same thing as root: it survives in a
+// browser, in a screenshot and in a support paste, and the key does not need to travel for
+// the page to work.
+//
+// Redacting here cannot break saving. handleApply re-renders the document from the node
+// and account stores and never accepts a submitted one, so the stored key is untouched by
+// anything the browser sends back.
 func (s *Service) handleCoreConfig(w http.ResponseWriter, r *http.Request) {
 	data, err := os.ReadFile(s.opts.ConfigJSON)
 	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
@@ -54,8 +67,55 @@ func (s *Service) handleCoreConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"path":   s.opts.ConfigJSON,
-		"config": string(data),
+		"config": redactKeyMaterial(string(data)),
 	})
+}
+
+// keyMaterialPlaceholder is what the front end displays where a private key was. It carries
+// no angle brackets on purpose: encoding/json escapes them, and the operator should see the
+// note, not an escape sequence.
+const keyMaterialPlaceholder = "redacted by EasySB: the real key stays on the server"
+
+// redactKeyMaterial removes the private keys a rendered core configuration carries,
+// leaving everything else byte-for-byte as it was.
+//
+// It edits the decoded document and re-marshals it rather than doing a textual
+// substitution, so a key that happens to appear inside another value is not mangled. A
+// document that does not parse is returned unchanged: this is a display path, and a
+// rendering problem is not a reason to return nothing at all.
+func redactKeyMaterial(doc string) string {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(doc), &parsed); err != nil {
+		return doc
+	}
+	inbounds, _ := parsed["inbounds"].([]any)
+	changed := false
+	for _, raw := range inbounds {
+		in, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		tls, ok := in["tls"].(map[string]any)
+		if !ok {
+			continue
+		}
+		reality, ok := tls["reality"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, present := reality["private_key"]; present {
+			reality["private_key"] = keyMaterialPlaceholder
+			changed = true
+		}
+	}
+	if !changed {
+		return doc
+	}
+	out, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		return doc
+	}
+	return string(out)
 }
 
 // handleApply renders the stores, has the core accept the document and restarts

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EasySBTeam/EasySB/internal/atomicfile"
 	"github.com/EasySBTeam/EasySB/internal/sysinfo"
 )
 
@@ -124,8 +125,13 @@ func WriteUnit() error {
 }
 
 // writeNodeUnit renders the node unit for one executable and writes it.
+//
+// The write goes through atomicfile: a unit is what the init system starts from, and a
+// crash mid-write used to be able to leave it truncated, so the node would not come
+// back after a reboot until someone rewrote it. The rename means a reader sees either
+// the previous unit or the new one, never a partial file.
 func writeNodeUnit(path, exe string) error {
-	if err := os.WriteFile(path, []byte(UnitBody(exe)), 0o644); err != nil {
+	if err := atomicfile.Write(path, []byte(UnitBody(exe)), 0o644); err != nil {
 		return err
 	}
 	return DaemonReload()
@@ -165,6 +171,16 @@ func RemoveUnit() error {
 	return nil
 }
 
+// CommandTimeout bounds a single systemctl invocation.
+//
+// The deadline is here rather than left to the caller because the caller's context
+// is not always a bounded one: the accounting loop and the subscription service pass
+// the context they were started with, which lives as long as the process. A restart
+// that never returns then hangs the calling goroutine for the life of the
+// deployment, and every writer waiting behind it. systemd's own default
+// TimeoutStopSec is 90s, so a restart that is going to finish finishes inside this.
+const commandTimeout = 120 * time.Second
+
 // DaemonReload refreshes the systemd unit cache.
 func DaemonReload() error {
 	if Detect() != Systemd {
@@ -182,7 +198,12 @@ func DaemonReload() error {
 }
 
 // Do performs a lifecycle action: start, stop, restart, enable or disable.
+//
+// The caller's context still cancels the command early; this only adds a ceiling, so
+// a caller that hands in a process-lifetime context cannot wait forever.
 func Do(ctx context.Context, action string) error {
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "systemctl", action, sysinfo.ServiceName)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
@@ -192,8 +213,12 @@ func Do(ctx context.Context, action string) error {
 	return nil
 }
 
-// Active reports whether the sing-box service is currently running.
+// Active reports whether the sing-box service is currently running. It is bounded by
+// a short deadline because it is a status question: an is-active that blocks is a
+// systemd that is not answering, and waiting longer cannot change the answer.
 func Active(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", sysinfo.ServiceName)
 	return cmd.Run() == nil
 }

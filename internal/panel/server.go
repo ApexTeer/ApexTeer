@@ -100,89 +100,285 @@ func New(opts Options) *Service {
 	return svc
 }
 
-// Handler builds the HTTP handler tree.
+// route is one API endpoint: the method and the ServeMux pattern it answers on, and
+// whether it is reachable without a session.
+//
+// The table is separate from the registration loop so a test can read it, and it is
+// the single list of the API surface. Every entry that is not public is asserted to
+// reject an unauthenticated request, which is what turns "a new endpoint was
+// registered without require" into a test failure instead of a hole nobody notices.
+type route struct {
+	method  string
+	pattern string
+	public  bool
+}
+
+// routes is the API surface, in one place.
+func (s *Service) routes() []route {
+	return []route{
+		// Public by design: there is no session to check when logging in, and logout
+		// revokes whatever token it was handed.
+		{http.MethodPost, "/api/v1/auth/login", true},
+		{http.MethodPost, "/api/v1/auth/logout", true},
+
+		{http.MethodGet, "/api/v1/auth/session", false},
+		{http.MethodPost, "/api/v1/auth/password", false},
+
+		{http.MethodGet, "/api/v1/dashboard", false},
+
+		{http.MethodGet, "/api/v1/nodes", false},
+		{http.MethodPost, "/api/v1/nodes", false},
+		{http.MethodGet, "/api/v1/nodes/{id}", false},
+		{http.MethodPut, "/api/v1/nodes/{id}", false},
+		{http.MethodDelete, "/api/v1/nodes/{id}", false},
+		{http.MethodPost, "/api/v1/nodes/{id}/enable", false},
+		{http.MethodPost, "/api/v1/nodes/{id}/disable", false},
+		{http.MethodGet, "/api/v1/nodes/{id}/config", false},
+
+		{http.MethodGet, "/api/v1/users", false},
+		{http.MethodPost, "/api/v1/users", false},
+		{http.MethodGet, "/api/v1/users/{name}", false},
+		{http.MethodPut, "/api/v1/users/{name}", false},
+		{http.MethodDelete, "/api/v1/users/{name}", false},
+		{http.MethodPost, "/api/v1/users/{name}/enable", false},
+		{http.MethodPost, "/api/v1/users/{name}/disable", false},
+		{http.MethodPost, "/api/v1/users/{name}/reset", false},
+		{http.MethodGet, "/api/v1/users/{name}/subscriptions", false},
+		{http.MethodGet, "/api/v1/users/{name}/document", false},
+
+		{http.MethodGet, "/api/v1/subscriptions", false},
+
+		{http.MethodGet, "/api/v1/domains", false},
+		{http.MethodPost, "/api/v1/domains/issue", false},
+		{http.MethodPost, "/api/v1/domains/renew", false},
+		{http.MethodPost, "/api/v1/domains/remove", false},
+		{http.MethodPost, "/api/v1/domains/activate", false},
+		{http.MethodGet, "/api/v1/domains/timer", false},
+		{http.MethodPost, "/api/v1/domains/timer", false},
+
+		{http.MethodGet, "/api/v1/core", false},
+		{http.MethodGet, "/api/v1/core/config", false},
+		{http.MethodPost, "/api/v1/core/apply", false},
+		{http.MethodPost, "/api/v1/core/check", false},
+		{http.MethodPost, "/api/v1/core/{action}", false},
+
+		{http.MethodGet, "/api/v1/system", false},
+		{http.MethodGet, "/api/v1/system/network", false},
+		{http.MethodPost, "/api/v1/system/subscription/{action}", false},
+
+		{http.MethodGet, "/api/v1/logs", false},
+
+		{http.MethodGet, "/api/v1/panel", false},
+		{http.MethodPost, "/api/v1/panel/config", false},
+		{http.MethodPost, "/api/v1/panel/{action}", false},
+
+		{http.MethodGet, "/api/v1/security", false},
+		{http.MethodPost, "/api/v1/security/tls", false},
+		{http.MethodPost, "/api/v1/security/firewall/{action}", false},
+
+		{http.MethodGet, "/api/v1/bbr", false},
+		{http.MethodPost, "/api/v1/bbr/enable", false},
+		{http.MethodPost, "/api/v1/bbr/clear", false},
+
+		{http.MethodGet, "/api/v1/toolbox", false},
+		{http.MethodGet, "/api/v1/toolbox/board", false},
+		{http.MethodPost, "/api/v1/toolbox/{id}/run", false},
+
+		// The terminal authenticates inside the handler rather than through require:
+		// a WebSocket handshake is a GET and carries the cookie, but the upgrade and
+		// its deadlines need the raw connection. It is listed so the surface stays
+		// complete, and marked public because a failed handshake answers with its own
+		// status rather than the JSON 401 the sweep below expects.
+		{http.MethodGet, "/api/v1/terminal/ws", true},
+	}
+}
+
+// handlerFor returns the handler a route is served by.
+func (s *Service) handlerFor(rt route) http.HandlerFunc {
+	switch rt.pattern {
+	case "/api/v1/auth/login":
+		return s.handleLogin
+	case "/api/v1/auth/logout":
+		return s.handleLogout
+	case "/api/v1/auth/session":
+		return s.handleSession
+	case "/api/v1/auth/password":
+		return s.handleChangePassword
+
+	case "/api/v1/dashboard":
+		return s.handleDashboard
+
+	case "/api/v1/nodes":
+		if rt.method == http.MethodPost {
+			return s.handleCreateNode
+		}
+		return s.handleListNodes
+	case "/api/v1/nodes/{id}":
+		switch rt.method {
+		case http.MethodPut:
+			return s.handleUpdateNode
+		case http.MethodDelete:
+			return s.handleDeleteNode
+		}
+		return s.handleGetNode
+	case "/api/v1/nodes/{id}/enable":
+		return s.handleSetNodeEnabled(true)
+	case "/api/v1/nodes/{id}/disable":
+		return s.handleSetNodeEnabled(false)
+	case "/api/v1/nodes/{id}/config":
+		return s.handleNodeConfig
+
+	case "/api/v1/users":
+		if rt.method == http.MethodPost {
+			return s.handleCreateUser
+		}
+		return s.handleListUsers
+	case "/api/v1/users/{name}":
+		switch rt.method {
+		case http.MethodPut:
+			return s.handleUpdateUser
+		case http.MethodDelete:
+			return s.handleDeleteUser
+		}
+		return s.handleGetUser
+	case "/api/v1/users/{name}/enable":
+		return s.handleSetUserEnabled(true)
+	case "/api/v1/users/{name}/disable":
+		return s.handleSetUserEnabled(false)
+	case "/api/v1/users/{name}/reset":
+		return s.handleResetUser
+	case "/api/v1/users/{name}/subscriptions":
+		return s.handleUserSubscriptions
+	case "/api/v1/users/{name}/document":
+		return s.handleUserDocument
+
+	case "/api/v1/subscriptions":
+		return s.handleSubscriptions
+
+	case "/api/v1/domains":
+		return s.handleListDomains
+	case "/api/v1/domains/issue":
+		return s.handleIssueDomain
+	case "/api/v1/domains/renew":
+		return s.handleRenewDomains
+	case "/api/v1/domains/remove":
+		return s.handleRemoveDomain
+	case "/api/v1/domains/activate":
+		return s.handleSetActiveDomain
+	case "/api/v1/domains/timer":
+		if rt.method == http.MethodPost {
+			return s.handleTimer
+		}
+		return s.handleTimerStatus
+
+	case "/api/v1/core":
+		return s.handleCore
+	case "/api/v1/core/config":
+		return s.handleCoreConfig
+	case "/api/v1/core/apply":
+		return s.handleApply
+	case "/api/v1/core/check":
+		return s.handleCheckConfig
+	case "/api/v1/core/{action}":
+		return s.handleCoreAction
+
+	case "/api/v1/system":
+		return s.handleSystem
+	case "/api/v1/system/network":
+		return s.handleNetwork
+	case "/api/v1/system/subscription/{action}":
+		return s.handleSubscriptionServiceAction
+
+	case "/api/v1/logs":
+		return s.handleLogs
+
+	case "/api/v1/panel":
+		return s.handlePanel
+	case "/api/v1/panel/config":
+		return s.handlePanelConfig
+	case "/api/v1/panel/{action}":
+		return s.handlePanelAction
+
+	case "/api/v1/security":
+		return s.handleSecurity
+	case "/api/v1/security/tls":
+		return s.handleSecurityTLS
+	case "/api/v1/security/firewall/{action}":
+		return s.handleSecurityFirewall
+
+	case "/api/v1/bbr":
+		return s.handleBBR
+	case "/api/v1/bbr/enable":
+		return s.handleBBREnable
+	case "/api/v1/bbr/clear":
+		return s.handleBBRClear
+
+	case "/api/v1/toolbox":
+		return s.handleToolbox
+	case "/api/v1/toolbox/board":
+		return s.handleToolboxBoard
+	case "/api/v1/toolbox/{id}/run":
+		return s.handleToolboxRun
+
+	case "/api/v1/terminal/ws":
+		return s.handleTerminal
+	}
+	// Unreachable while routes() and this table agree; the test that walks routes()
+	// is what keeps them in step.
+	panic("panel: no handler for route " + rt.method + " " + rt.pattern)
+}
+
+// Handler builds the HTTP handler tree from routes().
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Authentication (unauthenticated).
-	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
-	mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
-
-	// Everything else requires a session.
-	mux.HandleFunc("GET /api/v1/auth/session", s.require(s.handleSession))
-	mux.HandleFunc("POST /api/v1/auth/password", s.require(s.handleChangePassword))
-
-	mux.HandleFunc("GET /api/v1/dashboard", s.require(s.handleDashboard))
-
-	mux.HandleFunc("GET /api/v1/nodes", s.require(s.handleListNodes))
-	mux.HandleFunc("POST /api/v1/nodes", s.require(s.handleCreateNode))
-	mux.HandleFunc("GET /api/v1/nodes/{id}", s.require(s.handleGetNode))
-	mux.HandleFunc("PUT /api/v1/nodes/{id}", s.require(s.handleUpdateNode))
-	mux.HandleFunc("DELETE /api/v1/nodes/{id}", s.require(s.handleDeleteNode))
-	mux.HandleFunc("POST /api/v1/nodes/{id}/enable", s.require(s.handleSetNodeEnabled(true)))
-	mux.HandleFunc("POST /api/v1/nodes/{id}/disable", s.require(s.handleSetNodeEnabled(false)))
-	mux.HandleFunc("GET /api/v1/nodes/{id}/config", s.require(s.handleNodeConfig))
-
-	mux.HandleFunc("GET /api/v1/users", s.require(s.handleListUsers))
-	mux.HandleFunc("POST /api/v1/users", s.require(s.handleCreateUser))
-	mux.HandleFunc("GET /api/v1/users/{name}", s.require(s.handleGetUser))
-	mux.HandleFunc("PUT /api/v1/users/{name}", s.require(s.handleUpdateUser))
-	mux.HandleFunc("DELETE /api/v1/users/{name}", s.require(s.handleDeleteUser))
-	mux.HandleFunc("POST /api/v1/users/{name}/enable", s.require(s.handleSetUserEnabled(true)))
-	mux.HandleFunc("POST /api/v1/users/{name}/disable", s.require(s.handleSetUserEnabled(false)))
-	mux.HandleFunc("POST /api/v1/users/{name}/reset", s.require(s.handleResetUser))
-	mux.HandleFunc("GET /api/v1/users/{name}/subscriptions", s.require(s.handleUserSubscriptions))
-	mux.HandleFunc("GET /api/v1/users/{name}/document", s.require(s.handleUserDocument))
-
-	mux.HandleFunc("GET /api/v1/subscriptions", s.require(s.handleSubscriptions))
-
-	mux.HandleFunc("GET /api/v1/domains", s.require(s.handleListDomains))
-	mux.HandleFunc("POST /api/v1/domains/issue", s.require(s.handleIssueDomain))
-	mux.HandleFunc("POST /api/v1/domains/renew", s.require(s.handleRenewDomains))
-	mux.HandleFunc("POST /api/v1/domains/remove", s.require(s.handleRemoveDomain))
-	mux.HandleFunc("POST /api/v1/domains/activate", s.require(s.handleSetActiveDomain))
-	mux.HandleFunc("GET /api/v1/domains/timer", s.require(s.handleTimerStatus))
-	mux.HandleFunc("POST /api/v1/domains/timer", s.require(s.handleTimer))
-
-	mux.HandleFunc("GET /api/v1/core", s.require(s.handleCore))
-	mux.HandleFunc("GET /api/v1/core/config", s.require(s.handleCoreConfig))
-	mux.HandleFunc("POST /api/v1/core/apply", s.require(s.handleApply))
-	mux.HandleFunc("POST /api/v1/core/check", s.require(s.handleCheckConfig))
-	mux.HandleFunc("POST /api/v1/core/{action}", s.require(s.handleCoreAction))
-
-	mux.HandleFunc("GET /api/v1/system", s.require(s.handleSystem))
-	mux.HandleFunc("GET /api/v1/system/network", s.require(s.handleNetwork))
-	mux.HandleFunc("POST /api/v1/system/subscription/{action}", s.require(s.handleSubscriptionServiceAction))
-
-	mux.HandleFunc("GET /api/v1/logs", s.require(s.handleLogs))
-
-	mux.HandleFunc("GET /api/v1/panel", s.require(s.handlePanel))
-	mux.HandleFunc("POST /api/v1/panel/config", s.require(s.handlePanelConfig))
-	mux.HandleFunc("POST /api/v1/panel/{action}", s.require(s.handlePanelAction))
-
-	mux.HandleFunc("GET /api/v1/security", s.require(s.handleSecurity))
-	mux.HandleFunc("POST /api/v1/security/tls", s.require(s.handleSecurityTLS))
-	mux.HandleFunc("POST /api/v1/security/firewall/{action}", s.require(s.handleSecurityFirewall))
-
-	mux.HandleFunc("GET /api/v1/bbr", s.require(s.handleBBR))
-	mux.HandleFunc("POST /api/v1/bbr/enable", s.require(s.handleBBREnable))
-	mux.HandleFunc("POST /api/v1/bbr/clear", s.require(s.handleBBRClear))
-
-	mux.HandleFunc("GET /api/v1/toolbox", s.require(s.handleToolbox))
-	mux.HandleFunc("GET /api/v1/toolbox/board", s.require(s.handleToolboxBoard))
-	mux.HandleFunc("POST /api/v1/toolbox/{id}/run", s.require(s.handleToolboxRun))
-
-	// The terminal is authenticated inside the handler, not by require: a WebSocket
-	// handshake is a GET and carries the cookie, but the upgrade plus its deadlines
-	// need the raw connection.
-	mux.HandleFunc("GET /api/v1/terminal/ws", s.handleTerminal)
+	for _, rt := range s.routes() {
+		handler := s.handlerFor(rt)
+		if rt.public {
+			mux.HandleFunc(rt.method+" "+rt.pattern, handler)
+			continue
+		}
+		mux.HandleFunc(rt.method+" "+rt.pattern, s.require(handler))
+	}
 
 	// Unknown API paths answer JSON, never the SPA.
 	mux.HandleFunc("/api/", s.handleUnknownAPI)
 	// Everything else is the single-page application.
 	mux.HandleFunc("/", s.handleStatic)
 
-	return s.withLogging(s.withSecurityEntry(mux))
+	return s.withLogging(s.withSecurityEntry(s.withSecurityHeaders(mux)))
+}
+
+// withSecurityHeaders sets the response headers that stop a browser treating the console's
+// own content as something it is not.
+//
+// The Content-Security-Policy is deliberately narrow, and the narrowness is the point: it
+// contains only directives that cannot break a working page, so it can be enabled without a
+// rendering test per release. frame-ancestors and object-src stop the console being framed
+// by another site and stop a plugin being embedded in it; both are enforced regardless of
+// what the front end loads.
+//
+// script-src and style-src are deliberately NOT set. The panel serves the front end's own
+// bundle from its own origin, and a policy broad enough to be safe for an unknown bundle
+// adds nothing; one narrow enough to be worth having would have to be verified against every
+// front-end release. Establishing the exact set the SPA needs is worth doing, but it needs a
+// rendering test in CI rather than a guess here.
+func (s *Service) withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		// A response whose type is guessed can be treated as script; the panel serves one
+		// JSON API and one bundle, and both know their type.
+		h.Set("X-Content-Type-Options", "nosniff")
+		// Nothing about this console should be framed. DENY also covers the case of a
+		// browser that predates frame-ancestors.
+		h.Set("X-Frame-Options", "DENY")
+		// The address carries the security entry, which is half of the panel's access
+		// control. It must not travel to another origin in a Referer, and the panel needs
+		// no referrer information itself.
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // securityEntry returns the live security entry segment, or "" when the panel is
@@ -237,12 +433,19 @@ func (s *Service) withSecurityEntry(next http.Handler) http.Handler {
 
 // withLogging records one line per request, without the query string (which can
 // carry sensitive values such as a subscription token).
+//
+// The path is logged in its escaped form. r.URL.Path is the *decoded* path, and
+// net/url rejects a malformed escape but not a C0 control byte, so a request for
+// /api/v1/x%0A... reaches this line carrying a real newline: the access log would
+// then hold a second, forged entry that reads as genuine, and this line is
+// reachable without authenticating. EscapedPath returns the original escaped form,
+// which cannot contain a raw newline.
 func (s *Service) withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		s.opts.Log(fmt.Sprintf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Millisecond)))
+		s.opts.Log(fmt.Sprintf("%s %s %d %s", r.Method, r.URL.EscapedPath(), rec.status, time.Since(start).Round(time.Millisecond)))
 	})
 }
 
@@ -482,8 +685,13 @@ func (s *Service) apply(ctx context.Context) error {
 	// and the TUI both rely on: the firewall rules and the subscription service.
 	// A failure of either is reported but does not undo the node, matching the
 	// TUI's deploy path.
-	cfg.NodeDeployed = true
-	if saveErr := cfg.Save(); saveErr != nil {
+	//
+	// Only the deployed flag is written, and it is written as a locked
+	// read-modify-write rather than by saving this caller's copy. The copy above was
+	// taken before a deploy that can take seconds, and writing it back whole would
+	// discard anything another actor changed in the meantime - a domain, the sync
+	// interval, the subscription port.
+	if saveErr := state.UpdateNodeDeployed(true); saveErr != nil {
 		return saveErr
 	}
 	if !first {

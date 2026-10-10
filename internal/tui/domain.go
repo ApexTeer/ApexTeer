@@ -82,12 +82,23 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 			return err
 		}
 
-		cfg := state.Load()
-		cfg.ACMEEmail = email
-		if cfg.ServerIP == "" {
-			if ip, err := netutil.PublicIP(ctx); err == nil {
-				cfg.ServerIP = ip
+		// The email and the public address are recorded as a locked
+		// read-modify-write. They used to be assigned to a loaded copy that was
+		// never saved, so the TUI silently discarded them - the domain write at the
+		// end of issuance saved a copy carrying them, which is why it went unnoticed,
+		// and P0-3 replacing that write with a targeted one exposed it.
+		publicIP := ""
+		if ip, err := netutil.PublicIP(ctx); err == nil {
+			publicIP = ip
+		}
+		if err := state.Modify(func(cfg *state.Config) error {
+			cfg.ACMEEmail = email
+			if cfg.ServerIP == "" {
+				cfg.ServerIP = publicIP
 			}
+			return nil
+		}); err != nil {
+			return err
 		}
 
 		// Temporarily stop sing-box so the standalone challenge can bind 80.
@@ -128,9 +139,16 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 			return errors.New(lang.T("domain_issue_failed"))
 		}
 
-		cfg.Domain = domain
-		cfg.CertDomain = domain
-		if err := cfg.Save(); err != nil {
+		// A locked read-modify-write, so the object the certificate was issued for is
+		// recorded without discarding whatever another actor wrote during issuance.
+		// The deployed flag the branch below reads comes from the same section.
+		deployed := false
+		if err := state.Modify(func(cfg *state.Config) error {
+			cfg.Domain = domain
+			cfg.CertDomain = domain
+			deployed = cfg.NodeDeployed
+			return nil
+		}); err != nil {
 			return err
 		}
 		r.Log(lang.T("domain_issued") + ": " + domain)
@@ -144,7 +162,7 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 			r.Log(lang.T("domain_timer_on"))
 		}
 
-		if cfg.NodeDeployed {
+		if deployed {
 			if err := applyDeployment(ctx, lang, r.Log); err != nil {
 				return err
 			}
@@ -304,14 +322,19 @@ func removeCertAction() actionFunc {
 
 func switchCert(a *App, domain string) tea.Cmd {
 	lang := a.lang
-	cfg := state.Load()
-	cfg.Domain = domain
-	cfg.CertDomain = domain
-	if err := cfg.Save(); err != nil {
+	// The write is a locked read-modify-write; the deployed flag the branch below
+	// reads comes from the same critical section.
+	deployed := false
+	if err := state.Modify(func(cfg *state.Config) error {
+		cfg.Domain = domain
+		cfg.CertDomain = domain
+		deployed = cfg.NodeDeployed
+		return nil
+	}); err != nil {
 		a.setToast(err.Error(), true)
 		return nil
 	}
-	if !cfg.NodeDeployed {
+	if !deployed {
 		a.setToast(lang.T("domain_switched")+": "+domain, false)
 		return nil
 	}
@@ -349,12 +372,18 @@ func removeCertTask(lang i18n.Lang, domain string, clearActive bool) taskFunc {
 			r.Log("acme remove: " + err.Error())
 		}
 		if clearActive {
-			cfg := state.Load()
-			cfg.CertDomain = ""
-			if cfg.Domain == domain {
-				cfg.Domain = ""
-			}
-			if err := cfg.Save(); err != nil {
+			// The lock is re-taken and the file re-read, so the removal decision is
+			// made against the state as it is now.
+			if err := state.Modify(func(cfg *state.Config) error {
+				if cfg.CertDomain != domain {
+					return nil
+				}
+				cfg.CertDomain = ""
+				if cfg.Domain == domain {
+					cfg.Domain = ""
+				}
+				return nil
+			}); err != nil {
 				return err
 			}
 		}
