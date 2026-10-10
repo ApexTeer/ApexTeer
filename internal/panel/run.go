@@ -21,6 +21,9 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	svc := New(opts)
+	// The overview trend is gathered in the background and read by the history
+	// endpoint; it stops with the server.
+	go svc.history.run(ctx)
 	addr := cfg.Addr()
 
 	listener, err := net.Listen("tcp", addr)
