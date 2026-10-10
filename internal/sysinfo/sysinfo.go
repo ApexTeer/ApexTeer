@@ -41,6 +41,11 @@ const (
 	NodesFile = WorkDir + "/easysb-nodes.json"
 	// SubLogFile collects the subscription service log.
 	SubLogFile = WorkDir + "/easysb-sub.log"
+	// FirewallLedger records the port-hopping redirect rules EasySB has installed, so
+	// they can be removed later without having to guess which node created them. A
+	// rule whose node has since been deleted is otherwise unreachable: nothing on the
+	// host knows it was ours.
+	FirewallLedger = WorkDir + "/easysb-firewall.json"
 
 	// SubServiceName is the subscription service's unit name. It is a unit of its own so
 	// that the panel can restart it without touching the core.

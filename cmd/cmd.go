@@ -58,6 +58,7 @@ func run(args []string) {
 	render := flags.Bool("render", false, "渲染一次仪表盘后退出 / render once and exit")
 	screen := flags.String("screen", "", "配合 --render 渲染指定界面：栏目 id（toolbox/node/domain/bbr…）、system、task、toolbox-report 或 bbr-versions / with --render, draw this screen by section id, or system, task, toolbox-report, bbr-qdisc, bbr-versions")
 	applyFirewall := flags.Bool("apply-firewall", false, "应用端口跳跃防火墙规则 / apply port-hopping firewall rules")
+	pruneFirewall := flags.Bool("prune-firewall", false, "清理无主的端口跳跃规则（需人工确认）/ remove orphaned port-hopping firewall rules")
 	renewCerts := flags.Bool("renew-certs", false, "续期证书并重载服务（供定时器调用）/ renew certificates and reload the services")
 	installTimer := flags.Bool("install-renew-timer", false, "安装证书续期定时器 / install the certificate renewal timer")
 	removeTimer := flags.Bool("remove-renew-timer", false, "移除证书续期定时器 / remove the certificate renewal timer")
@@ -81,6 +82,11 @@ func run(args []string) {
 
 	if *applyFirewall {
 		runApplyFirewall()
+		return
+	}
+
+	if *pruneFirewall {
+		runPruneFirewall()
 		return
 	}
 
