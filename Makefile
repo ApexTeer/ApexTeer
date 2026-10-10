@@ -140,12 +140,18 @@ panel-edge: ## 取 edge 滚动面板前端到 public/dist
 # A release build has to carry the real front end. Without it the package ships a complete
 # API and no console, which is what v6.0.0 did: the panel served a 568-byte placeholder.
 # The placeholder banner contains "占位", which is what this refuses to ship.
+#
+# 只负责判断，不负责获取：取前端是 panel 的事，这里只保证"没有就别打包"。两者分开，才能让
+# 这个判断在离线环境里也能单独跑，也才有一条能测的失败路径。
+# This only judges, it does not fetch: fetching is panel's job, and this only guarantees that
+# nothing is packaged without it. Keeping them apart is what lets the judgement run offline
+# on its own, and what gives the failure path something to test.
 .PHONY: panel-check
 panel-check: ## 内部：确认 public/dist 是真实前端而不是占位页
 	@if grep -q '占位' public/dist/index.html 2>/dev/null; then \
 		echo "public/dist/index.html 仍是占位页，发布构建会得到一个没有控制台的面板。" >&2; \
 		echo "public/dist/index.html is still the placeholder: the release would ship a" >&2; \
-		echo "panel with no console. Run 'make panel' first." >&2; \
+		echo "panel with no console." >&2; \
 		exit 1; \
 	fi
 	@test -f public/dist/index.html || { echo "public/dist/index.html 缺失 / missing: run 'make panel'" >&2; exit 1; }
@@ -215,15 +221,75 @@ release-matrix: ## 打印发布架构矩阵 JSON（发布工作流用来生成�
 
 # --- 打包 / Packaging ---------------------------------------------------------
 
-deb: build ## 打包全部发布架构的 .deb 到 dist/
+# 配方里显式再取一次，而不是只依赖前置顺序。make 按书写顺序生成前置，`build` 写在前面就
+# 会先跑，二进制会带着占位页编出来；即使把 pkg-fetch-panel 挪到前面，那也只是碰巧靠顺序
+# 成立，顺序一改就静默出错。所以把"先取前端"直接写成配方里的第一步。
+#
+# Fetch inside the recipe rather than relying on prerequisite order. Make builds
+# prerequisites in the order written, so with `build` first the binary is compiled with the
+# placeholder; moving pkg-fetch-panel to the front would work only by accident of ordering,
+# and would fail silently the moment someone reorders. "Fetch first" is therefore the first
+# step of the recipe itself.
+deb: ## 打包全部发布架构的 .deb 到 dist/
+	@$(MAKE) --no-print-directory pkg-fetch-panel
+	@$(MAKE) --no-print-directory build
 	@set -e; for asset in $(ARCHES); do \
 		$(MAKE) --no-print-directory deb-asset ASSET=$$asset NO_BUILD=1; \
 	done
+
+# 先取前端，再判断它到没到：`panel` 在前，`panel-check` 在后。不要改成只留 panel-check
+# 或只留 panel——
+#
+# 只有 panel-check 时，任何一条没先跑 `make panel` 的打包路径都会在打包中途停下，而且
+# 停在一个"你没先取前端"的提示上；调用者其实是在问"给我打个包"，取前端本该是打包自己的
+# 事。工作流里确实有一步 `make panel`，但只要那一行被删掉、被条件挡住、或者谁换个入口
+# 直接调 `make packages-asset`，打包就断在半路——这正是 6d01319 那次运行发生的事。
+#
+# 只有 panel 时，离线环境会变成一次网络失败，而不是一句"你手里这个是占位页"。
+#
+# 两个都要：panel 负责去取，panel-check 负责在取不到时明确说不，并且说清原因。
+#
+# Fetch first, then judge: `panel` before `panel-check`. Do not collapse them into one.
+#
+# With only panel-check, any packaging path that did not happen to run `make panel` first
+# stops in the middle of packaging with a "you did not fetch the front end" message, when the
+# caller only asked for a package - fetching is packaging's own business. The workflow does
+# have a `make panel` step, but if that line is deleted, gated behind a condition, or someone
+# enters through `make packages-asset` directly, packaging breaks midway. That is what
+# happened on 6d01319.
+#
+# With only panel, an offline build becomes an opaque network failure instead of a clear
+# "the file you have is the placeholder".
+#
+# Keep both: panel fetches, panel-check refuses plainly when there is nothing real to package.
+#
+# 依赖必须挂在**每个会编译二进制的入口**上，不能只挂在 pkg-stage 上。编译发生在各个目标的
+# 配方里，而配方只在它自己的前置全部完成后才开始；`packages-asset` 的配方先跑
+# `$(MAKE) build` 和 `$(MAKE) dist-asset`，它经 `deb-asset` 才间接依赖到 pkg-stage，那时
+# 二进制已经用占位页编好了——`make --debug=b` 的 "Must remake target 'build'" 排在
+# "Must remake target 'panel'" 之前就是这么来的。所以 packages-asset 与 deb 各自显式依赖
+# 这一步。
+#
+# The dependency has to hang off *every* entry point that compiles a binary, not just
+# pkg-stage. Compiling happens inside each target's own recipe, and a recipe only starts once
+# its own prerequisites are done; packages-asset's recipe runs `$(MAKE) build` and
+# `$(MAKE) dist-asset` first, and it reaches pkg-stage only indirectly through deb-asset, by
+# which time the binary has already been compiled with the placeholder. That is exactly why
+# `make --debug=b` prints "Must remake target 'build'" before "Must remake target 'panel'".
+# packages-asset and deb therefore depend on this step explicitly.
+.PHONY: pkg-fetch-panel
+pkg-fetch-panel: panel panel-check ## 内部：取前端并确认它是真实产物，打包前的唯一入口
 
 # 暂存树只有一种格式在读，所以它同时是 UPX 压缩的唯一入口：压缩发生在文件离开 dist/
 # 进入 stage/ 的时候，dist/ 里那份交叉编译产物保持原样。
 # One format reads this staging tree, so it is also the single place UPX runs: compression
 # happens as the file leaves dist/ for stage/, leaving the cross-compiled dist/ copy alone.
+#
+# 这里仍然留着 panel-check：直接调 pkg-stage 时，"手里是占位页"要有一句明确的拒绝，
+# 而不是编译出一个没有控制台的包。取前端由上层的 pkg-fetch-panel 负责。
+# panel-check stays here as well: called directly, pkg-stage should refuse plainly when what
+# it has is the placeholder rather than compile a console-less package. Fetching is the
+# upper layer's job, through pkg-fetch-panel.
 pkg-stage: panel-check ## 内部：准备打包暂存树（ASSET= 必填；REUSE_DIST=1 复用 dist/；NO_BUILD=1 不重建）
 	@test -n "$(ASSET)" || { echo "ASSET 未设置 / ASSET required, one of: $(ARCHES)"; exit 1; }
 	@if [ -z "$(NO_BUILD)" ]; then $(MAKE) --no-print-directory build; fi
@@ -270,6 +336,7 @@ deb-asset: pkg-stage ## 打包单个架构的 .deb（ASSET=amd64 / arm64）
 # the local binary for --print-unit and packages the cross-compiled artifact it downloaded.
 packages-asset: ## 打包单个架构的 .deb 到 dist/（ASSET=…）
 	@test -n "$(ASSET)" || { echo "ASSET 未设置 / ASSET required, one of: $(ARCHES)"; exit 1; }
+	@$(MAKE) --no-print-directory pkg-fetch-panel
 	@if [ -z "$(NO_BUILD)" ]; then $(MAKE) --no-print-directory build; fi
 	@if [ -z "$(REUSE_DIST)" ]; then $(MAKE) --no-print-directory dist-asset ASSET=$(ASSET); fi
 	@$(MAKE) --no-print-directory deb-asset ASSET=$(ASSET) NO_BUILD=1 REUSE_DIST=1
