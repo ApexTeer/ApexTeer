@@ -69,26 +69,24 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # 前端由 EasySB-Frontend 的 Release 承载，和 go build 是两套工具链：这里把它取进
-      # public/dist 供 go:embed，本仓库因此不装 Node，也不提交编译产物。
-      # The front end is carried by an EasySB-Frontend release and is a separate toolchain
-      # from go build: this fetches it into public/dist for go:embed, so this repository
-      # installs no Node and commits no built SPA.
-      - name: 获取面板前端
-        # 前端只在真正出包时取：PR 上还没有可依赖的面板 Release，make check 用占位
-        # README 即可，不该因为前端尚未发布而挡住 PR。
-        # The bundle is fetched only for a real build: a pull request has no panel release
-        # to depend on, and make check is happy with the placeholder README, so a missing
-        # front-end release must not block a PR.
-        if: github.event_name != 'pull_request'
-        run: make panel
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      # 构建标签、LD 标志、架构映射都只在 Makefile / release/TAGS 里定义一次：
-      # make check 读 release/TAGS 的标签，make dist-asset 读同一处并盖上提交号。
-      # Tags, link flags and the arch mapping live once, in the Makefile and
-      # release/TAGS: make check reads the tags, make dist-asset reads the same file.
+      # 这里不取前端。前端由 EasySB-Frontend 的 Release 承载，取它的是打包自己
+      # （make packages-asset → pkg-fetch-panel → scripts/fetch-panel.sh），而这一关只做
+      # gofmt、vet 和测试——把占位页编译进二进制也照样通过，所以它不需要真实前端。
+      #
+      # 曾经这里也放了一步 `make panel`。它平时是空转的（打包已经取过），却造成"必须先取
+      # 前端"的错觉，并且一旦被删掉或被条件挡住，打包就会用占位页编出一个没有控制台的包。
+      # 取前端只留一个权威入口，就是 Makefile 里那一处。
+      #
+      # No panel fetch here. The front end is carried by an EasySB-Frontend release and is
+      # fetched by packaging itself (make packages-asset -> pkg-fetch-panel ->
+      # scripts/fetch-panel.sh); this gate only runs gofmt, vet and the tests, all of which
+      # pass with the placeholder compiled in, so it does not need the real bundle.
+      #
+      # There used to be a `make panel` step here too. It was a no-op in practice (packaging
+      # had already fetched) while creating the impression that fetching was a separate
+      # prerequisite - and if it were deleted or gated, packaging would compile the
+      # placeholder and ship a console-less package. Fetching keeps one authoritative entry
+      # point: the one in the Makefile.
       - name: 提交前关卡
         run: make check
 
@@ -130,19 +128,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # 每个架构作业都从同一棵暂存树出包，所以这里也要先把前端取进来：make packages-asset
-      # 里的 go build 会用 go:embed 把它打进二进制。
-      # Every arch job builds from its own staging tree, so each fetches the bundle here:
-      # the go build inside make packages-asset embeds it into the binary.
-      - name: 获取面板前端
-        # 同 prepare：PR 只需要编译通过，前端放进来的前提是它已经发布过。
-        # Same as prepare: a PR only needs the build to compile, and the bundle is only
-        # present once a panel release exists.
-        if: github.event_name != 'pull_request'
-        run: make panel
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
+      # 前端不在这里取：make packages-asset 的第一步就是 pkg-fetch-panel，每个架构作业各自
+      # 把它取进自己的 public/dist，紧接着的 go build 才用 go:embed 打进二进制。取前端的
+      # 唯一权威入口是 Makefile 那一处，这里不再重复一遍。
+      #
+      # The bundle is not fetched here: the first step of make packages-asset is
+      # pkg-fetch-panel, so each arch job pulls it into its own public/dist and the go build
+      # that follows embeds it. The Makefile is the single authoritative entry point for
+      # fetching, and this no longer duplicates it.
+      #
       # UPX 缺失时 pkg-stage 会原样打包，构建不会失败；这里装上是为了让发布包稳定地小。
       # pkg-stage packages the binary as built when UPX is missing, so the build does not
       # depend on it; installing it here just keeps the published package reliably small.
