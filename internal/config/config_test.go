@@ -101,6 +101,29 @@ func TestBuildAllProtocols(t *testing.T) {
 	}
 }
 
+// TestBuildEmptyRendersNoInbound pins the document the deploy installs when the
+// last node is removed: it parses, carries no inbound, keeps the single direct
+// outbound, and drops the stats block because there are no users left to count.
+func TestBuildEmptyRendersNoInbound(t *testing.T) {
+	data, err := BuildEmpty()
+	if err != nil {
+		t.Fatalf("BuildEmpty: %v", err)
+	}
+	var parsed parsedConfig
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("the empty document does not parse: %v", err)
+	}
+	if len(parsed.Inbounds) != 0 {
+		t.Fatalf("BuildEmpty rendered %d inbounds, want none", len(parsed.Inbounds))
+	}
+	if len(parsed.Outbounds) != 1 || parsed.Outbounds[0].Type != "direct" {
+		t.Fatalf("BuildEmpty outbounds = %+v, want a single direct", parsed.Outbounds)
+	}
+	if strings.Contains(string(data), "v2ray_api") {
+		t.Fatal("the empty document must not carry the stats block: there are no users to count")
+	}
+}
+
 // inboundFor finds the rendered inbound of the first node on a protocol.
 func inboundFor(t *testing.T, nodes []node.Node, protocol string, byTag map[string]map[string]any) map[string]any {
 	t.Helper()

@@ -63,8 +63,9 @@ func applyDeployment(ctx context.Context, lang i18n.Lang, log func(string)) erro
 	if err := deploy.ApplyStore(ctx, cfg, sysinfo.NodesFile, sysinfo.UsersFile); err != nil {
 		switch {
 		case errors.Is(err, deploy.ErrNoNodes):
-			// An empty node set is a legal state while the operator is still
-			// creating nodes; the running configuration is left untouched.
+			// The host has never had an enabled node, so there is no running
+			// configuration to retire. Emptying an existing deployment is handled
+			// inside deploy.Apply and comes back as success, not as this.
 			log(lang.T("node_all_disabled"))
 			return nil
 		case errors.Is(err, deploy.ErrRejected):
