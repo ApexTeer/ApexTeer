@@ -134,16 +134,32 @@ func Build(p Params) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return render(inbounds, p.Stats, coreNames(bindings))
+}
+
+// BuildEmpty renders the document for a host that serves no node: it carries no
+// inbound and a single direct outbound, which the core accepts and runs idle.
+// Build refuses an empty node set so a caller cannot write this document by
+// accident; this is the explicit request, used when the last node is removed so
+// that the live file stops naming a listener nothing serves any more.
+func BuildEmpty() ([]byte, error) {
+	return render([]any{}, false, nil)
+}
+
+// render marshals the server document. The stats user list is passed in rather
+// than derived here, so an empty document does not have to pretend to carry any
+// bindings.
+func render(inbounds []any, stats bool, statsUsers []string) ([]byte, error) {
 	doc := serverConfig{
 		Log:       logConfig{Level: "info", Timestamp: true},
 		Inbounds:  inbounds,
 		Outbounds: []outbound{{Type: "direct", Tag: "direct"}},
 	}
-	if p.Stats {
+	if stats {
 		doc.Experimental = &experimental{
 			V2RayAPI: v2rayAPI{
 				Listen: StatsListen,
-				Stats:  statsEntry{Enabled: true, Users: coreNames(bindings)},
+				Stats:  statsEntry{Enabled: true, Users: statsUsers},
 			},
 		}
 	}

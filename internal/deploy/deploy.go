@@ -108,9 +108,14 @@ var (
 // the core unit; a later change restarts it. When the running core already serves
 // the same document, nothing happens, so an edit the core cannot see does not
 // drop every live connection.
+//
+// An empty node set is not "nothing to do": it is the document the host must end
+// up serving once the last node is removed, so the removed node stops answering.
+// That teardown is Clear, and it is reached from here so the panel, the TUI and
+// the subscription service all retire a listener the same way.
 func Apply(ctx context.Context, cfg state.Config, nodes []node.Node, accounts []user.User) error {
 	if !anyEnabled(nodes) {
-		return ErrNoNodes
+		return Clear(ctx, cfg)
 	}
 	if live, err := ServerConfig(cfg, nodes, accounts); err == nil && serviceActive(ctx) && sameAsLive(live) {
 		return nil
@@ -132,6 +137,47 @@ func Apply(ctx context.Context, cfg state.Config, nodes []node.Node, accounts []
 	// start below proceed instead of failing with "start request repeated too quickly".
 	_ = serviceDo(ctx, "reset-failed")
 	return serviceDo(ctx, "start")
+}
+
+// Clear retires the running deployment after the last enabled node is deleted or
+// disabled. Rewriting the document alone is not enough: the core keeps serving the
+// inbounds it was started with, so a node the panel no longer lists would go on
+// answering on its port with credentials that are no longer shown. The live
+// document is replaced by one with no inbound and the core is stopped, which is
+// what takes the listener down.
+//
+// A host that never had a deployment - the core is not running and no document is
+// on disk - has nothing to retire, so an empty node set stays a no-op and
+// ErrNoNodes is returned for the caller to report as such.
+func Clear(ctx context.Context, cfg state.Config) error {
+	active := serviceActive(ctx)
+	if !active && !hasLiveConfig() {
+		return ErrNoNodes
+	}
+	data, err := config.BuildEmpty()
+	if err != nil {
+		return err
+	}
+	if err := install(ctx, data); err != nil {
+		return err
+	}
+	if !active {
+		return nil
+	}
+	if err := serviceDo(ctx, "stop"); err != nil {
+		return err
+	}
+	// The core exits non-zero on the stop signal, which leaves an intentional
+	// teardown reading "failed" on the dashboard. Clear the latched state so the
+	// unit shows the idle state the operator asked for.
+	_ = serviceDo(ctx, "reset-failed")
+	return nil
+}
+
+// hasLiveConfig reports whether a rendered document is present on disk.
+func hasLiveConfig() bool {
+	info, err := os.Stat(configPath)
+	return err == nil && info.Size() > 0
 }
 
 // restartAfterChange applies a change to an already-running core. The generated
@@ -172,35 +218,46 @@ func ApplyConfig(ctx context.Context, cfg state.Config, nodes []node.Node, accou
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
+	if err := install(ctx, data); err != nil {
 		return nil, err
+	}
+	return data, nil
+}
+
+// install has the core accept data and, only then, moves it to the live path. The
+// core is shown a temporary file beside the live one, so a document it refuses
+// leaves the configuration a running node is serving untouched, and the install is
+// a rename within one directory. CreateTemp makes the file 0600, which is the mode
+// the document lands with, because the rename carries the mode rather than the
+// umask.
+func install(ctx context.Context, data []byte) error {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return err
 	}
 	tmp, err := os.CreateTemp(configDir, "config.json.check-*")
 	if err != nil {
-		return nil, err
+		return err
 	}
-	// CreateTemp makes the file 0600, which is the mode the document lands with,
-	// because the rename carries the mode rather than the umask.
 	checkPath := tmp.Name()
 	defer os.Remove(checkPath)
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		return nil, err
+		return err
 	}
 	if err := tmp.Close(); err != nil {
-		return nil, err
+		return err
 	}
 	if err := checkConfig(ctx, checkPath); err != nil {
 		// The core's message names the field it refused, and the only place a
 		// rejection is reported is a log line. Returning the sentinel alone left an
 		// operator with "the core rejected the generated configuration" and nothing
 		// to act on.
-		return nil, fmt.Errorf("%w: %w", ErrRejected, err)
+		return fmt.Errorf("%w: %w", ErrRejected, err)
 	}
 	if err := os.Rename(checkPath, configPath); err != nil {
-		return nil, err
+		return err
 	}
-	return data, nil
+	return nil
 }
 
 // ApplyStore applies the nodes and the accounts that may be live right now and

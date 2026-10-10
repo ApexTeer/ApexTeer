@@ -47,6 +47,7 @@ func Run(ctx context.Context, opts Options) error {
 		// timeout is sized for the slowest handler the panel has.
 		WriteTimeout: 6 * time.Minute,
 		IdleTimeout:  120 * time.Second,
+		ConnState:    trackConn,
 	}
 
 	serveErr := make(chan error, 1)

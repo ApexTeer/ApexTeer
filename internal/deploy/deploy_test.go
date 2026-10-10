@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/EasySBTeam/EasySB/internal/cert"
+	"github.com/EasySBTeam/EasySB/internal/config"
 	"github.com/EasySBTeam/EasySB/internal/node"
 	"github.com/EasySBTeam/EasySB/internal/sbcore"
 	"github.com/EasySBTeam/EasySB/internal/state"
@@ -113,6 +114,26 @@ func TestGeneratedConfigIsAcceptedByTheCarriedCore(t *testing.T) {
 	}
 	if carries && !strings.Contains(string(document), account.Token) {
 		t.Fatal("the stats user list must name the account token, or usage is never counted")
+	}
+}
+
+// TestEmptyDocumentIsAcceptedByTheCarriedCore pins the document Clear installs on
+// teardown against the real engine, not a stub: if the core refused it the last
+// node could not be taken down, which is the failure the fix exists to prevent.
+func TestEmptyDocumentIsAcceptedByTheCarriedCore(t *testing.T) {
+	document, err := config.BuildEmpty()
+	if err != nil {
+		t.Fatalf("BuildEmpty: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, document, 0o600); err != nil {
+		t.Fatalf("write the empty document: %v", err)
+	}
+	if err := sbcore.Check(context.Background(), path); err != nil {
+		t.Fatalf("the carried core refused the empty document: %v\n%s", err, document)
+	}
+	if !strings.Contains(string(document), `"inbounds": []`) {
+		t.Fatalf("the empty document does not carry an empty inbound list:\n%s", document)
 	}
 }
 
@@ -269,15 +290,106 @@ func TestApplyConfigLeavesNoTemporaryBehind(t *testing.T) {
 	}
 }
 
-// TestApplyWithNoNodesIsNoop pins the early return: a host whose node set is still
-// empty must not be made to fail on a configuration there is no certificate for.
+// TestApplyWithNoNodesIsNoop pins the early return: a host that never had a
+// deployment has nothing to retire, so an empty node set must not be made to fail
+// on a configuration there is no certificate for.
 func TestApplyWithNoNodesIsNoop(t *testing.T) {
 	writeInto(t, t.TempDir())
+	// The host is not running the core, which is what makes this the "nothing to
+	// retire" case rather than the teardown TestApplyClears... covers.
+	stubService(t, false)
 
 	cfg := state.Default()
 
 	if err := Apply(context.Background(), cfg, nil, []user.User{testAccount(t, testNodes())}); !errors.Is(err, ErrNoNodes) {
 		t.Fatalf("Apply with no node = %v, want %v", err, ErrNoNodes)
+	}
+}
+
+// TestApplyClearsTheDeploymentWhenTheLastNodeIsRemoved is the regression test for
+// the last-node teardown. Deleting or disabling the last enabled node used to be
+// reported as "nothing to apply": the live document kept the inbound and the core
+// kept listening, so a node the panel no longer served went on answering on its
+// port with credentials it no longer showed. Emptying the node set is a real
+// change and has to take the listener down with it.
+func TestApplyClearsTheDeploymentWhenTheLastNodeIsRemoved(t *testing.T) {
+	const domain = "example.com"
+	installTestCertificate(t, t.TempDir(), domain)
+	writeInto(t, t.TempDir())
+
+	original := checkConfig
+	t.Cleanup(func() { checkConfig = original })
+	checkConfig = func(context.Context, string) error { return nil }
+
+	cfg := state.Default()
+	cfg.Domain = domain
+	nodes := testNodes()
+	accounts := []user.User{testAccount(t, nodes)}
+
+	// The core is running, which is the state the old no-op left untouched.
+	actions := stubService(t, true)
+
+	// First deploy: the document names the node's listener.
+	if err := Apply(context.Background(), cfg, nodes, accounts); err != nil {
+		t.Fatalf("Apply with a node: %v", err)
+	}
+	live, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read the live config: %v", err)
+	}
+	if !strings.Contains(string(live), `"listen_port"`) {
+		t.Fatalf("the deploy did not install the node's inbound:\n%s", live)
+	}
+
+	// The last node is deleted: the same write path has to retire the listener.
+	*actions = nil
+	if err := Apply(context.Background(), cfg, nil, nil); err != nil {
+		t.Fatalf("Apply with no node = %v, want a clean teardown", err)
+	}
+	cleared, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read the cleared config: %v", err)
+	}
+	if strings.Contains(string(cleared), `"listen_port"`) {
+		t.Fatalf("the cleared config still names a listener:\n%s", cleared)
+	}
+	var doc struct {
+		Inbounds []json.RawMessage `json:"inbounds"`
+	}
+	if err := json.Unmarshal(cleared, &doc); err != nil {
+		t.Fatalf("the cleared config does not parse: %v", err)
+	}
+	if len(doc.Inbounds) != 0 {
+		t.Fatalf("the cleared config still has %d inbounds", len(doc.Inbounds))
+	}
+	if len(*actions) != 2 || (*actions)[0] != "stop" || (*actions)[1] != "reset-failed" {
+		t.Fatalf("clearing the last node did not stop the core cleanly: actions = %v", *actions)
+	}
+}
+
+// TestClearRewritesAStaleDocumentWithoutARunningCore covers the other half of the
+// teardown: a document left on disk while the core is not running (a crashed or
+// manually stopped service) must still be cleared, because it names a listener that
+// no longer belongs to any node and the next start would serve it again.
+func TestClearRewritesAStaleDocumentWithoutARunningCore(t *testing.T) {
+	writeInto(t, t.TempDir())
+	if err := os.WriteFile(configPath, []byte(`{"inbounds":[{"type":"anytls","listen_port":8000}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	actions := stubService(t, false)
+
+	if err := Clear(context.Background(), state.Default()); err != nil {
+		t.Fatalf("Clear = %v", err)
+	}
+	cleared, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read the cleared config: %v", err)
+	}
+	if strings.Contains(string(cleared), `"listen_port"`) {
+		t.Fatalf("the stale document was not cleared:\n%s", cleared)
+	}
+	if len(*actions) != 0 {
+		t.Fatalf("clearing a stopped core ran systemd actions: %v", *actions)
 	}
 }
 

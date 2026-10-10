@@ -164,6 +164,7 @@ func (s *Service) routes() []route {
 
 		{http.MethodGet, "/api/v1/system", false},
 		{http.MethodGet, "/api/v1/system/network", false},
+		{http.MethodGet, "/api/v1/system/runtime", false},
 		{http.MethodPost, "/api/v1/system/subscription/{action}", false},
 
 		{http.MethodGet, "/api/v1/logs", false},
@@ -286,6 +287,8 @@ func (s *Service) handlerFor(rt route) http.HandlerFunc {
 		return s.handleSystem
 	case "/api/v1/system/network":
 		return s.handleNetwork
+	case "/api/v1/system/runtime":
+		return s.handleRuntime
 	case "/api/v1/system/subscription/{action}":
 		return s.handleSubscriptionServiceAction
 
@@ -664,8 +667,10 @@ func nodeProtocols(nodes []node.Node) map[string]string {
 }
 
 // apply runs the single write path both the panel and the TUI use: render, have
-// the core accept the document, install or restart the service. An empty node set
-// is a legal state and is reported as "nothing applied" rather than an error.
+// the core accept the document, install or restart the service. Emptying the node
+// set is a real change and deploy.Apply retires the listener for it; ErrNoNodes
+// only comes back when there was no deployment to retire in the first place, so it
+// is a genuine no-op rather than a change reported as success without taking effect.
 func (s *Service) apply(ctx context.Context) error {
 	if s.opts.Apply != nil {
 		return s.opts.Apply(ctx)
@@ -676,6 +681,8 @@ func (s *Service) apply(ctx context.Context) error {
 	first := !cfg.NodeDeployed
 	err := deploy.ApplyStore(ctx, cfg, s.opts.NodesPath, s.opts.UsersPath)
 	if errors.Is(err, deploy.ErrNoNodes) {
+		// The host has never had an enabled node: the core is not running and no
+		// document is on disk, so there is nothing to clear and nothing to install.
 		return nil
 	}
 	if err != nil {

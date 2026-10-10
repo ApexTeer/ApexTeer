@@ -83,6 +83,13 @@
   changes under the watched paths, and publishes one release, tagged and named
   `v<VERSION>`, carrying one `.deb` per architecture. The release job then prunes the
   older releases and their tags, so the Release page only shows the current version.
+- Publishing is decided by a `gate` job, not by the release job itself. `gate` runs
+  `scripts/guard-duplicate-release.sh`, which reports `publish=true` for a first
+  publish (or a retry of the exact commit the tag points at) and `publish=false` when
+  `v<VERSION>` already points at another commit. A `publish=false` run leaves build and
+  test to complete and skips only the release, so an un-bumped merge to `master` stays
+  green while `gate` records "bump VERSION" in the run summary. Only a genuine error
+  (the API cannot confirm the tag, or the response shape is unexpected) fails the run.
 - The `.deb` (`make deb`) is built by fpm from one staged tree; the arch names live in
   the Makefile's `DEBARCH_MAP`, keyed on an asset name so one table serves packaging
   and layout. `pkg-stage` UPX-compresses the binary on the way into the tree, so the
