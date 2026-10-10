@@ -164,6 +164,7 @@ func (s *Service) routes() []route {
 
 		{http.MethodGet, "/api/v1/system", false},
 		{http.MethodGet, "/api/v1/system/network", false},
+		{http.MethodGet, "/api/v1/system/runtime", false},
 		{http.MethodPost, "/api/v1/system/subscription/{action}", false},
 
 		{http.MethodGet, "/api/v1/logs", false},
@@ -286,6 +287,8 @@ func (s *Service) handlerFor(rt route) http.HandlerFunc {
 		return s.handleSystem
 	case "/api/v1/system/network":
 		return s.handleNetwork
+	case "/api/v1/system/runtime":
+		return s.handleRuntime
 	case "/api/v1/system/subscription/{action}":
 		return s.handleSubscriptionServiceAction
 
