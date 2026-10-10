@@ -107,103 +107,6 @@ jobs:
         id: ver
         run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
-      # 版本号是发布的唯一标识：包版本只有 <VERSION>-1（Makefile 的 fpm -v/--iteration
-      # 与 packaging/repo/index.sh 的 debver），所以同一个 tag 再发一次，会让同名资产
-      # 变成不同字节，而 apt 比较版本号后不会升级——修复后的字节永远到不了已装
-      # <VERSION>-1 的机器，用户也没有该升级的信号。VERSION 未变而 tag 已存在时在这里
-      # 停下，要求显式升版。
-      #
-      # 放在 prepare 里、读取版本之后：任何构建或上传之前，成本是一次 API 读取。
-      #
-      # The version is the release's only identifier: the package version is just
-      # <VERSION>-1 (fpm -v/--iteration in the Makefile and debver in
-      # packaging/repo/index.sh), so re-publishing a tag replaces same-named assets with
-      # different bytes while apt, comparing versions, declines to upgrade - the fixed
-      # bytes never reach a host that already has <VERSION>-1, and the user gets no
-      # signal that they should. Stop here when VERSION has not moved but its tag exists.
-      #
-      # It sits in prepare, after the version is read: before any build or upload, at the
-      # cost of one API read.
-      - name: 防止重复发布同一版本
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="v${{ steps.ver.outputs.version }}"
-          errf="$(mktemp)"
-          trap 'rm -f "$errf"' EXIT
-
-          # 先按 ref 读，而不是查 release：release 可能已被清理策略收走，而 tag 本身
-          # 才是"这个版本是否发布过"的判据。失败关闭：只有明确的 404 才算"不存在"，
-          # 其余（限流、鉴权、网络、格式变化）一律停下，绝不因 API 抖动而盲发。
-          # Read the ref rather than the release: the prune step can retire a release while
-          # its tag survives, and the tag is what decides whether this version shipped.
-          # Fail closed: only an explicit 404 means "absent"; anything else (rate limit,
-          # auth, network, a changed response shape) stops the run instead of publishing
-          # blind on a transient API error.
-          if ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" \
-                       --jq '"[\(.object.type)]\(.object.sha)"' 2>"$errf")"; then
-            :
-          elif grep -qE 'HTTP 404|Not Found' "$errf"; then
-            # 只有 API 明确回答"没有这个 ref"才是首发。判断按整行匹配错误输出，而不是
-            # 只看是否出现 "404"，避免响应体里的其它数字造成误判。
-            # Only an explicit "no such ref" from the API means a first publish. The match
-            # is anchored to the error output rather than looking for "404" anywhere, so a
-            # stray number cannot be mistaken for it.
-            echo "首次发布 $tag / first publish"
-            exit 0
-          else
-            echo "::error::无法确认 $tag 是否存在，拒绝发布 / cannot confirm whether $tag exists: $(cat "$errf")"
-            exit 1
-          fi
-
-          objtype="${ref%%]*}"; objtype="${objtype#[}"
-          sha="${ref##*]}"
-
-          # 只认 commit 与 tag 两种：ref 指向别的东西（tree 等）说明响应不是预期形状，
-          # 此时不能把它的 sha 当提交比对，否则会给出"升版"这种错误的处置建议。
-          # Only `commit` and `tag` are recognised: anything else (a tree, say) means the
-          # response is not the shape expected, and treating its sha as a commit would
-          # advise the wrong remedy.
-          if [ "$objtype" != "commit" ] && [ "$objtype" != "tag" ]; then
-            echo "::error::$tag 指向未知对象类型 '$objtype' / $tag points at an unexpected object type"
-            exit 1
-          fi
-
-          # git/ref/tags 对注记标签返回标签对象自身的 sha，对轻量标签返回提交 sha。
-          # 注记标签要再解引用一次，否则会把标签对象的 sha 错当成目标提交，同提交重试
-          # 会被误拒。
-          # git/ref/tags returns the tag object's own sha for an annotated tag and the
-          # commit sha for a lightweight one. An annotated tag needs one more dereference,
-          # or the tag object's sha is mistaken for the target commit and a legitimate
-          # same-commit retry is refused.
-          if [ "$objtype" = "tag" ]; then
-            if ! sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq '.object.sha' 2>"$errf")"; then
-              echo "::error::$tag 是注记标签但无法解引用 / $tag is an annotated tag that cannot be dereferenced: $(cat "$errf")"
-              exit 1
-            fi
-          fi
-
-          # 只接受 40 位十六进制：结果无法识别时按失败关闭处理。
-          # Accept only a 40-hex sha; an unrecognised result fails closed.
-          case "$sha" in
-            *[!0-9a-f]*) echo "::error::$tag 的目标提交无法识别 / cannot resolve $tag to a commit: $sha"; exit 1 ;;
-          esac
-          if [ "${#sha}" -ne 40 ]; then
-            echo "::error::$tag 的目标提交无法识别 / cannot resolve $tag to a commit: $sha"
-            exit 1
-          fi
-
-          # 已存在：只有指向本次提交的重跑才放行，这样上传失败后可以安全重试。
-          # Exists: only a retry of this very commit may continue, so a failed upload stays
-          # recoverable without a pointless version bump.
-          if [ "$sha" = "$GITHUB_SHA" ]; then
-            echo "$tag 已存在且指向本次提交，视为重跑 / $tag already points at this commit, continuing as a retry"
-            exit 0
-          fi
-          echo "::error::$tag 已存在（$sha），需升版后才能发布 / $tag already exists at $sha; bump VERSION to publish"
-          exit 1
-
   # 每个架构一个作业：从一棵暂存树出来一个 .deb。二进制由 --print-unit 打印的 systemd
   # 单元、UPX 压缩后的可执行文件都在这一棵树上，安装进系统的单元与面板运行时写下的完全
   # 一致，不存在第二处定义。
@@ -277,6 +180,36 @@ jobs:
     steps:
       - name: 检出仓库
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # 「这个版本的 tag 是否已存在」只在发布时才是个问题，所以这道检查放在这里，而不是
+      # prepare 里。
+      #
+      # 放在 prepare 曾经让 push 到 master 的每一次运行都在第一分钟失败，包括只想验证
+      # 改动的运行：一个未升版的提交永远拿不到一次完整的构建与测试。是否发布是 release
+      # 作业的事，校验不是。这道检查失败时，产物已经构建并通过测试，只是不上传。
+      #
+      # Whether this version's tag already exists only matters when publishing, so the check
+      # lives here rather than in prepare. In prepare it failed every push to master inside the
+      # first minute - including runs that only wanted to validate a change, so an un-bumped
+      # commit could never get a full build and test. Publishing is the release job's business;
+      # validating is not. When this fails, the artifacts are already built and tested, they
+      # are simply not uploaded.
+      #
+      # 版本号是发布的唯一标识：包版本只有 <VERSION>-1（Makefile 的 fpm -v/--iteration 与
+      # packaging/repo/index.sh 的 debver），所以同一个 tag 再发一次，会让同名资产变成不同
+      # 字节，而 apt 比较版本号后不会升级——修复后的字节永远到不了已装 <VERSION>-1 的机器，
+      # 用户也没有该升级的信号。VERSION 未变而 tag 已存在时停下，要求显式升版。
+      #
+      # The version is the release's only identifier: the package version is just <VERSION>-1
+      # (fpm -v/--iteration in the Makefile and debver in packaging/repo/index.sh), so
+      # re-publishing a tag replaces same-named assets with different bytes while apt,
+      # comparing versions, declines to upgrade - the fixed bytes never reach a host that
+      # already has <VERSION>-1, and the user gets no signal that they should. Stop when
+      # VERSION has not moved but its tag exists.
+      - name: 防止重复发布同一版本
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/guard-duplicate-release.sh "v${{ needs.prepare.outputs.version }}"
 
       - name: 下载全部产物
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
