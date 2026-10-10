@@ -71,6 +71,10 @@ type Service struct {
 	// changed by the settings API without a restart.
 	entryMu sync.RWMutex
 	entry   string
+	// history is the rolling host trend the overview charts read. It is created
+	// here but samples only once run starts it, so a Service built in a test has
+	// no background loop.
+	history *historyRecorder
 }
 
 // New builds the panel service, filling defaults.
@@ -93,6 +97,7 @@ func New(opts Options) *Service {
 	svc := &Service{
 		opts:     opts,
 		sessions: newSessionStore(opts.SessionTTL, opts.Now),
+		history:  newHistoryRecorder(),
 	}
 	if cfg, err := LoadConfig(opts.ConfigPath); err == nil {
 		svc.entry = NormalizeSecurityEntry(cfg.SecurityEntry)
@@ -165,6 +170,7 @@ func (s *Service) routes() []route {
 		{http.MethodGet, "/api/v1/system", false},
 		{http.MethodGet, "/api/v1/system/network", false},
 		{http.MethodGet, "/api/v1/system/runtime", false},
+		{http.MethodGet, "/api/v1/system/history", false},
 		{http.MethodPost, "/api/v1/system/subscription/{action}", false},
 
 		{http.MethodGet, "/api/v1/logs", false},
@@ -289,6 +295,8 @@ func (s *Service) handlerFor(rt route) http.HandlerFunc {
 		return s.handleNetwork
 	case "/api/v1/system/runtime":
 		return s.handleRuntime
+	case "/api/v1/system/history":
+		return s.handleHistory
 	case "/api/v1/system/subscription/{action}":
 		return s.handleSubscriptionServiceAction
 

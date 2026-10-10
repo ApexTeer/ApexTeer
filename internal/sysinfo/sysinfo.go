@@ -188,6 +188,25 @@ func collectDevice(st *Status) {
 	st.DiskReadBytes, st.DiskWriteBytes = DiskTotals()
 }
 
+// Usage returns the live memory, swap and root-filesystem usage in bytes, which
+// is what the overview trend samples every couple of seconds. It reads
+// /proc/meminfo once and the root filesystem once, and returns zero for a
+// reading the host would not give.
+func Usage() (memUsed, memTotal, swapUsed, swapTotal, diskUsed, diskTotal uint64) {
+	memTotal, memAvail, swapTotal, swapFree := memory()
+	if memTotal > memAvail {
+		memUsed = memTotal - memAvail
+	}
+	if swapTotal > swapFree {
+		swapUsed = swapTotal - swapFree
+	}
+	diskTotal, diskFree := diskUsage("/")
+	if diskTotal > diskFree {
+		diskUsed = diskTotal - diskFree
+	}
+	return memUsed, memTotal, swapUsed, swapTotal, diskUsed, diskTotal
+}
+
 // sectorSize is the unit /proc/diskstats counts transfers in. The kernel has
 // reported 512-byte sectors there since long before 4K-native disks, and it
 // stays 512 regardless of the device's physical sector size.
